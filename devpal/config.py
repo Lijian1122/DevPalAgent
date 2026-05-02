@@ -29,9 +29,6 @@ class Config:
 
     def _load_config(self) -> dict:
         """加载配置文件"""
-        print(f"[DEBUG] 查找配置文件: {self.config_path.absolute()}")
-        print(f"[DEBUG] 当前工作目录: {Path.cwd()}")
-
         if not self.config_path.exists():
             print(f"[WARNING] 配置文件不存在: {self.config_path}")
             print(f"[INFO] 请复制 config/config.yaml.example 为 config/config.yaml 并填写配置")
