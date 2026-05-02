@@ -1,0 +1,18 @@
+# DevPal Agent 配置文件示例
+# 复制此文件为 config.yaml 并填写实际值
+
+# Anthropic API 配置
+anthropic:
+  auth_token: "your-api-key-here"
+  base_url: "https://api.anthropic.com"  # 默认地址，可修改为代理地址
+  model: "claude-3-sonnet-20240229"      # 使用的模型
+
+# Agent 运行配置
+agent:
+  max_iterations: 5                       # 最大工具调用轮数
+  max_tokens: 4096                        # LLM 输出最大 token 数
+  temperature: 0.7                        # 温度参数，0-1
+
+# 工具配置
+tools:
+  command_timeout: 30                     # 命令执行超时时间（秒）

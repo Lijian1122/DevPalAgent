@@ -1,0 +1,23 @@
+# DevPal Agent 依赖
+# 按安装顺序排列，核心依赖优先
+
+# ===== LLM SDK (必须) =====
+anthropic>=0.20.0
+
+# ===== 配置文件解析 =====
+pyyaml>=6.0
+
+# ===== 工具类 (轻量) =====
+pydantic>=2.0
+tenacity>=8.0
+pyyaml>=6.0
+
+# ===== 可选：向量数据库 (阶段2才需要) =====
+# chromadb>=0.4.0
+# sentence-transformers>=2.2.0
+
+# ===== 可选：Web UI (阶段4才需要) =====
+# gradio>=4.0
+
+# ===== 测试 =====
+# pytest>=7.0

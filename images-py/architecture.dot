@@ -1,0 +1,55 @@
+digraph Architecture {
+    rankdir=TB;
+    nodesep=0.8;
+    ranksep=1.0;
+    compound=true;
+
+    node [shape=box, style="filled, rounded", fillcolor=white, fontname="Microsoft YaHei", fontsize=12, width=2.2, height=0.9, margin="0.25,0.18"];
+
+    subgraph cluster_interface {
+        label="交互层 Interface Layer";
+        style="filled, dashed";
+        fillcolor="#e1f5fe";
+        color="#01579b";
+        fontname="Microsoft YaHei";
+        fontsize=16;
+        margin="0.3,0.3";
+        rank=same;
+        CLI [label="CLI 命令行"];
+        WebUI [label="Web UI"];
+        IDE [label="IDE 插件"];
+    }
+
+    subgraph cluster_core {
+        label="Agent 核心引擎层 Core Engine";
+        style="filled, dashed";
+        fillcolor="#f3e5f5";
+        color="#4a148c";
+        fontname="Microsoft YaHei";
+        fontsize=16;
+        margin="0.3,0.3";
+        rank=same;
+        Planner [label="规划器 Planner\n任务拆解\n计划生成\n可行性评估"];
+        Executor [label="执行器 Executor\n工具选择\n工具调用\n结果处理"];
+        Reflector [label="反思器 Reflector\n错误检测\n经验总结\n计划调整"];
+    }
+
+    subgraph cluster_infra {
+        label="基础能力层 Infrastructure";
+        style="filled, dashed";
+        fillcolor="#e8f5e9";
+        color="#1b5e20";
+        fontname="Microsoft YaHei";
+        fontsize=16;
+        margin="0.3,0.3";
+        rank=same;
+        LLM [label="LLM 封装层\n多模型支持\nToken 管理\n重试机制"];
+        Memory [label="记忆系统\n短期记忆\n长期记忆\n错误记忆"];
+        Tools [label="工具系统\n文件读写\n命令执行\n代码分析"];
+    }
+
+    CLI -> Planner [style=invis, weight=100, constraint=true];
+    Planner -> LLM [style=invis, weight=100, constraint=true];
+    IDE -> Reflector [style=invis, weight=100, constraint=true];
+    Reflector -> Tools [style=invis, weight=100, constraint=true];
+}
