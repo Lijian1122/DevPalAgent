@@ -94,9 +94,28 @@ def run_agent(query: str):
             tools=tools
         )
 
+        # 调试：打印 response 完整结构
+        print(f"[DEBUG] response.model: {response.model}")
+        print(f"[DEBUG] response.role: {response.role}")
+        print(f"[DEBUG] response.type: {response.type}")
+        print(f"[DEBUG] response.stop_reason: {response.stop_reason}")
+        print(f"[DEBUG] response.usage: {response.usage}")
+        print(f"[DEBUG] response.content blocks ({len(response.content)}):")
+        for idx, block in enumerate(response.content):
+            print(f"  [{idx}] type={block.type}")
+            if block.type == "text":
+                print(f"       text={block.text[:100]}..." if len(block.text) > 100 else f"       text={block.text}")
+            elif block.type == "tool_use":
+                print(f"       id={block.id}")
+                print(f"       name={block.name}")
+                print(f"       input={block.input}")
+
         # 构建 assistant 消息（Claude 要求的精确格式）
         assistant_content = []
         for block in response.content:
+            if block.type == "thinking":
+                # 火山引擎特有：thinking 块，跳过，不需要发给 LLM
+                continue
             if block.type == "text":
                 assistant_content.append({"type": "text", "text": block.text})
             elif block.type == "tool_use":
