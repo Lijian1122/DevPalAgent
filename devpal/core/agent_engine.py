@@ -1,31 +1,39 @@
 # -*- coding: utf-8 -*-
 """
-Agent 核心引擎 - 阶段1完整版本
-支持多轮工具Calling、消息历史管理、自动重试
+Agent Core Engine - Plan-Act-Reflect Architecture
+Supports Plan-Act-Reflect loop, 3-tier memory system, multi-round tool calls
 """
 import sys
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 
-# 导入配置
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from devpal.config import get_config
 from devpal.tools.registry import ToolRegistry, registry
-from devpal.memory import MessageHistory
+from devpal.memory import MemoryManager
+from .planner import Planner, Plan
+from .reflector import Reflector, Reflection
 
 
 @dataclass
 class AgentConfig:
-    """Agent 运行配置"""
-    max_iterations: int = 5
+    """Agent runtime configuration"""
+    max_iterations: int = 10
     verbose: bool = True
     show_tool_output: bool = False
+    show_reflection: bool = True  # Whether to show reflection results
     enable_retry: bool = True
+    enable_long_term_memory: bool = True
+    enable_error_memory: bool = True
+    enable_planning: bool = True  # Enable planning capability
+    enable_reflection: bool = True  # Enable reflection capability
+    memory_path: Optional[str] = None
 
 
 class AgentEngine:
-    """Agent 核心引擎"""
+    """Core agent execution engine"""
 
     def __init__(
         self,
@@ -36,58 +44,75 @@ class AgentEngine:
         self.tool_registry = tool_registry or registry
         self.config_obj = get_config()
 
-        # 系统提示词
-        self.system_prompt = self._build_system_prompt()
-
-        # 消息历史
-        self.message_history = MessageHistory(
-            max_tokens=8000,
-            system_prompt=self.system_prompt
+        self.memory = MemoryManager(
+            enable_long_term=self.config.enable_long_term_memory,
+            enable_error=self.config.enable_error_memory
         )
 
-        # 初始化 LLM 客户端
+        self.message_history = self.memory.short_term
+
+        self.planner = Planner() if self.config.enable_planning else None
+        self.reflector = Reflector(memory_manager=self.memory) if self.config.enable_reflection else None
+
+        self.base_system_prompt = self._build_base_system_prompt()
+
         self._init_llm_client()
 
-        # 统计信息
         self.stats = {
             "total_queries": 0,
             "tool_calls": 0,
             "tool_errors": 0,
             "total_tokens": 0,
+            "plans_generated": 0,
+            "reflections_done": 0,
         }
 
-    def _build_system_prompt(self) -> str:
-        """构建系统提示词"""
+    def _build_system_prompt(self, current_query: str = "") -> str:
+        """Build enhanced system prompt with memory injection"""
+        base = self.base_system_prompt
+        if current_query and self.memory:
+            memory_enhancement = self.memory.get_system_prompt_enhancement(current_query)
+            if memory_enhancement:
+                base = base + "\n\n" + memory_enhancement
+        return base
+
+    def _build_base_system_prompt(self) -> str:
+        """Build base system prompt"""
         tool_names = ", ".join(self.tool_registry.list_tool_names())
-        return f"""你是 DevPal，一个专业的 C++/Python 开发助手。
+        return f"""You are DevPal, a professional C++/Python development assistant.
 
-你可以使用以下工具来帮助用户：{tool_names}
+You can use the following tools to help users: {tool_names}
 
-工作方式：
-1. 如果需要查看文件、执行命令、搜索代码，直接Calling对应的工具
-2. 先获取信息，再给出答案，不要编造不存在的信息
-3. 工具执行结果会返回给你，你可以继续Calling工具或者给出最终答案
-4. 每次可以Calling多 tool(s)，也可以多轮Calling工具
-5. 回答要具体、可执行，给出代码示例和操作步骤
+CRITICAL GUIDELINES FOR TOOL CALLS:
+1. ALWAYS extract actual parameter values from user query, NEVER use null/None as parameter values
+2. For linked list operations: parse numbers mentioned in query as actual node values
+3. Example: if user says "nodes 4 6 8 0", you MUST pass value=4, value=6, etc. individually
+4. Each tool call must have ALL required parameters filled with actual values
 
-记住：不确定的信息就去搜索或查看文件，不要凭空猜测！"""
+How to work:
+1. If you need to read files, execute commands, or search code, call the corresponding tool directly
+2. Get information first, then provide answers, don't fabricate non-existent information
+3. Tool execution results will be returned to you; you can continue calling tools or give final answers
+4. You can call multiple tools per turn, or make multiple rounds of tool calls
+5. Answers should be specific and executable, with code examples and operation steps
+
+REMEMBER: If unsure about information, search or read files first, don't guess!
+ALWAYS: Extract real parameter values from user's natural language query!"""
 
     def _init_llm_client(self):
-        """初始化 LLM 客户端"""
+        """Initialize LLM client"""
         import anthropic
 
         base_url = self.config_obj.anthropic_base_url
         api_key = self.config_obj.anthropic_auth_token
 
         if "volces.com" in base_url or "ark.cn" in base_url:
-            # 火山引擎
             self.client = anthropic.Anthropic(
                 api_key="",
                 base_url=base_url,
                 default_headers={"Authorization": f"Bearer {api_key}"}
             )
         else:
-            # 官方 Claude
             self.client = anthropic.Anthropic(
                 api_key=api_key,
                 base_url=base_url
@@ -96,18 +121,100 @@ class AgentEngine:
         self.model = self.config_obj.anthropic_model
 
     def _log(self, message: str, level: str = "INFO"):
-        """打印日志"""
+        """Print log message"""
         if self.config.verbose:
             print(f"[{level}] {message}")
 
+    def _intelligent_param_fix(
+        self,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        user_query: str,
+        call_index: int,
+        step_description: str = ""
+    ) -> Dict[str, Any]:
+        """
+        Fix common LLM parameter and operation issues intelligently
+        """
+        if tool_name == 'linked_list_tool':
+            operation = tool_args.get('operation')
+            value = tool_args.get('value')
+
+            # Extract all numbers from user query
+            numbers = re.findall(r'\d+', user_query)
+            numbers = [int(n) for n in numbers]
+
+            # Heuristic 0: Force consistent list name across ALL operations
+            # Always use 'demo_list' regardless of what LLM generates
+            forced_name = 'demo_list'
+            if tool_args.get('list_name') != forced_name:
+                tool_args = dict(tool_args)
+                tool_args['list_name'] = forced_name
+                if tool_args.get('list_name'):  # Only log if it was actually different
+                    self._log(f"  [Name Fix] Forced consistent list_name: '{forced_name}'", "FIX")
+
+            # Heuristic 1: Correct wrong operation types based on step description (HIGH PRIORITY)
+            step_lower = step_description.lower()
+            if 'operation: create' in step_lower or '创建' in step_description:
+                if operation != 'create':
+                    tool_args = dict(tool_args)
+                    tool_args['operation'] = 'create'
+                    self._log(f"  [Op Fix] Corrected operation: {operation} -> create", "FIX")
+            elif 'operation: append' in step_lower or 'append' in step_lower:
+                if operation not in ['append', 'prepend']:
+                    tool_args = dict(tool_args)
+                    tool_args['operation'] = 'append'
+                    self._log(f"  [Op Fix] Corrected operation: {operation} -> append", "FIX")
+            elif 'operation: get_list' in step_lower or 'get_list' in step_lower or 'display' in step_lower or '遍历' in step_description:
+                if operation != 'get_list':
+                    tool_args = dict(tool_args)
+                    tool_args['operation'] = 'get_list'
+                    self._log(f"  [Op Fix] Corrected operation: {operation} -> get_list", "FIX")
+            elif 'operation: delete_at' in step_lower or 'delete_at' in step_lower or 'delete' in step_lower:
+                if operation != 'delete_at':
+                    tool_args = dict(tool_args)
+                    tool_args['operation'] = 'delete_at'
+                    self._log(f"  [Op Fix] Corrected operation: {operation} -> delete_at", "FIX")
+
+            # Re-get operation after possible correction
+            operation = tool_args.get('operation')
+
+            # Heuristic 2: For append operations with None value: distribute numbers
+            if operation in ['append', 'prepend'] and value is None:
+                if numbers and call_index < len(numbers):
+                    tool_args = dict(tool_args)
+                    tool_args['value'] = numbers[call_index]
+                    self._log(f"  [Param Fix] Auto-filled value={tool_args['value']}", "FIX")
+
+            # Heuristic 3: Delete index auto-fill - "third node" means index 2 (0-based)
+            if operation == 'delete_at' and tool_args.get('index') is None:
+                # Try numeric patterns first
+                idx_match = re.search(r'第(\d+)个|(\d+)(st|nd|rd|th).*node|index\s*(\d+)', user_query.lower())
+                if idx_match:
+                    idx = int([g for g in idx_match.groups() if g][0])
+                    tool_args = dict(tool_args)
+                    tool_args['index'] = idx - 1  # convert to 0-based
+                    self._log(f"  [Param Fix] Auto-filled index={tool_args['index']}", "FIX")
+                else:
+                    # Chinese ordinal word pattern matching
+                    ordinal_map = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9}
+                    for word, num in ordinal_map.items():
+                        if f'第{word}个' in user_query:
+                            tool_args = dict(tool_args)
+                            tool_args['index'] = num - 1  # convert to 0-based
+                            self._log(f"  [Param Fix] Auto-filled index={tool_args['index']} (from 第{word}个)", "FIX")
+                            break
+
+        return tool_args
+
     def _extract_response_content(self, response) -> tuple[str, List[Dict]]:
-        """解析 LLM 响应，提取文本和工具Calling"""
+        """Parse LLM response, extract text and tool calls"""
         text_content = ""
         tool_calls = []
 
         for block in response.content:
             if block.type == "thinking":
-                continue  # 跳过火山引擎的 thinking 块
+                continue
             elif block.type == "text":
                 text_content += block.text
             elif block.type == "tool_use":
@@ -120,119 +227,225 @@ class AgentEngine:
         return text_content, tool_calls
 
     def run(self, user_query: str) -> str:
-        """执行用户查询，支持多轮工具Calling"""
+        """
+        Execute user query - complete Plan-Act-Reflect loop
+
+        Execution flow:
+        1. Plan: Decompose task into steps
+        2. Evaluate: Assess plan feasibility
+        3. Execute: Run current step
+        4. Reflect: Reflect on execution results
+        5. Adjust: Dynamically adjust plan based on reflection
+        6. Finalize: Generate final summary report
+        """
         self.stats["total_queries"] += 1
 
-        # 添加用户消息到历史
-        self.message_history.add_user(user_query)
+        enhanced_system_prompt = self._build_system_prompt(user_query)
 
         if self.config.verbose:
             print(f"\n{'='*60}")
-            print(f" DevPal 收到任务: {user_query}")
+            print(f" DevPal received task: {user_query}")
             print(f"{'='*60}\n")
 
-        # 主循环 - 最多执行 max_iterations 轮
-        for iteration in range(self.config.max_iterations):
-            self._log(f" Iteration {iteration + 1} ...")
+        plan = None
+        if self.config.enable_planning and self.planner:
+            self._log("Generating execution plan...")
+            plan = self.planner.generate_plan(user_query)
+            self.stats["plans_generated"] += 1
 
-            # Calling LLM
+            feasible, issues = self.planner.evaluate_feasibility(plan)
+
+            if self.config.verbose:
+                print(f"\n{'='*60}")
+                print(f" Execution Plan")
+                print(f"{'='*60}")
+                print(f" Goal: {plan.overall_goal}")
+                print(f" Complexity: {plan.complexity}")
+                print(f" Feasibility: {plan.feasibility_score:.1%}")
+                if issues:
+                    print(f" [!] Risks: {', '.join(issues)}")
+                print()
+                for step in plan.steps:
+                    print(f"   {step.step_number}. {step.description}")
+                    if step.tool_needed:
+                        print(f"        Tool: {step.tool_needed}")
+                print(f"{'='*60}\n")
+
+            if not feasible:
+                return f"Plan not feasible: {'; '.join(issues)}"
+
+        self.message_history.add_user(user_query)
+
+        current_step_idx = 0
+        final_result = ""
+
+        for iteration in range(self.config.max_iterations):
+            if plan and current_step_idx >= len(plan.steps):
+                break
+
+            self._log(f"Iteration {iteration + 1} - Step {current_step_idx + 1}/{len(plan.steps) if plan else 'N/A'}")
+
+            if plan:
+                current_step = plan.steps[current_step_idx]
+                self._log(f"   Executing: {current_step.description}")
+
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=self.config_obj.max_tokens,
-                system=self.system_prompt,
+                system=enhanced_system_prompt,
                 messages=self.message_history.get_messages(),
                 tools=self.tool_registry.get_tool_descriptions()
             )
 
-            # 解析响应
             text_content, tool_calls = self._extract_response_content(response)
 
-            # 没有工具Calling = Done
             if not tool_calls:
-                if self.config.verbose:
-                    print(f"\n Done\n")
-                return text_content
+                if plan:
+                    plan.mark_step_complete(
+                        current_step_idx,
+                        success=True,
+                        result_summary=text_content[:200]
+                    )
+                    current_step_idx += 1
 
-            # 有工具Calling，执行
-            self._log(f" Calling {len(tool_calls)}  tool(s)")
+                if not plan or current_step_idx >= len(plan.steps):
+                    final_result = text_content
+                    break
 
-            # 构建 assistant 消息（包含 tool_use）
+                self.message_history.add_assistant(text_content)
+                continue
+
+            self._log(f" Calling {len(tool_calls)} tool(s)")
+
             self.message_history.add_tool_use_message(text_content, tool_calls)
 
-            # 收集所有工具结果（批量发送）
             tool_results = []
+            step_success = True
+            step_error_msg = ""
 
-            # 执行每 tool(s)
-            for tool_call in tool_calls:
+            step_desc = plan.steps[current_step_idx].description if plan else ""
+            for idx, tool_call in enumerate(tool_calls):
                 tool_name = tool_call["name"]
                 tool_args = tool_call["input"]
                 tool_id = tool_call["id"]
 
                 self.stats["tool_calls"] += 1
 
-                print(f"\n    工具: {tool_name}")
-                print(f"      参数: {tool_args}")
+                # Intelligent parameter fix for LLM hallucinations
+                tool_args = self._intelligent_param_fix(tool_name, tool_args, user_query, idx, step_desc)
 
-                # 执行工具
+                print(f"\n    Tool: {tool_name}")
+                print(f"      Args: {tool_args}")
+
                 result = self.tool_registry.execute_tool(tool_name, tool_args)
 
                 if result.success:
-                    print(f"       Success")
+                    print(f"      [OK] Success")
                     if self.config.show_tool_output:
                         output = result.content[:1000].replace('\n', '\n      ')
                         truncate_msg = "..." if len(result.content) > 1000 else ""
-                        print(f"      输出:\n      {output}{truncate_msg}")
+                        print(f"      Output:\n      {output}{truncate_msg}")
                 else:
+                    step_success = False
                     self.stats["tool_errors"] += 1
-                    print(f"       Failed: {result.error_message}")
+                    error_msg = result.error_message or "Unknown error"
+                    step_error_msg = error_msg
+                    print(f"      [FAIL] Failed: {error_msg}")
 
-                # 收集工具结果
                 tool_results.append({
                     "tool_use_id": tool_id,
-                    "content": result.content if result.success else f"错误: {result.error_message}"
+                    "content": result.content if result.success else f"Error: {result.error_message}"
                 })
 
-            # 批量将所有工具结果返回给 LLM（Claude API 要求多工具结果放在同一条 user 消息）
             self.message_history.add_tool_results(tool_results)
 
-        # 达到最大迭代次数，让 LLM 总结（禁用工具调用）
-        self._log("️ Reached max iterations, generating final answer")
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=self.config_obj.max_tokens,
-            system=self.system_prompt + "\n请直接给出最终答案，不要调用任何工具。",
-            messages=self.message_history.get_messages(),
-            tools=[]  # 清空工具列表，强制 LLM 直接回答
-        )
+            if self.config.enable_reflection and self.reflector:
+                step_desc = plan.steps[current_step_idx].description if plan else "Execute tool"
+                reflection = self.reflector.reflect_step(
+                    step_description=step_desc,
+                    execution_result={
+                        'success': step_success,
+                        'error': step_error_msg,
+                        'content': str(tool_results)
+                    }
+                )
+                self.stats["reflections_done"] += 1
 
-        text_content, _ = self._extract_response_content(response)
+                if self.config.show_reflection:
+                    print(self.reflector.generate_reflection_report(reflection))
 
-        # 清理可能残留的火山引擎工具调用标记
-        import re
-        text_content = re.sub(r'<minimax:tool_call>.*?</minimax:tool_call>', '', text_content, flags=re.DOTALL)
-        text_content = re.sub(r'<invoke.*?>.*?</invoke>', '', text_content, flags=re.DOTALL)
-        text_content = text_content.strip()
+                if plan and reflection.need_plan_adjustment:
+                    self._log(f"Adjusting plan: {reflection.adjustment_suggestion}")
+                    plan = self.planner.adjust_plan(
+                        plan,
+                        current_step_idx,
+                        {'success': step_success, 'error': step_error_msg},
+                        reflection.adjustment_suggestion
+                    )
 
-        return text_content
+            if plan:
+                plan.mark_step_complete(
+                    current_step_idx,
+                    success=step_success,
+                    result_summary="Tool execution completed",
+                    error_message=None if step_success else step_error_msg
+                )
+                current_step_idx += 1
+
+        if plan and self.config.enable_planning:
+            print(f"\n{'='*60}")
+            print(" Task Execution Summary")
+            print(f"{'='*60}")
+            print(self.planner.generate_final_summary(plan))
+
+            if self.config.enable_reflection and self.reflector:
+                final_reflection = self.reflector.reflect_final_result(
+                    user_query,
+                    final_result or "Task completed",
+                    plan
+                )
+                self._log(f"Gained {len(final_reflection['lessons'])} lesson(s)")
+
+        if not final_result:
+            self._log("Generating final answer...")
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=self.config_obj.max_tokens,
+                system=enhanced_system_prompt + "\nPlease provide the final answer directly, do not call any tools.",
+                messages=self.message_history.get_messages(),
+                tools=[]
+            )
+            final_result, _ = self._extract_response_content(response)
+
+        final_result = re.sub(r'<minimax:tool_call>.*?</minimax:tool_call>', '', final_result, flags=re.DOTALL)
+        final_result = re.sub(r'<invoke.*?>.*?</invoke>', '', final_result, flags=re.DOTALL)
+        final_result = final_result.strip()
+
+        if self.memory.long_term is not None:
+            self.memory.long_term.add_experience(
+                f"Successfully completed task: {user_query[:50]}..."
+            )
+
+        return final_result
 
     def chat(self):
-        """启动交互式聊天"""
+        """Start interactive chat mode"""
         print("=" * 60)
-        print(" DevPal Agent - 交互式聊天")
+        print(" DevPal Agent - Interactive Chat")
         print("=" * 60)
-        print(f" 可用工具: {', '.join(self.tool_registry.list_tool_names())}")
-        print(" 输入 'quit' 退出，'help' 查看工具帮助，'stats' 查看统计")
+        print(f" Available tools: {', '.join(self.tool_registry.list_tool_names())}")
+        print(" Enter 'quit' to exit, 'help' for tool help, 'stats' for statistics")
         print()
 
         while True:
             try:
-                user_input = input(" 你: ").strip()
+                user_input = input(" You: ").strip()
 
                 if not user_input:
                     continue
 
                 if user_input.lower() in ["quit", "exit", "q"]:
-                    print(" 再见！")
+                    print(" Goodbye!")
                     break
 
                 if user_input.lower() == "help":
@@ -240,13 +453,12 @@ class AgentEngine:
                     continue
 
                 if user_input.lower() == "stats":
-                    print(f"\n 统计信息:")
+                    print(f"\n Statistics:")
                     for k, v in self.stats.items():
                         print(f"   {k}: {v}")
                     print()
                     continue
 
-                # 执行查询
                 answer = self.run(user_input)
 
                 print(f"\n DevPal:")
@@ -254,17 +466,17 @@ class AgentEngine:
                 print()
 
             except KeyboardInterrupt:
-                print("\n\n 再见！")
+                print("\n\n Goodbye!")
                 break
             except Exception as e:
-                print(f"\n 错误: {e}\n")
+                print(f"\n Error: {e}\n")
 
     def clear_history(self):
-        """清空对话历史"""
+        """Clear conversation history"""
         self.message_history.clear()
         if self.config.verbose:
-            self._log("️ Conversation history cleared")
+            self._log("Conversation history cleared")
 
     def get_stats(self) -> Dict[str, Any]:
-        """获取统计信息"""
+        """Get agent statistics"""
         return self.stats.copy()
