@@ -10,6 +10,7 @@ from .file_writer import FileWriterTool
 from .command_executor import CommandExecutorTool
 from .code_search import CodeSearchTool
 from .compiler_analyzer import CompilerAnalyzerTool
+from .linked_list import LinkedListTool
 
 
 class ToolRegistry:
@@ -23,6 +24,8 @@ class ToolRegistry:
         self.register(CommandExecutorTool())
         self.register(CodeSearchTool())
         self.register(CompilerAnalyzerTool())
+        # 注册链表操作工具
+        self.register(LinkedListTool())
 
     def register(self, tool: BaseTool) -> None:
         """注册一 tool(s)"""
