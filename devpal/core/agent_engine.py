@@ -140,9 +140,16 @@ ALWAYS: Extract real parameter values from user's natural language query!"""
             operation = tool_args.get('operation')
             value = tool_args.get('value')
 
-            # Extract all numbers from user query
-            numbers = re.findall(r'\d+', user_query)
-            numbers = [int(n) for n in numbers]
+            # Extract numbers ONLY from node values section, not from index specifications
+            # Pattern: "节点为" or "节点" followed by numbers until next Chinese keyword
+            node_values_match = re.search(r'节点[为\s:：]*([\d\s]+)', user_query)
+            if node_values_match:
+                numbers_str = node_values_match.group(1)
+                numbers = [int(n) for n in re.findall(r'\d+', numbers_str)]
+            else:
+                # Fallback: extract all numbers but exclude index/delete related numbers
+                numbers = re.findall(r'\d+', user_query)
+                numbers = [int(n) for n in numbers]
 
             # Heuristic 0: Force consistent list name across ALL operations
             # Always use 'demo_list' regardless of what LLM generates
@@ -179,31 +186,46 @@ ALWAYS: Extract real parameter values from user's natural language query!"""
             # Re-get operation after possible correction
             operation = tool_args.get('operation')
 
-            # Heuristic 2: For append operations with None value: distribute numbers
+            # Heuristic 2: For append operations with ALL keyword: batch append ALL values
+            step_lower = step_description.lower()
             if operation in ['append', 'prepend'] and value is None:
-                if numbers and call_index < len(numbers):
+                # Smart batch append: if step description contains "ALL" / "所有", append all values at once
+                if 'all' in step_lower or '所有' in step_description or '全部' in step_description:
+                    tool_args = dict(tool_args)
+                    tool_args['value'] = numbers  # Pass entire list for batch append
+                    self._log(f"  [Batch Fix] Auto-filled ALL {len(numbers)} values: {numbers}", "FIX")
+                elif numbers and call_index < len(numbers):
+                    # Single value mode for sequential calls
                     tool_args = dict(tool_args)
                     tool_args['value'] = numbers[call_index]
                     self._log(f"  [Param Fix] Auto-filled value={tool_args['value']}", "FIX")
 
-            # Heuristic 3: Delete index auto-fill - "third node" means index 2 (0-based)
+            # Heuristic 3: Delete index auto-fill
             if operation == 'delete_at' and tool_args.get('index') is None:
-                # Try numeric patterns first
-                idx_match = re.search(r'第(\d+)个|(\d+)(st|nd|rd|th).*node|index\s*(\d+)', user_query.lower())
+                # Pattern 1: "索引为N" - already 0-based, use directly
+                idx_match = re.search(r'索引[为\s]*(\d+)', user_query)
                 if idx_match:
-                    idx = int([g for g in idx_match.groups() if g][0])
+                    idx = int(idx_match.group(1))
                     tool_args = dict(tool_args)
-                    tool_args['index'] = idx - 1  # convert to 0-based
-                    self._log(f"  [Param Fix] Auto-filled index={tool_args['index']}", "FIX")
+                    tool_args['index'] = idx  # already 0-based
+                    self._log(f"  [Param Fix] Auto-filled index={idx} (from 索引N - 0-based)", "FIX")
+                # Pattern 2: "第N个" or "N-th node" - 1-based, convert to 0-based
                 else:
-                    # Chinese ordinal word pattern matching
-                    ordinal_map = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9}
-                    for word, num in ordinal_map.items():
-                        if f'第{word}个' in user_query:
-                            tool_args = dict(tool_args)
-                            tool_args['index'] = num - 1  # convert to 0-based
-                            self._log(f"  [Param Fix] Auto-filled index={tool_args['index']} (from 第{word}个)", "FIX")
-                            break
+                    idx_match = re.search(r'第(\d+)个|(\d+)(st|nd|rd|th).*node|index\s*(\d+)\s*node', user_query.lower())
+                    if idx_match:
+                        idx = int([g for g in idx_match.groups() if g][0])
+                        tool_args = dict(tool_args)
+                        tool_args['index'] = idx - 1  # convert 1-based to 0-based
+                        self._log(f"  [Param Fix] Auto-filled index={tool_args['index']} (from 第N个/N-th)", "FIX")
+                    # Pattern 3: Chinese ordinal word pattern matching (第N个 where N is Chinese char)
+                    else:
+                        ordinal_map = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9}
+                        for word, num in ordinal_map.items():
+                            if f'第{word}个' in user_query:
+                                tool_args = dict(tool_args)
+                                tool_args['index'] = num - 1  # convert 1-based to 0-based
+                                self._log(f"  [Param Fix] Auto-filled index={tool_args['index']} (from 第{word}个)", "FIX")
+                                break
 
         return tool_args
 

@@ -648,7 +648,24 @@ class LinkedListTool(BaseTool):
             if params.new_value is not None:
                 func_params["new_value"] = params.new_value
 
-            # 执行
+            # 智能批量追加：当 append 的 value 是列表时，批量追加所有值
+            if params.operation == "append" and isinstance(params.value, (list, tuple)):
+                results = []
+                for val in params.value:
+                    single_params = {**func_params, "value": val}
+                    result = AppendNode(context)(**single_params)
+                    if not result.success:
+                        return ToolResult.error(
+                            f"批量追加失败: {result.error_message}",
+                            data={"failed_at": val, "successful": results}
+                        )
+                    results.append(result.data)
+                return ToolResult.ok(
+                    f"批量追加 {len(results)} 个节点成功",
+                    data={"count": len(results), "nodes": params.value}
+                )
+
+            # 普通执行
             result = func(**func_params)
 
             if result.success:
