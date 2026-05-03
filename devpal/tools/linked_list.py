@@ -3,10 +3,16 @@
 链表工具模块
 基于抽象 FunctionCall 实现链表的创建、增删改查操作
 """
+import json
+import os
 from typing import Any, Optional, List, Dict
 from pydantic import Field
 from .function_call_base import AbstractFunctionCall, FunctionCallContext, ExecutionResult
 from .base import BaseTool, ToolResult
+
+
+# 持久化文件路径
+LINKED_LIST_STORAGE_FILE = "./data/linked_lists.json"
 
 
 class ListNode:
@@ -245,32 +251,73 @@ class LinkedList:
         }
 
 
-# 全局链表注册表
+# 全局链表注册表 - 支持持久化
 _linked_lists: Dict[str, LinkedList] = {}
+
+
+def _ensure_storage_dir():
+    """确保存储目录存在"""
+    os.makedirs(os.path.dirname(LINKED_LIST_STORAGE_FILE), exist_ok=True)
+
+
+def _save_linked_lists():
+    """将所有链表保存到文件"""
+    _ensure_storage_dir()
+    data = {}
+    for name, ll in _linked_lists.items():
+        data[name] = ll.to_list()
+    with open(LINKED_LIST_STORAGE_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False)
+
+
+def _load_linked_lists():
+    """从文件加载所有链表"""
+    if os.path.exists(LINKED_LIST_STORAGE_FILE):
+        try:
+            with open(LINKED_LIST_STORAGE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            for name, values in data.items():
+                ll = LinkedList(name)
+                for v in values:
+                    ll.append(v)
+                _linked_lists[name] = ll
+        except Exception:
+            pass
+
+
+# 初始化时加载已保存的链表
+_load_linked_lists()
 
 
 def get_linked_list(name: str) -> Optional[LinkedList]:
     """获取指定名称的链表"""
+    # 每次操作前尝试加载，支持跨进程共享
+    _load_linked_lists()
     return _linked_lists.get(name)
 
 
 def create_linked_list(name: str) -> LinkedList:
     """创建或获取链表"""
+    _load_linked_lists()
     if name not in _linked_lists:
         _linked_lists[name] = LinkedList(name)
+    _save_linked_lists()
     return _linked_lists[name]
 
 
 def delete_linked_list(name: str) -> bool:
     """删除链表"""
+    _load_linked_lists()
     if name in _linked_lists:
         del _linked_lists[name]
+        _save_linked_lists()
         return True
     return False
 
 
 def get_all_linked_lists() -> List[str]:
     """获取所有链表名称"""
+    _load_linked_lists()
     return list(_linked_lists.keys())
 
 
@@ -309,7 +356,22 @@ class AppendNode(AbstractFunctionCall):
         if ll is None:
             raise ValueError(f"链表 '{params.list_name}' 不存在")
 
+        # Handle batch append when value is a list
+        if isinstance(params.value, list):
+            for v in params.value:
+                ll.append(v)
+            last_index = ll.size - 1
+            _save_linked_lists()
+            return {
+                "list_name": params.list_name,
+                "index": last_index,
+                "value": params.value,
+                "size": ll.size,
+                "batch_count": len(params.value)
+            }
+
         index = ll.append(params.value)
+        _save_linked_lists()
         return {
             "list_name": params.list_name,
             "index": index,
@@ -334,6 +396,7 @@ class PrependNode(AbstractFunctionCall):
             raise ValueError(f"链表 '{params.list_name}' 不存在")
 
         index = ll.prepend(params.value)
+        _save_linked_lists()
         return {
             "list_name": params.list_name,
             "index": index,
@@ -361,6 +424,7 @@ class InsertNode(AbstractFunctionCall):
         success = ll.insert(params.index, params.value)
         if not success:
             raise ValueError(f"插入失败: 索引 {params.index} 超出范围 [0, {ll.size}]")
+        _save_linked_lists()
 
         return {
             "list_name": params.list_name,
@@ -388,6 +452,7 @@ class DeleteNodeAtIndex(AbstractFunctionCall):
         deleted_value = ll.delete_at(params.index)
         if deleted_value is None:
             raise ValueError(f"删除失败: 索引 {params.index} 超出范围")
+        _save_linked_lists()
 
         return {
             "list_name": params.list_name,
@@ -415,6 +480,7 @@ class DeleteNodeByValue(AbstractFunctionCall):
         index = ll.delete_value(params.value)
         if index == -1:
             raise ValueError(f"删除失败: 链表中不存在值 '{params.value}'")
+        _save_linked_lists()
 
         return {
             "list_name": params.list_name,
@@ -447,6 +513,7 @@ class UpdateNode(AbstractFunctionCall):
         success = ll.update_at(params.index, params.new_value)
         if not success:
             raise ValueError(f"更新失败: 索引 {params.index}")
+        _save_linked_lists()
 
         return {
             "list_name": params.list_name,
@@ -542,6 +609,7 @@ class ClearLinkedList(AbstractFunctionCall):
 
         old_size = ll.size
         ll.clear()
+        _save_linked_lists()
 
         return {
             "list_name": params.list_name,
@@ -647,6 +715,19 @@ class LinkedListTool(BaseTool):
                 func_params["value"] = params.value
             if params.new_value is not None:
                 func_params["new_value"] = params.new_value
+
+            # 自动创建链表（如果操作需要链表但链表不存在）
+            auto_create_ops = ["append", "prepend", "insert", "get_list", "get", "find", "clear", "update"]
+            if params.operation in auto_create_ops:
+                from devpal.tools.linked_list import _linked_lists
+                if params.list_name not in _linked_lists:
+                    create_func = CreateLinkedList(context)
+                    create_result = create_func(name=params.list_name)
+                    if not create_result.success:
+                        return ToolResult.error(
+                            f"自动创建链表失败: {create_result.error_message}",
+                            execution_id=create_result.execution_id
+                        )
 
             # 智能批量追加：当 append 的 value 是列表时，批量追加所有值
             if params.operation == "append" and isinstance(params.value, (list, tuple)):

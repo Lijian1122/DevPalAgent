@@ -6,6 +6,7 @@ Task decomposition, feasibility evaluation, and dynamic plan adjustment
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
+import re
 
 
 @dataclass
@@ -200,20 +201,55 @@ Return JSON format:
             # Extract specific operation hints from query
             has_delete = 'delete' in q or '删除' in q
             has_update = 'update' in q or '修改' in q or '更新' in q
+            has_create = '创建' in q or '新建' in q or 'create' in q
+            only_append = not has_create and not has_delete and not has_update and ('添加' in q or 'append' in q or '尾部' in q)
 
-            steps = [
-                PlanStep(1, "Create linked list (operation: create)", "linked_list_tool", "Linked list created successfully", 9),
-                PlanStep(2, "Append ALL node values (operation: append)", "linked_list_tool", "All nodes added successfully", 10),
-                PlanStep(3, "Get and display list (operation: get_list)", "linked_list_tool", "Linked list contents", 7),
-            ]
+            if only_append:
+                # Simple case: just append to existing list
+                steps = [
+                    PlanStep(1, "Append node values (operation: append)", "linked_list_tool", "Nodes added successfully", 10),
+                    PlanStep(2, "Get and display list (operation: get_list)", "linked_list_tool", "Linked list contents", 7),
+                ]
+            else:
+                # 智能规划：根据查询关键词动态生成步骤
+                steps = []
+                step_idx = 1
+                q_lower = query.lower()
 
-            if has_delete:
-                steps.append(PlanStep(4, "Delete the specified node (operation: delete_at)", "linked_list_tool", "Node deleted successfully", 8))
+                # 1. Create 步骤
+                if has_create:
+                    steps.append(PlanStep(step_idx, "Create linked list (operation: create)", "linked_list_tool", "Linked list created successfully", 9))
+                    step_idx += 1
 
-            if has_update:
-                steps.append(PlanStep(4 if not has_delete else 5, "Update the specified node (operation: update)", "linked_list_tool", "Node updated successfully", 8))
+                # 2. Append 步骤：仅当有添加相关关键词时才添加
+                has_digits = bool(re.search(r'\d', query))
+                # 纯删除操作不需要 append 步骤（数字可能是要删除的值，不是要添加的值）
+                has_append = '添加' in query or 'append' in q_lower or '尾部' in query or (has_digits and not has_delete)
+                if has_append or (not has_delete and not has_update):  # 如果既不删也不改，默认是添加
+                    steps.append(PlanStep(step_idx, "Append ALL node values (operation: append)", "linked_list_tool", "All nodes added successfully", 10))
+                    step_idx += 1
 
-            steps.append(PlanStep(len(steps) + 1, "Verify final state (operation: get_list)", "linked_list_tool", "Final linked list state", 6))
+                # 3. 显示当前状态（删除前先显示）
+                steps.append(PlanStep(step_idx, "Get and display list (operation: get_list)", "linked_list_tool", "Linked list contents", 7))
+                step_idx += 1
+
+                # 4. Delete 步骤：按值删除 vs 按索引删除
+                if has_delete:
+                    # 检查是否是按索引删除（第N个节点）
+                    is_delete_by_index = '第' in query and ('个' in query or '节点' in query)
+                    if is_delete_by_index:
+                        steps.append(PlanStep(step_idx, "Delete node by index (operation: delete_at)", "linked_list_tool", "Node deleted successfully", 8))
+                    else:
+                        steps.append(PlanStep(step_idx, "Delete node by value (operation: delete_value)", "linked_list_tool", "Node deleted successfully", 8))
+                    step_idx += 1
+
+                # 5. Update 步骤
+                if has_update:
+                    steps.append(PlanStep(step_idx, "Update the specified node (operation: update)", "linked_list_tool", "Node updated successfully", 8))
+                    step_idx += 1
+
+                # 6. 最终验证
+                steps.append(PlanStep(step_idx, "Verify final state (operation: get_list)", "linked_list_tool", "Final linked list state", 6))
         else:
             steps = [
                 PlanStep(1, "Check current state and environment", "execute_command", "Current environment info", 7),

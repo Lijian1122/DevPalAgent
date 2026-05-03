@@ -1,0 +1,104 @@
+sequenceDiagram
+    autonumber
+    actor 用户 as 用户
+    participant CLI as 命令行接口
+    participant AE as 代理引擎
+    participant P as 规划器
+    participant STM as 短期记忆
+    participant LLM as Claude大语言模型
+    participant TR as 工具注册表
+    participant Tool as 具体工具
+    participant R as 反思器
+    participant LTM as 长期记忆
+    participant EM as 错误记忆
+
+    Note over 用户,EM: DevPal Agent v1.0 执行时序图
+
+    %% 1. 初始化阶段
+    用户->>CLI: 输入查询
+    CLI->>AE: run(query)
+    Note over AE: 初始化: 记忆, 规划器, 反思器
+
+    %% 2. 规划阶段
+    AE->>P: generate_plan(query)
+    Note over P: 检测任务复杂度
+    alt 简单任务 (文件读取/列表)
+        P->>P: 生成2步简单计划
+    else 复杂任务
+        P->>P: 启发式任务分解
+    end
+    P->>P: evaluate_feasibility(plan)
+    Note over P: 安全检查: 危险操作, 连续性
+    P-->>AE: 返回计划+可行性评分
+
+    alt 计划不可行
+        AE-->>用户: 返回错误信息
+    end
+
+    %% 3. 执行-反思循环
+    loop 每个步骤 (最大迭代次数限制)
+        AE->>STM: add_user(query)
+        AE->>STM: get_messages()
+        Note over AE: 构建增强提示词 (记忆+历史)
+
+        %% LLM调用
+        AE->>LLM: 发送请求 (model, max_tokens, system, messages, tools)
+        LLM-->>AE: 返回响应 (文本+工具调用)
+        AE->>AE: 解析响应内容
+
+        alt 无工具调用 (步骤完成)
+            AE->>P: mark_step_complete(success=True)
+        else 有工具调用
+            AE->>STM: add_tool_use_message(tool_calls)
+
+            %% 工具执行循环
+            loop 每个工具调用
+                AE->>TR: execute_tool(工具名, 参数)
+                TR->>Tool: 调用具体工具
+                alt 工具执行成功
+                    Tool-->>TR: 返回内容
+                else 工具执行失败
+                    Tool-->>TR: 返回错误信息
+                end
+                TR-->>AE: ToolResult对象
+            end
+
+            AE->>STM: add_tool_results(results)
+
+            %% 反思阶段
+            AE->>R: reflect_step(步骤描述, 执行结果)
+            R->>R: 分析成功/失败原因
+            R->>R: 匹配错误模式
+            Note over R: 6种错误类型检测
+            R->>R: 提取经验教训
+
+            %% 记忆持久化
+            R->>LTM: add_knowledge(经验教训)
+            R->>EM: add_error(错误信息)
+
+            %% 计划调整决策
+            R->>R: 需要调整计划?
+            alt 需要调整
+                R-->>AE: 返回调整建议
+                AE->>P: adjust_plan(当前步骤, 结果, 反馈)
+                Note over P: 插入新步骤或修改计划
+            end
+
+            AE->>P: mark_step_complete()
+        end
+
+        Note over AE: 进入下一个步骤
+    end
+
+    %% 4. 终态处理
+    AE->>P: generate_final_summary(plan)
+    Note over AE: 生成执行总结报告
+
+    %% 生成最终答案
+    AE->>LLM: 请求生成最终答案 (无工具调用)
+    LLM-->>AE: 返回最终响应
+    AE->>LTM: add_experience(成功记录)
+
+    AE-->>用户: 返回最终答案+执行总结
+
+    Note over 用户,EM: 执行完成
