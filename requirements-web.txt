@@ -1,0 +1,8 @@
+# DevPal Web UI 依赖
+# 安装命令: pip install -r requirements-web.txt
+
+gradio>=4.0.0
+
+# 静态分析工具（可选）
+clang-tidy>=16.0.0        # C++ 静态分析 (需要 LLVM)
+# cppcheck>=2.10.0         # C++ 静态分析 (可选，可单独安装)

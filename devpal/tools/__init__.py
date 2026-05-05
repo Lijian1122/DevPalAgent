@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-DevPal Agent 工具系统 - 阶段2完整版本
-包含核心工具 + 抽象 FunctionCall + 链表操作工具
+DevPal Agent 工具系统 - 阶段4完整版本
+包含核心工具 + 抽象 FunctionCall + 链表操作工具 + Git 工具 + 静态分析工具
 """
 from .base import BaseTool, ToolResult, ToolSecurity, retry
 from .file_reader import FileReaderTool
@@ -10,6 +10,18 @@ from .command_executor import CommandExecutorTool
 from .code_search import CodeSearchTool
 from .compiler_analyzer import CompilerAnalyzerTool
 from .registry import ToolRegistry, registry
+from .git_tool import GitTool
+from .static_analyzer import StaticAnalyzer
+from .code_review import CodeReviewTool
+from .msvc_asan_compiler import MsvcAsanCompilerTool
+from .self_source_reader import SelfSourceReaderTool
+from .self_improve import SelfImproveTool
+from .plugin_system import PluginSystemTool
+from .auto_fixer import AutoFixerTool
+from .test_generator import TestGeneratorTool
+from .test_runner import TestRunnerTool
+from .test_doc_generator import TestDocGeneratorTool
+from .test_orchestrator import TestOrchestratorTool
 from .function_call_base import (
     AbstractFunctionCall,
     FunctionCallContext,
@@ -51,6 +63,20 @@ __all__ = [
     "CompilerAnalyzerTool",
     "ToolRegistry",
     "registry",
+    # 阶段4新工具
+    "GitTool",
+    "StaticAnalyzer",
+    "CodeReviewTool",
+    "MsvcAsanCompilerTool",
+    # 阶段5新工具
+    "SelfSourceReaderTool",
+    "SelfImproveTool",
+    "PluginSystemTool",
+    "AutoFixerTool",
+    "TestGeneratorTool",
+    "TestRunnerTool",
+    "TestDocGeneratorTool",
+    "TestOrchestratorTool",
     # 抽象 FunctionCall 模块
     "AbstractFunctionCall",
     "FunctionCallContext",

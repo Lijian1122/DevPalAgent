@@ -11,6 +11,18 @@ from .command_executor import CommandExecutorTool
 from .code_search import CodeSearchTool
 from .compiler_analyzer import CompilerAnalyzerTool
 from .linked_list import LinkedListTool
+from .git_tool import GitTool
+from .static_analyzer import StaticAnalyzer
+from .code_review import CodeReviewTool
+from .msvc_asan_compiler import MsvcAsanCompilerTool
+from .self_source_reader import SelfSourceReaderTool
+from .self_improve import SelfImproveTool
+from .plugin_system import PluginSystemTool
+from .auto_fixer import AutoFixerTool
+from .test_generator import TestGeneratorTool
+from .test_runner import TestRunnerTool
+from .test_doc_generator import TestDocGeneratorTool
+from .test_orchestrator import TestOrchestratorTool
 
 
 class ToolRegistry:
@@ -26,6 +38,25 @@ class ToolRegistry:
         self.register(CompilerAnalyzerTool())
         # 注册链表操作工具
         self.register(LinkedListTool())
+        # 注册阶段4新工具
+        self.register(GitTool())
+        self.register(StaticAnalyzer())
+        # 注册阶段5新工具
+        self.register(SelfSourceReaderTool())
+        self.register(SelfImproveTool())
+        self.register(PluginSystemTool())
+        # 注册新工具: 代码审查和MSVC ASAN编译器
+        self.register(CodeReviewTool())
+        self.register(MsvcAsanCompilerTool())
+        # 注册自动修复工具
+        self.register(AutoFixerTool())
+        # 注册测试工具
+        self.register(TestGeneratorTool())
+        self.register(TestRunnerTool())
+        # 注册测试文档工具
+        self.register(TestDocGeneratorTool())
+        # 注册测试流程编排工具
+        self.register(TestOrchestratorTool())
 
     def register(self, tool: BaseTool) -> None:
         """注册一 tool(s)"""

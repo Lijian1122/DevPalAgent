@@ -150,9 +150,19 @@ Return JSON format:
 
     def _is_simple_task(self, query: str) -> bool:
         """Check if task is simple"""
-        simple_patterns = ['read', 'list', 'cat', 'file', 'directory', 'dir']
+        simple_patterns = ['read', 'list', 'cat', 'directory', 'dir']
+        complex_patterns = ['test', '修复', '审查', '生成', 'compile', 'build', '链表', 'linked']
         q = query.lower()
-        return sum(1 for p in simple_patterns if p in q) > 0
+
+        # 如果包含复杂任务的关键词，不视为简单任务
+        for cp in complex_patterns:
+            if cp in q:
+                return False
+
+        # 只有纯粹的读取才是简单任务
+        has_simple = sum(1 for p in simple_patterns if p in q) > 0
+        # 但如果是 "read AND fix/test" 则不是简单任务
+        return has_simple and not any(x in q for x in ['fix', 'and fix', '并'])
 
     def _generate_simple_plan(self, query: str) -> Plan:
         """Generate quick plan for simple tasks"""
@@ -190,6 +200,17 @@ Return JSON format:
                 PlanStep(3, "Execute build command", "execute_command", "Build output log", 10),
                 PlanStep(4, "Analyze build errors and provide fixes", "compiler_analyzer", "Error analysis report", 9),
                 PlanStep(5, "Summarize results for user", None, "Final report", 5),
+            ]
+        elif any(k in q for k in ['test', '测试', '修复', 'review', '审查', '用例', 'orchestrator']):
+            # 测试相关任务：使用 test_orchestrator 工具一站式完成
+            steps = [
+                PlanStep(
+                    1,
+                    "使用 test_orchestrator 执行完整测试流程：代码审查、自动修复、生成测试文档、生成测试代码、运行测试",
+                    "test_orchestrator",
+                    "完整的测试报告和所有输出文件",
+                    10
+                ),
             ]
         elif any(k in q for k in ['search', 'find', 'grep']):
             steps = [

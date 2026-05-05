@@ -412,6 +412,59 @@ ALWAYS: Extract real parameter values from user's natural language query!"""
                     current_step_idx += 1
                 continue
 
+            # SHORTCUT: For test_orchestrator steps, execute directly
+            if plan and current_step.tool_needed == 'test_orchestrator':
+                # Extract filename from user query
+                file_path = None
+                # Match common file extensions
+                match = re.search(r'([\w./\\-]+\.(cpp|c|h|py|js|ts|java))', user_query)
+                if match:
+                    file_path = match.group(1)
+                else:
+                    # Fallback: look for filename patterns
+                    match = re.search(r'([\w_-]+\.\w+)', user_query)
+                    if match:
+                        file_path = match.group(1)
+
+                if not file_path:
+                    # Default: try common test file
+                    file_path = 'test_threadpool_bug.cpp'
+
+                # Build args
+                project_name = file_path.replace('.', '_') if '.' in file_path else file_path
+                args = {
+                    'file_path': file_path,
+                    'project_name': project_name
+                }
+
+                # Execute directly
+                result = self.tool_registry.execute_tool('test_orchestrator', args)
+                print(f"\n    Tool: test_orchestrator")
+                print(f"      Args: {args}")
+                if result.success:
+                    print(f"      [OK] Success")
+                else:
+                    print(f"      [FAIL] {result.error_message or 'Unknown error'}")
+
+                # Add to tool results
+                all_tool_results.append({
+                    'tool_name': 'test_orchestrator',
+                    'args': args,
+                    'success': result.success,
+                    'content': result.content,
+                    'metadata': result.metadata
+                })
+
+                # Mark step complete
+                if plan:
+                    plan.mark_step_complete(
+                        current_step_idx,
+                        success=result.success,
+                        result_summary=result.content[:200]
+                    )
+                    current_step_idx += 1
+                continue
+
             # Normal flow: use LLM for other tools
             response = self.client.messages.create(
                 model=self.model,
