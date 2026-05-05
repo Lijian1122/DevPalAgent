@@ -22,6 +22,7 @@ from .test_generator import TestGeneratorTool
 from .test_runner import TestRunnerTool
 from .test_doc_generator import TestDocGeneratorTool
 from .test_orchestrator import TestOrchestratorTool
+from .code_review_report import CodeReviewReportTool
 from .function_call_base import (
     AbstractFunctionCall,
     FunctionCallContext,
@@ -77,6 +78,7 @@ __all__ = [
     "TestRunnerTool",
     "TestDocGeneratorTool",
     "TestOrchestratorTool",
+    "CodeReviewReportTool",
     # 抽象 FunctionCall 模块
     "AbstractFunctionCall",
     "FunctionCallContext",
