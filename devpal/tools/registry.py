@@ -24,6 +24,7 @@ from .test_runner import TestRunnerTool
 from .test_doc_generator import TestDocGeneratorTool
 from .test_orchestrator import TestOrchestratorTool
 from .code_review_report import CodeReviewReportTool
+from .hallucination_detector import HallucinationDetectorTool
 
 
 class ToolRegistry:
@@ -60,6 +61,8 @@ class ToolRegistry:
         self.register(TestOrchestratorTool())
         # 注册代码审查报告工具
         self.register(CodeReviewReportTool())
+        # 注册幻觉检测工具
+        self.register(HallucinationDetectorTool())
 
     def register(self, tool: BaseTool) -> None:
         """注册一 tool(s)"""

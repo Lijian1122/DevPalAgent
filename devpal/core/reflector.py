@@ -66,13 +66,102 @@ class Reflector:
             'issue': 'Execution timeout',
             'improvement': 'Increase timeout or split long commands',
             'lesson': 'Complex operations may require longer execution times'
+        },
+        'hallucination': {
+            'issue': 'LLM hallucination detected',
+            'improvement': 'Verify tool existence and parameters before execution',
+            'lesson': 'LLM may generate non-existent tools or null parameters; always validate'
+        },
+        'blocked': {
+            'issue': 'Execution blocked by safety check',
+            'improvement': 'Review hallucination detection warnings before proceeding',
+            'lesson': 'High-risk operations require explicit human confirmation'
         }
     }
+
+    # 幻觉特征信号 - 用于从执行结果中检测幻觉
+    HALLUCINATION_SIGNALS = [
+        'Blocked by hallucination detection',
+        'hallucination',
+        'not exist',
+        'not found',
+        'null',
+        'None',
+        '参数为空',
+        '工具不存在'
+    ]
 
     def __init__(self, llm_client=None, memory_manager=None):
         self.llm = llm_client
         self.memory = memory_manager
         self.execution_history = []
+        self.hallucination_count = 0
+        # 延迟导入避免循环依赖
+        self._hallucination_detector = None
+
+    @property
+    def hallucination_detector(self):
+        """懒加载幻觉检测器"""
+        if self._hallucination_detector is None:
+            from devpal.tools.hallucination_detector import HallucinationDetectorTool
+            self._hallucination_detector = HallucinationDetectorTool()
+        return self._hallucination_detector
+
+    def detect_hallucination_from_result(
+        self,
+        step_description: str,
+        execution_result: Dict[str, Any],
+        content: str
+    ) -> Dict[str, Any]:
+        """
+        从执行结果中检测幻觉
+
+        Returns:
+            {
+                'detected': bool,  检测到了吗
+                'type': str,      幻觉类型
+                'severity': str,  严重程度
+                'details': str    详细信息
+            }
+        """
+        result = {'detected': False, 'type': None, 'severity': 'low', 'details': ''}
+        content_lower = content.lower()
+
+        # 1. 检测明确的幻觉阻止信号
+        if 'Blocked by hallucination detection' in content:
+            result['detected'] = True
+            result['type'] = 'pre_execution_block'
+            result['severity'] = 'high'
+            result['details'] = '幻觉检测阻止了潜在的危险工具调用'
+            return result
+
+        # 2. 检测工具不存在（典型幻觉）
+        if '未知工具' in content or 'unknown tool' in content_lower or 'does not exist' in content_lower:
+            result['detected'] = True
+            result['type'] = 'tool_not_exist'
+            result['severity'] = 'high'
+            result['details'] = 'LLM 调用了不存在的工具，这是典型幻觉'
+            return result
+
+        # 3. 检测参数空值幻觉
+        if '参数' in content and ('空' in content or 'None' in content or 'null' in content):
+            result['detected'] = True
+            result['type'] = 'null_parameter'
+            result['severity'] = 'medium'
+            result['details'] = '工具参数为空，可能是 LLM 未正确生成参数'
+            return result
+
+        # 4. 检测连续失败（可能是持续幻觉）
+        recent_failures = sum(
+            1 for h in self.execution_history[-3:] if not h['success']
+        )
+        if recent_failures >= 2:
+            result['detected'] = True
+            result['type'] = 'repetitive_failure'
+            result['severity'] = 'high'
+            result['details'] = '连续多次执行失败，可能是 LLM 陷入了幻觉循环'
+
+        return result
 
     def reflect_step(
         self,
@@ -100,9 +189,32 @@ class Reflector:
             goal_achieved=success
         )
 
-        if success:
+        # ========== 幻觉检测 START ==========
+        hallucination = self.detect_hallucination_from_result(
+            step_description, execution_result, content
+        )
+        if hallucination['detected']:
+            self.hallucination_count += 1
+            reflection.issues_found.append(
+                f"[幻觉检测 {hallucination['severity'].upper()}] {hallucination['details']}"
+            )
+            reflection.improvements.append(
+                "建议暂停执行，人工检查工具名称和参数是否正确"
+            )
+            reflection.lessons_learned.append(
+                f"检测到幻觉类型: {hallucination['type']} - {hallucination['details']}"
+            )
+
+            # 高风险幻觉需要调整计划
+            if hallucination['severity'] == 'high':
+                reflection.need_plan_adjustment = True
+                reflection.adjustment_suggestion = hallucination['details']
+                reflection.confidence_score = 0.2
+        # ========== 幻觉检测 END ==========
+
+        if success and not hallucination['detected']:
             self._analyze_success(reflection, step_description, content)
-        else:
+        elif not success:
             self._analyze_failure(reflection, step_description, error, content)
 
         self.execution_history.append({

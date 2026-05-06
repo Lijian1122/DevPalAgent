@@ -97,9 +97,20 @@ class Planner:
         'poweroff', 'shutdown', 'reboot'
     }
 
-    def __init__(self, llm_client=None, system_prompt: str = ""):
+    def __init__(self, llm_client=None, system_prompt: str = "", tool_registry=None):
         self.llm = llm_client
         self.system_prompt = system_prompt or self._default_system_prompt()
+        self.tool_registry = tool_registry
+        # 延迟导入避免循环依赖
+        self._hallucination_detector = None
+
+    @property
+    def hallucination_detector(self):
+        """懒加载幻觉检测器"""
+        if self._hallucination_detector is None:
+            from devpal.tools.hallucination_detector import HallucinationDetectorTool
+            self._hallucination_detector = HallucinationDetectorTool()
+        return self._hallucination_detector
 
     def _default_system_prompt(self) -> str:
         return """You are a professional software development planning expert.
@@ -299,7 +310,7 @@ Please generate a detailed execution plan in JSON format as specified.
 
     def evaluate_feasibility(self, plan: Plan) -> tuple[bool, List[str]]:
         """
-        Evaluate plan feasibility
+        Evaluate plan feasibility with hallucination detection
 
         Returns:
             (is_feasible, list_of_issues_or_risks)
@@ -309,6 +320,27 @@ Please generate a detailed execution plan in JSON format as specified.
         if not plan.steps:
             issues.append("Plan contains no execution steps")
 
+        # ========== 幻觉检测 START ==========
+        # 构建计划文本用于检测
+        plan_text = self._plan_to_text(plan)
+        available_tools = self.tool_registry.list_tool_names() if self.tool_registry else []
+        context = f"可用工具: {', '.join(available_tools)}"
+
+        # 调用幻觉检测器
+        detection_result = self.hallucination_detector.execute(
+            self.hallucination_detector.Parameters(
+                check_type="plan",
+                content_to_check=plan_text,
+                context=context
+            )
+        )
+
+        if detection_result.success:
+            hallucination_issues = detection_result.metadata.get('issues', [])
+            for issue in hallucination_issues:
+                issues.append(f"[幻觉检测 {issue['severity'].upper()}] {issue['message']} - {issue['suggestion']}")
+        # ========== 幻觉检测 END ==========
+
         for step in plan.steps:
             step_text = step.description.lower()
             # Skip danger check for linked_list_tool operations (node deletion is safe)
@@ -317,6 +349,10 @@ Please generate a detailed execution plan in JSON format as specified.
             dangers = [k for k in self.DANGEROUS_KEYWORDS if k in step_text]
             if dangers:
                 issues.append(f"Step {step.step_number} contains dangerous operations: {', '.join(dangers)}")
+
+            # 额外检查：工具是否存在
+            if step.tool_needed and available_tools and step.tool_needed not in available_tools:
+                issues.append(f"[幻觉] Step {step.step_number} 引用了不存在的工具: {step.tool_needed}")
 
         numbers = sorted(s.step_number for s in plan.steps)
         expected = list(range(1, len(numbers) + 1))
@@ -331,6 +367,22 @@ Please generate a detailed execution plan in JSON format as specified.
         plan.feasibility_score = max(0.0, feasibility_score)
 
         return feasible, issues
+
+    def _plan_to_text(self, plan: Plan) -> str:
+        """将计划转换为文本格式用于检测"""
+        lines = [
+            f"Overall Goal: {plan.overall_goal}",
+            f"Complexity: {plan.complexity}",
+            f"Feasibility: {plan.feasibility_score}",
+            ""
+        ]
+        for step in plan.steps:
+            lines.append(f"Step {step.step_number}: {step.description}")
+            if step.tool_needed:
+                lines.append(f"  Tool: {step.tool_needed}")
+            if step.expected_output:
+                lines.append(f"  Expected: {step.expected_output}")
+        return "\n".join(lines)
 
     def adjust_plan(
         self,

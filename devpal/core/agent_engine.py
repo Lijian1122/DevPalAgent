@@ -51,7 +51,7 @@ class AgentEngine:
 
         self.message_history = self.memory.short_term
 
-        self.planner = Planner() if self.config.enable_planning else None
+        self.planner = Planner(tool_registry=self.tool_registry) if self.config.enable_planning else None
         self.reflector = Reflector(memory_manager=self.memory) if self.config.enable_reflection else None
 
         self.base_system_prompt = self._build_base_system_prompt()
@@ -234,6 +234,80 @@ ALWAYS: Extract real parameter values from user's natural language query!"""
                                 break
 
         return tool_args
+
+    def _check_tool_call_hallucination(
+        self,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        step_description: str,
+        user_query: str = ""
+    ) -> Dict[str, Any]:
+        """
+        工具调用幻觉检测：执行前检测潜在幻觉风险
+
+        Returns:
+            {
+                'has_hallucination': bool,  是否检测到幻觉
+                'block_execution': bool,   是否阻止执行
+                'risk_level': str,        风险等级 high/medium/low
+                'reason': str,             原因
+                'issues': List           问题列表
+            }
+        """
+        result = {
+            'has_hallucination': False,
+            'block_execution': False,
+            'risk_level': 'low',
+            'reason': '',
+            'issues': []
+        }
+
+        # 1. 检测工具是否存在
+        available_tools = self.tool_registry.list_tool_names()
+        if tool_name not in available_tools:
+            result['has_hallucination'] = True
+            result['risk_level'] = 'high'
+            result['block_execution'] = True
+            result['reason'] = f'工具 {tool_name} 不存在，可用工具: {available_tools}'
+            result['issues'].append('wrong_tool')
+            return result
+
+        # 2. 检测必填参数是否为 None/空（高风险幻觉）
+        for key, value in tool_args.items():
+            if value is None or value == '' or value == 'null':
+                # 特例：linked_list_tool 的 value 允许 None（表示不填参数列表）
+                if tool_name == 'linked_list_tool' and key == 'value':
+                    continue
+                result['has_hallucination'] = True
+                result['risk_level'] = 'high'
+                result['reason'] = f'参数 {key} 为空/None，这是 LLM 常见幻觉'
+                result['issues'].append(f'null_param_{key}')
+                # 不阻止执行，让 _intelligent_param_fix 会尝试修复，或者让工具自己处理
+                result['block_execution'] = False
+                return result
+
+        # 3. 高风险操作检测（需要人工确认）
+        high_risk_keywords = {'delete', 'remove', 'rm -rf', 'format', 'drop', 'truncate'}
+        step_lower = step_description.lower()
+        for keyword in high_risk_keywords:
+            if keyword in tool_name or keyword in step_lower:
+                result['has_hallucination'] = True
+                result['risk_level'] = 'high'
+                result['reason'] = f'检测到高风险操作: {keyword}，建议人工确认'
+                result['issues'].append('high_risk_operation')
+                result['block_execution'] = False  # 不强制阻止，但需要打标记
+                break
+
+        # 4. 检测参数长度异常（可能是 LLM 输出混乱）
+        for key, value in tool_args.items():
+            if isinstance(value, str) and len(value) > 5000:
+                result['has_hallucination'] = True
+                result['risk_level'] = 'medium'
+                result['reason'] = f'参数 {key} 过长 ({len(value)} chars)，可能是输出混乱'
+                result['issues'].append('param_too_long')
+                break
+
+        return result
 
     def _extract_response_content(self, response) -> tuple[str, List[Dict]]:
         """Parse LLM response, extract text and tool calls"""
@@ -523,6 +597,32 @@ ALWAYS: Extract real parameter values from user's natural language query!"""
 
                 # Intelligent parameter fix for LLM hallucinations
                 tool_args = self._intelligent_param_fix(tool_name, tool_args, user_query, idx, step_desc)
+
+                # ========== 幻觉检测 START ==========
+                hallucination_check = self._check_tool_call_hallucination(
+                    tool_name, tool_args, step_desc, user_query
+                )
+                if hallucination_check['block_execution']:
+                    print(f"\n    ⚠️ Tool: {tool_name}")
+                    print(f"      [BLOCKED] 检测到高风险幻觉，已阻止执行: {hallucination_check['reason']}")
+                    step_success = False
+                    step_error_msg = f"幻觉检测阻止执行: {hallucination_check['reason']}"
+                    result_data = {
+                        "tool_use_id": tool_id,
+                        "tool_name": tool_name,
+                        "args": tool_args,
+                        "success": False,
+                        "content": f"Blocked by hallucination detection: {hallucination_check['reason']}",
+                        "metadata": {"blocked": True, "hallucination": hallucination_check}
+                    }
+                    all_tool_results.append(result_data)
+                    tool_message_result = {
+                        "tool_use_id": tool_id,
+                        "content": f"Blocked by hallucination detection: {hallucination_check['reason']}"
+                    }
+                    tool_results.append(tool_message_result)
+                    continue
+                # ========== 幻觉检测 END ==========
 
                 print(f"\n    Tool: {tool_name}")
                 print(f"      Args: {tool_args}")
