@@ -40,6 +40,7 @@ class ToolSecurity:
         'cl', 'cl.exe', 'link', 'link.exe', 'msbuild',
         'cmake', 'ninja', 'make',
         'cmd', 'cmd.exe',  # Windows 命令行
+        'mkdir', 'md',  # 创建目录
     }
 
     # 危险命令黑名单

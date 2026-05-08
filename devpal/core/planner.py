@@ -162,7 +162,8 @@ Return JSON format:
     def _is_simple_task(self, query: str) -> bool:
         """Check if task is simple"""
         simple_patterns = ['read', 'list', 'cat', 'directory', 'dir']
-        complex_patterns = ['test', '修复', '审查', '生成', 'compile', 'build', '链表', 'linked']
+        complex_patterns = ['test', '修复', '审查', '生成', 'compile', 'build', '链表', 'linked',
+                            '实现', '需求', '完整', 'requirement', 'spec', 'implement', 'flow']
         q = query.lower()
 
         # 如果包含复杂任务的关键词，不视为简单任务
@@ -211,6 +212,17 @@ Return JSON format:
                 PlanStep(3, "Execute build command", "execute_command", "Build output log", 10),
                 PlanStep(4, "Analyze build errors and provide fixes", "compiler_analyzer", "Error analysis report", 9),
                 PlanStep(5, "Summarize results for user", None, "Final report", 5),
+            ]
+        elif any(k in q for k in ['需求', 'requirement', 'spec', '实现', 'implement', '完整', '流程']):
+            # 需求驱动开发任务：使用 project_generator + spec_tool 完整 OpenSpec 流程
+            steps = [
+                PlanStep(
+                    1,
+                    "运行完整 OpenSpec 需求驱动开发流程：解析需求、规范分析、代码生成、项目创建、代码审查、测试执行",
+                    "project_generator",
+                    "完整的项目结构、代码文件、测试报告和验证输出",
+                    10
+                ),
             ]
         elif any(k in q for k in ['test', '测试', '修复', 'review', '审查', '用例', 'orchestrator']):
             # 测试相关任务：使用 test_orchestrator 工具一站式完成

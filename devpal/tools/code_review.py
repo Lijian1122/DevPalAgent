@@ -201,6 +201,22 @@ class CodeReviewTool(BaseTool):
                         'suggestion': 'workers.size() 就是实际线程数，不需要 +1'
                     })
 
+                # 5. std::string 函数返回 bool 类型不匹配
+                # 检查函数签名是否为 std::string 返回类型
+                func_start = max(0, i - 10)
+                func_context = '\n'.join(lines[func_start:i])
+                if 'std::string' in func_context or 'string ' in func_context:
+                    # 检查返回语句是否是 bool 值
+                    if 'return true' in line_before or 'return false' in line_before:
+                        issues.append({
+                            'file': file_path,
+                            'line': i,
+                            'severity': 'error',
+                            'category': 'bug',
+                            'message': f'返回值类型不匹配: {line_stripped}',
+                            'suggestion': '函数返回类型是 std::string，但返回了 bool 值。应该返回字符串或空字符串'
+                        })
+
             # Security checks - 增强版
             if 'security' in check_types:
                 if 'strcpy(' in line_before or 'strcat(' in line_before:

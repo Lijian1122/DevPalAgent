@@ -156,16 +156,41 @@ class TestGeneratorTool(BaseTool):
                 'methods': methods
             })
 
-        # 提取函数定义（排除类内函数）
-        func_pattern = r'(?:^|\n)(?:\w+\s+)+\**(\w+)\s*\(([^)]*)\)\s*(?:const)?\s*\{'
-        for match in re.finditer(func_pattern, source_code):
+        # 提取函数定义（排除类内函数，支持跨行定义）
+        # 先预处理：将跨行的函数签名合并为单行（删除参数之间的换行）
+        processed_code = source_code
+        # 匹配函数名(...) 跨越多行的情况
+        func_pattern = r'(\w+)\s*\(([^)]*)\)\s*(?:const)?\s*\{'
+        for match in re.finditer(func_pattern, source_code, re.DOTALL):
             func_name = match.group(1)
             # 排除常见的非函数关键字
             if func_name not in ['if', 'for', 'while', 'switch', 'catch', 'class', 'struct']:
-                functions.append({
-                    'name': func_name,
-                    'params': match.group(2).strip()
-                })
+                # 检查前面是否有返回类型（避免匹配到函数调用）
+                match_start = match.start()
+                # 向前查看最多 100 个字符，寻找返回类型
+                prefix = source_code[max(0, match_start - 100):match_start].strip()
+                # 检查前缀是否以类型关键字结尾（简化检查）
+                if prefix:
+                    # 清理前缀中可能的多余空白和注释
+                    prefix = re.sub(r'//.*', '', prefix)
+                    prefix = re.sub(r'\s+', ' ', prefix)
+                    # 如果有单词看起来像返回类型，就认为是函数定义
+                    if any(t in prefix for t in ['void', 'int', 'char', 'bool', 'std::', 'string', 'long', 'float', 'double', 'unsigned']):
+                        params = match.group(2).strip()
+                        # 清理参数中的多余空白和换行
+                        params = re.sub(r'\s+', ' ', params)
+                        functions.append({
+                            'name': func_name,
+                            'params': params
+                        })
+                    elif match_start < 200:
+                        # 在文件开头附近的，可能是全局函数
+                        params = match.group(2).strip()
+                        params = re.sub(r'\s+', ' ', params)
+                        functions.append({
+                            'name': func_name,
+                            'params': params
+                        })
 
         return {
             'classes': classes,

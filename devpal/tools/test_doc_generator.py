@@ -40,6 +40,10 @@ class TestDocGeneratorTool(BaseTool):
             default=True,
             description="是否包含测试用例质量评估"
         )
+        test_results: Optional[Dict[str, Any]] = Field(
+            default=None,
+            description="测试执行结果（来自 test_runner），包含通过数、失败数、通过率等"
+        )
 
     def _execute(self, params: Parameters) -> ToolResult:
         file_path = Path(params.file_path)
@@ -419,11 +423,16 @@ class TestDocGeneratorTool(BaseTool):
             for method in cls.get('methods', []):
                 all_params.extend(method.get('params', []))
 
-        # 数值类型边界
+        # 数值类型边界 - 兼容参数可能是 dict 或字符串的情况
         numeric_types = ['int', 'size_t', 'long', 'float', 'double', 'unsigned']
         for param in all_params:
-            type_ = param.get('type', '')
-            name = param.get('name', '')
+            if isinstance(param, dict):
+                type_ = param.get('type', '')
+                name = param.get('name', '')
+            else:
+                # 如果是字符串，直接用整个字符串作为 type
+                type_ = str(param)
+                name = str(param)
 
             if any(nt in type_ for nt in numeric_types):
                 boundaries['input_boundaries'].append({
@@ -570,16 +579,53 @@ class TestDocGeneratorTool(BaseTool):
 
         # 目录
         doc_lines.append('## 目录')
-        doc_lines.append('- [1. 测试对象概述](#1-测试对象概述)')
-        doc_lines.append('- [2. 代码结构分析](#2-代码结构分析)')
-        doc_lines.append('- [3. 测试用例详情](#3-测试用例详情)')
-        doc_lines.append('- [4. 边界条件分析](#4-边界条件分析)')
-        doc_lines.append('- [5. 测试质量评估](#5-测试质量评估)')
-        doc_lines.append('- [6. 改进建议](#6-改进建议)')
+        doc_lines.append('- [1. 测试执行结果](#1-测试执行结果)')
+        doc_lines.append('- [2. 测试对象概述](#2-测试对象概述)')
+        doc_lines.append('- [3. 代码结构分析](#3-代码结构分析)')
+        doc_lines.append('- [4. 测试用例详情](#4-测试用例详情)')
+        doc_lines.append('- [5. 边界条件分析](#5-边界条件分析)')
+        doc_lines.append('- [6. 测试质量评估](#6-测试质量评估)')
+        doc_lines.append('- [7. 改进建议](#7-改进建议)')
         doc_lines.append('')
 
-        # 1. 测试对象概述
-        doc_lines.append('## 1. 测试对象概述')
+        # 1. 测试执行结果（如果有测试结果）
+        if params.test_results:
+            doc_lines.append('## 1. 测试执行结果')
+            doc_lines.append('')
+            test_results = params.test_results
+            passed = test_results.get('tests_passed', 0)
+            total = test_results.get('tests_total', 0)
+            failed = test_results.get('tests_failed', 0)
+            pass_rate = test_results.get('pass_rate', 'N/A')
+            test_output = test_results.get('test_output', [])
+
+            # 执行状态
+            status_icon = '[OK] 全部通过' if passed == total and total > 0 else '[WARN] 部分通过' if passed > 0 else '[FAIL] 全部失败'
+            doc_lines.append(f'**执行状态**: {status_icon}')
+            doc_lines.append('')
+
+            # 结果统计
+            doc_lines.append('| 统计项 | 数量 |')
+            doc_lines.append('|--------|------|')
+            doc_lines.append(f'| 总测试数 | {total} 个 |')
+            doc_lines.append(f'| **通过数** | **{passed} 个** |')
+            doc_lines.append(f'| 失败数 | {failed} 个 |')
+            doc_lines.append(f'| **通过率** | **{pass_rate}** |')
+            doc_lines.append('')
+
+            # 执行输出（如果有）
+            if test_output and any(line.strip() for line in test_output[:20]):
+                doc_lines.append('### 测试输出日志')
+                doc_lines.append('')
+                doc_lines.append('```')
+                for line in test_output[:20]:
+                    if line.strip():
+                        doc_lines.append(line)
+                doc_lines.append('```')
+                doc_lines.append('')
+
+        # 2. 测试对象概述
+        doc_lines.append('## 2. 测试对象概述')
         doc_lines.append('')
         doc_lines.append(f'本测试文档针对 `{Path(source_file).name}` 文件中的代码模块设计测试用例。')
         doc_lines.append('')
@@ -593,12 +639,12 @@ class TestDocGeneratorTool(BaseTool):
         doc_lines.append(f'| **总测试用例数量** | **{len(test_cases)} 个** |')
         doc_lines.append('')
 
-        # 2. 代码结构分析
-        doc_lines.append('## 2. 代码结构分析')
+        # 3. 代码结构分析
+        doc_lines.append('## 3. 代码结构分析')
         doc_lines.append('')
 
         for cls in code_structure.get('classes', []):
-            doc_lines.append(f'### 2.1 类: `{cls["name"]}`')
+            doc_lines.append(f'### 3.1 类: `{cls["name"]}`')
             doc_lines.append('')
             if cls.get('member_variables'):
                 doc_lines.append('#### 成员变量')
@@ -612,15 +658,15 @@ class TestDocGeneratorTool(BaseTool):
                 doc_lines.append('')
 
         if code_structure.get('functions'):
-            doc_lines.append('### 2.2 自由函数')
+            doc_lines.append('### 3.2 自由函数')
             doc_lines.append('')
             for func in code_structure['functions']:
                 if func['name'] != 'main':
                     doc_lines.append(f'- `{func["name"]}({func["params_str"]})`')
             doc_lines.append('')
 
-        # 3. 测试用例详情 - 表格形式
-        doc_lines.append('## 3. 测试用例详情')
+        # 4. 测试用例详情 - 表格形式
+        doc_lines.append('## 4. 测试用例详情')
         doc_lines.append('')
 
         # 按测试类型分组显示表格
@@ -637,7 +683,7 @@ class TestDocGeneratorTool(BaseTool):
 
         for i, t_type in enumerate(sorted_types, 1):
             tcs = by_type[t_type]
-            doc_lines.append(f'### 3.{i} {t_type}')
+            doc_lines.append(f'### 4.{i} {t_type}')
             doc_lines.append('')
 
             # 表格表头
@@ -668,12 +714,12 @@ class TestDocGeneratorTool(BaseTool):
         doc_lines.append(f'| **合计** | **{total}** | **100%** |')
         doc_lines.append('')
 
-        # 4. 边界条件分析
-        doc_lines.append('## 4. 边界条件分析')
+        # 5. 边界条件分析
+        doc_lines.append('## 5. 边界条件分析')
         doc_lines.append('')
 
         if boundary_analysis.get('input_boundaries'):
-            doc_lines.append('### 4.1 输入参数边界')
+            doc_lines.append('### 5.1 输入参数边界')
             doc_lines.append('')
             for ib in boundary_analysis['input_boundaries']:
                 doc_lines.append(f'#### 参数: `{ib["parameter"]}` ({ib["type"]})')
@@ -681,24 +727,24 @@ class TestDocGeneratorTool(BaseTool):
                     doc_lines.append(f'- [ ] {b}')
                 doc_lines.append('')
 
-        doc_lines.append('### 4.2 通用边界情况')
+        doc_lines.append('### 5.2 通用边界情况')
         doc_lines.append('')
         for ec in boundary_analysis.get('edge_cases', []):
             doc_lines.append(f'- [ ] {ec}')
         doc_lines.append('')
 
-        doc_lines.append('### 4.3 错误/异常条件')
+        doc_lines.append('### 5.3 错误/异常条件')
         doc_lines.append('')
         for ec in boundary_analysis.get('error_conditions', []):
             doc_lines.append(f'- [ ] {ec}')
         doc_lines.append('')
 
-        # 5. 测试质量评估
-        doc_lines.append('## 5. 测试质量评估')
+        # 6. 测试质量评估
+        doc_lines.append('## 6. 测试质量评估')
         doc_lines.append('')
 
         qa = quality_assessment
-        doc_lines.append('### 5.1 总体评分')
+        doc_lines.append('### 6.1 总体评分')
         doc_lines.append('')
         doc_lines.append('| 评估项 | 结果 |')
         doc_lines.append('|--------|------|')
@@ -706,7 +752,7 @@ class TestDocGeneratorTool(BaseTool):
         doc_lines.append(f'| **评级** | **{qa["overall_grade"]}** |')
         doc_lines.append('')
 
-        doc_lines.append('### 5.2 测试覆盖率分析')
+        doc_lines.append('### 6.2 测试覆盖率分析')
         doc_lines.append('')
         cov = qa.get('coverage', {})
         doc_lines.append('| 指标 | 数值 |')
@@ -718,7 +764,7 @@ class TestDocGeneratorTool(BaseTool):
         doc_lines.append(f'| **覆盖率估算** | **{cov.get("coverage_score", 0)}%** |')
         doc_lines.append('')
 
-        doc_lines.append('### 5.3 测试用例分布统计')
+        doc_lines.append('### 6.3 测试用例分布统计')
         doc_lines.append('')
         doc_lines.append('| 测试类型 | 用例数量 |')
         doc_lines.append('|----------|----------|')
@@ -726,18 +772,18 @@ class TestDocGeneratorTool(BaseTool):
             doc_lines.append(f'| {t_type} | {count} 个 |')
         doc_lines.append('')
 
-        # 6. 改进建议
-        doc_lines.append('## 6. 改进建议')
+        # 7. 改进建议
+        doc_lines.append('## 7. 改进建议')
         doc_lines.append('')
 
-        doc_lines.append('### 6.1 质量评估结论')
+        doc_lines.append('### 7.1 质量评估结论')
         doc_lines.append('')
         for issue in qa.get('issues', []):
             doc_lines.append(f'- {issue}')
         doc_lines.append('')
 
         if qa.get('recommendations'):
-            doc_lines.append('### 6.2 具体改进建议')
+            doc_lines.append('### 7.2 具体改进建议')
             doc_lines.append('')
             for rec in qa['recommendations']:
                 doc_lines.append(f'- [ ] {rec}')

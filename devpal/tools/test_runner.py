@@ -273,7 +273,7 @@ class TestRunnerTool(BaseTool):
                 note="降级模式：测试文件已生成，需手动编译运行"
             )
 
-        # 1. 编译
+        # 1. 编译准备
         is_msvc = 'cl.exe' in compiler[0].lower() or compiler[0] == 'cl'
         compile_cmd = compiler.copy()
         env = None
@@ -291,7 +291,7 @@ class TestRunnerTool(BaseTool):
             # MSVC 编译参数
             if '\\' in compiler[0] or '/' in compiler[0]:  # 完整路径
                 env = self._setup_msvc_env(compiler[0])
-            compile_cmd.extend(['/EHsc', '/std:c++17', '/nologo', '/Dmain=source_main'])
+            compile_cmd.extend(['/EHsc', '/std:c++17', '/nologo'])
             for ip in include_paths:
                 compile_cmd.append(f'/I{ip}')
             if params.extra_compile_flags:
@@ -299,7 +299,7 @@ class TestRunnerTool(BaseTool):
             compile_cmd.extend([test_path_abs, f'/Fe:{output_bin_abs}'])
         else:
             # GCC/MinGW 编译参数
-            compile_cmd.extend(['-std=c++17', '-Dmain=source_main'])
+            compile_cmd.extend(['-std=c++17'])
             for ip in include_paths:
                 compile_cmd.append(f'-I{ip}')
             if params.extra_compile_flags:
@@ -415,13 +415,31 @@ class TestRunnerTool(BaseTool):
                 cwd=test_path.parent
             )
 
-            output = result.stdout.split('\n')
+            # unittest 将输出打印到 stderr
+            output = result.stdout.split('\n') + result.stderr.split('\n')
             errors = result.stderr.split('\n')
 
-            # 简单解析 unittest 输出
-            passed = sum(1 for line in output if 'OK' in line or 'PASS' in line.upper())
-            failed = sum(1 for line in output if 'FAIL' in line.upper() or 'ERROR' in line.upper())
-            total = passed + failed
+            # 解析 unittest 输出
+            passed = 0
+            failed = 0
+            total = 0
+
+            for line in output:
+                # unittest 格式: "test_xxx (...) ... ok/FAIL/ERROR"
+                if line.strip().endswith(' ... ok'):
+                    passed += 1
+                elif line.strip().endswith(' ... FAIL') or line.strip().endswith(' ... ERROR'):
+                    failed += 1
+                # 最后一行汇总: "Ran X tests"
+                elif line.startswith('Ran ') and 'tests' in line:
+                    try:
+                        total = int(line.split()[1])
+                    except:
+                        pass
+
+            # 如果解析到总数，用总数
+            if total == 0:
+                total = passed + failed
 
             report = self._generate_report(
                 test_file=str(test_path),
@@ -437,10 +455,13 @@ class TestRunnerTool(BaseTool):
             return ToolResult.ok(
                 report,
                 test_file=str(test_path),
+                compile_success=True,  # Python 不需要编译，默认为成功
+                run_success=True,
                 tests_passed=passed,
                 tests_total=total,
                 tests_failed=failed,
-                pass_rate=f"{(passed/total*100):.1f}%" if total else "N/A"
+                pass_rate=f"{(passed/total*100):.1f}%" if total else "N/A",
+                test_output=output
             )
 
         except subprocess.TimeoutExpired:
@@ -489,6 +510,16 @@ class TestRunnerTool(BaseTool):
                 total += 1
             elif '[FAIL]' in line or 'FAILED' in line or '❌' in line:
                 total += 1
+            elif 'SUMMARY:' in line and 'tests total' in line:
+                # 解析 "SUMMARY: 23 tests total, 23 passed" 格式
+                try:
+                    parts = line.split('SUMMARY:')[1].strip().split(',')
+                    total_str = parts[0].strip()
+                    passed_str = parts[1].strip() if len(parts) > 1 else ''
+                    total = int(total_str.split()[0])
+                    passed = int(passed_str.split()[0]) if 'passed' in passed_str else 0
+                except:
+                    pass
             elif 'passed' in line.lower() and '/' in line:
                 # 解析 "1/2 passed" 格式
                 parts = line.replace('passed', '').strip().split('/')
@@ -506,18 +537,23 @@ class TestRunnerTool(BaseTool):
         test_results = []
         current_test = None
 
+        # 首先收集所有测试名称
+        test_names = []
+        for line in output:
+            if line.strip().startswith('[TEST]'):
+                test_name = line.strip().split('[TEST]')[1].strip()
+                test_names.append(test_name)
+
+        # 然后收集所有结果
+        test_idx = 0
         for line in output:
             line = line.strip()
             if not line:
                 continue
 
-            # 跳过测试类标题，不添加到结果中（避免匹配时索引错位）
-            if 'Testing class:' in line:
-                continue
-
-            # 解析单个测试用例结果
             if '[PASS]' in line:
-                test_name = line.split('[PASS]')[-1].strip()
+                test_name = test_names[test_idx] if test_idx < len(test_names) else f'Test_{test_idx}'
+                test_idx += 1
                 test_results.append({
                     'name': test_name,
                     'status': 'PASS',
@@ -525,12 +561,12 @@ class TestRunnerTool(BaseTool):
                     'impact': '无'
                 })
             elif '[FAIL]' in line:
-                test_name = line.split('[FAIL]')[-1].split('-')[0].strip()
-                reason = line.split('-')[-1].strip() if '-' in line else '未知原因'
+                test_name = test_names[test_idx] if test_idx < len(test_names) else f'Test_{test_idx}'
+                test_idx += 1
                 test_results.append({
                     'name': test_name,
                     'status': 'FAIL',
-                    'reason': reason,
+                    'reason': '测试执行失败',
                     'impact': self._assess_impact(test_name)
                 })
 

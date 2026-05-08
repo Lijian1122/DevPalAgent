@@ -40,6 +40,14 @@ class AutoFixerTool(BaseTool):
             default="",
             description="测试编译时的额外标志（如：-lpthread）"
         )
+        failure_context: Optional[str] = Field(
+            default=None,
+            description="测试失败的上下文信息，用于指导自动修复（来自测试运行结果）"
+        )
+        test_file: Optional[str] = Field(
+            default=None,
+            description="对应的测试文件路径（用于 SpecEngine 智能分析）"
+        )
 
     def _execute(self, params: Parameters) -> ToolResult:
         file_path = Path(params.file_path)
@@ -49,29 +57,71 @@ class AutoFixerTool(BaseTool):
         # 步骤1: 读取原始代码
         original_code = file_path.read_text(encoding='utf-8')
 
+        # 如果有测试失败上下文，先分析它
+        failure_issues = []
+        spec_analysis = {}
+        if params.failure_context:
+            # 基础错误分析
+            failure_issues = self._analyze_failure_context(
+                params.failure_context, original_code
+            )
+            # SpecEngine 智能分析
+            spec_analysis = self._analyze_with_spec_engine(
+                failure_context=params.failure_context,
+                source_file=str(file_path),
+                test_file=params.test_file
+            )
+
         # 步骤2: 调用 code_review 进行审查
         review_result = self._run_code_review(
             str(file_path), params.check_types
         )
 
+        # 合并代码审查发现的问题和测试失败分析出的问题
+        review_issues = review_result.metadata.get('issues', []) if review_result.success else []
+        all_issues = review_issues + failure_issues
+
         if not review_result.success:
             return review_result
 
-        issues = review_result.metadata.get('issues', [])
-
-        if not issues:
+        if not all_issues:
             return ToolResult.ok(
-                "✅ 没有发现需要修复的问题，代码很完美！\n"
+                "没有发现需要修复的问题，代码很完美！\n"
                 f"文件: {params.file_path}"
             )
 
-        # 步骤3: 基于审查结果生成修复方案
-        fixed_code, fixed_details = self._generate_fixed_code(original_code, issues, str(file_path))
+        # 步骤3: 基于审查结果和测试失败分析生成修复方案
+        fixed_code, fixed_details = self._generate_fixed_code(original_code, all_issues, str(file_path))
 
         # 步骤4: 生成预览报告
         preview = self._generate_fix_preview(
-            original_code, fixed_code, issues, str(file_path)
+            original_code, fixed_code, all_issues, str(file_path)
         )
+
+        # 添加 SpecEngine 智能分析结果（如果可用）
+        if spec_analysis and spec_analysis.get('spec_engine_available', False):
+            preview += "\n" + "=" * 60 + "\n"
+            preview += "🔍 OpenSpec 智能分析\n"
+            preview += "-" * 40 + "\n"
+
+            if spec_analysis.get('related_requirements'):
+                reqs = ', '.join(spec_analysis['related_requirements'])
+                preview += f"📋 关联需求: {reqs}\n"
+
+            if spec_analysis.get('affected_files'):
+                files = ', '.join(str(f) for f in spec_analysis['affected_files'])
+                preview += f"📁 受影响文件: {files}\n"
+
+            if spec_analysis.get('fix_hints'):
+                preview += "💡 修复建议:\n"
+                for hint in spec_analysis['fix_hints']:
+                    preview += f"   • {hint}\n"
+
+            confidence = spec_analysis.get('confidence', 0)
+            if confidence > 0:
+                preview += f"📊 建议可信度: {confidence:.0%}\n"
+
+            preview += "-" * 40 + "\n"
 
         # 步骤5: 如果用户授权了才应用，否则只返回预览
         if params.auto_apply:
@@ -140,7 +190,7 @@ class AutoFixerTool(BaseTool):
 
             # 收集所有元数据
             metadata = {
-                'issues_found': len(issues),
+                'issues_found': len(all_issues),
                 'issues_fixed': len(fixed_details),
                 'fixed_details': fixed_details,
                 'backup_created': str(backup_path) if backup_path else None,
@@ -149,6 +199,8 @@ class AutoFixerTool(BaseTool):
             }
             if test_result:
                 metadata.update(test_result)
+            if spec_analysis:
+                metadata['spec_analysis'] = spec_analysis
 
             return ToolResult.ok(result_content, **metadata)
         else:
@@ -160,9 +212,10 @@ class AutoFixerTool(BaseTool):
 
             return ToolResult.ok(
                 result_content,
-                issues_found=len(issues),
+                issues_found=len(all_issues),
                 user_authorization_required=True,
-                preview_only=True
+                preview_only=True,
+                spec_analysis=spec_analysis
             )
 
     def _run_code_review(self, file_path: str, check_types: List[str]) -> ToolResult:
@@ -242,6 +295,15 @@ class AutoFixerTool(BaseTool):
                 match = re.search(r'//\s*(stop\s*=\s*true)', line)
                 if match:
                     result = line.replace('//' + match.group(1), match.group(1))
+
+            # 5. 修复 bool 转字符串类型不匹配（GCC 编译错误）
+            if 'could not convert' in message or '类型不匹配' in message:
+                # return true; -> return "success"; 或 return "session";
+                stripped = line.strip()
+                if 'return true' in stripped:
+                    result = line.replace('return true', 'return std::string("success")')
+                elif 'return false' in stripped:
+                    result = line.replace('return false', 'return std::string()')
 
         # ========== 性能修复 ==========
         elif category == 'performance':
@@ -323,3 +385,172 @@ class AutoFixerTool(BaseTool):
         backup_path = file_path.parent / f"{file_path.stem}_backup_{timestamp}{file_path.suffix}"
         backup_path.write_text(file_path.read_text(encoding='utf-8'), encoding='utf-8')
         return backup_path
+
+    def _analyze_failure_context(self, failure_context: str, code: str) -> List[Dict[str, Any]]:
+        """分析测试失败的上下文信息，提取可修复的问题
+
+        Args:
+            failure_context: 测试失败的详细信息（编译错误、运行时错误、失败的测试用例等）
+            code: 源代码
+
+        Returns:
+            List[Dict]: 分析出的问题列表，格式与 code_review 返回的 issues 一致
+        """
+        issues = []
+        lines = code.split('\n')
+
+        if not failure_context:
+            return issues
+
+        context_lower = failure_context.lower()
+
+        # 1. 分析编译错误
+        compile_errors = self._extract_compile_errors(failure_context, lines)
+        issues.extend(compile_errors)
+
+        # 2. 分析返回值类型不匹配 (例如 C++: return false; 应该 return string)
+        if 'return' in context_lower and ('type' in context_lower or '类型' in context_lower):
+            for i, line in enumerate(lines, 1):
+                line_stripped = line.strip()
+                # 检测常见的类型不匹配问题
+                if ('return false' in line_stripped or 'return true' in line_stripped) and i < len(lines):
+                    # 检查前几行是否有字符串返回类型的函数签名
+                    for j in range(max(0, i - 10), i):
+                        prev_line = lines[j]
+                        if 'std::string' in prev_line or 'string ' in prev_line and '(' in prev_line:
+                            issues.append({
+                                'line': i,
+                                'category': 'bug',
+                                'severity': 'high',
+                                'message': '返回值类型不匹配：字符串函数返回了 bool 类型',
+                                'suggestion': '将 return false; 改为 return "";',
+                                'source': 'failure_analysis'
+                            })
+                            break
+
+        # 3. 分析测试失败的断言错误
+        assertion_patterns = [
+            ('assertion failed', '断言失败，请检查逻辑条件'),
+            ('assert_fail', '断言失败，请检查逻辑条件'),
+            ('expected', '测试期望值不匹配，请检查返回值'),
+            ('expected:', '测试期望值不匹配，请检查返回值'),
+            ('得到:', '测试期望值不匹配，请检查返回值'),
+            ('segmentation fault', '段错误：可能是空指针访问或内存越界'),
+            ('null pointer', '空指针访问'),
+            ('out of bounds', '数组越界'),
+            ('未定义', '未定义符号：可能缺少实现'),
+            ('undefined', '未定义符号：可能缺少实现'),
+        ]
+
+        for pattern, message in assertion_patterns:
+            if pattern in context_lower:
+                issues.append({
+                    'line': 1,  # 暂时标记在第一行，后续可优化
+                    'category': 'bug',
+                    'severity': 'high',
+                    'message': f'测试失败检测: {message}',
+                    'suggestion': '根据测试失败信息修复相关代码逻辑',
+                    'source': 'failure_analysis'
+                })
+                break  # 只添加一次
+
+        return issues
+
+    def _analyze_with_spec_engine(self, failure_context: str, source_file: str,
+                                   test_file: Optional[str] = None) -> Dict[str, Any]:
+        """使用 SpecEngine 进行智能失败分析
+
+        利用 ArtifactGraph 追踪需求-代码-测试依赖链，提供更准确的修复建议。
+
+        Args:
+            failure_context: 测试失败的详细信息
+            source_file: 源代码文件路径
+            test_file: 测试文件路径（可选）
+
+        Returns:
+            包含智能分析结果的字典
+        """
+        analysis = {
+            'related_requirements': [],
+            'affected_files': [],
+            'fix_hints': [],
+            'confidence': 0.0,
+            'spec_engine_available': False
+        }
+
+        try:
+            # 尝试获取 SpecEngine 实例
+            from devpal.core.schema import SpecEngine
+            from pathlib import Path
+
+            # 查找工作区根目录
+            workspace = Path(source_file).parent
+            while workspace.parent != workspace and not (workspace / '.git').exists():
+                workspace = workspace.parent
+
+            # 初始化 SpecEngine
+            spec_engine = SpecEngine(workspace)
+            spec_engine.load_all_requirements()
+            spec_engine.init_artifact_graph(scan_on_init=True)
+            analysis['spec_engine_available'] = True
+
+            # 智能分析
+            spec_analysis = spec_engine.analyze_test_failure_for_fix(
+                test_file=test_file or "",
+                error_info=failure_context,
+                source_file=source_file
+            )
+
+            if spec_analysis:
+                analysis['related_requirements'] = spec_analysis.get('related_requirements', [])
+                analysis['affected_files'] = spec_analysis.get('affected_files', [])
+                analysis['fix_hints'] = spec_analysis.get('suggested_fix_hint', [])
+                analysis['confidence'] = spec_analysis.get('confidence', 0.0)
+
+        except Exception as e:
+            # SpecEngine 不可用时静默降级
+            analysis['error'] = str(e)
+
+        return analysis
+
+    def _extract_compile_errors(self, failure_context: str, lines: List[str]) -> List[Dict[str, Any]]:
+        """从失败上下文中提取编译错误"""
+        issues = []
+
+        # GCC/Clang 格式: file.cpp:line: error: message
+        import re
+        error_pattern = re.compile(r'(\d+):\d*:\s*(error|warning):\s*(.+)')
+
+        for match in error_pattern.finditer(failure_context):
+            line_num = int(match.group(1))
+            error_type = match.group(2)
+            message = match.group(3)
+
+            severity = 'high' if error_type == 'error' else 'medium'
+            issues.append({
+                'line': line_num,
+                'category': 'bug' if error_type == 'error' else 'style',
+                'severity': severity,
+                'message': f'编译{error_type}: {message}',
+                'suggestion': '请检查语法和类型错误',
+                'source': 'failure_analysis'
+            })
+
+        # MSVC 格式: file.cpp(line): error Cxxx: message
+        msvc_pattern = re.compile(r'\((\d+)\):\s*(error|warning)\s+[A-Z]+\d+:\s*(.+)')
+        for match in msvc_pattern.finditer(failure_context):
+            line_num = int(match.group(1))
+            error_type = match.group(2)
+            message = match.group(3)
+
+            severity = 'high' if error_type == 'error' else 'medium'
+            issues.append({
+                'line': line_num,
+                'category': 'bug' if error_type == 'error' else 'style',
+                'severity': severity,
+                'message': f'编译{error_type}: {message}',
+                'suggestion': '请检查语法和类型错误',
+                'source': 'failure_analysis'
+            })
+
+        return issues

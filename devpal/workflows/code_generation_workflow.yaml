@@ -1,0 +1,219 @@
+# ============================================================================
+# OpenSpec 声明式工作流 - 代码生成流水线
+# ============================================================================
+# 这是一个完整的代码生成工作流，包含：
+#   1. 代码生成
+#   2. 代码审查
+#   3. 自动修复
+#   4. 测试生成
+#   5. 测试运行
+#   6. 文档生成
+# ============================================================================
+
+name: "code_generation_pipeline"
+version: "2.0.0"
+description: "完整的代码生成工作流 - 从需求到可运行代码"
+mode: extended  # extended = 完整模式, core = 快速模式
+
+variables:
+  source_file: ""
+  test_file: ""
+  project_name: "default_project"
+  language: "python"
+  auto_fix_enabled: true
+  run_tests_enabled: true
+
+workspace: "."
+
+# ============================================================================
+# 工作流步骤（按依赖顺序执行）
+# ============================================================================
+
+steps:
+  # ------------------------------------------------------------------------
+  # Phase 1: 需求分析与技术设计
+  # ------------------------------------------------------------------------
+  - id: analyze_requirements
+    name: "需求分析"
+    description: "分析需求文档，提取验收标准"
+    tool: null  # 使用 SpecEngine 内置功能
+    depends_on: []
+    continue_on_failure: false
+
+  - id: generate_tech_design
+    name: "技术设计生成"
+    description: "基于需求生成技术设计文档"
+    tool: null  # 使用 TechDocGenerator
+    depends_on: ["analyze_requirements"]
+    continue_on_failure: false
+
+  - id: review_tech_design
+    name: "技术设计审查"
+    description: "审查技术设计文档的完整性和合理性"
+    tool: null  # 使用 SpecEngine 内置验证
+    depends_on: ["generate_tech_design"]
+    continue_on_failure: false
+
+  # ------------------------------------------------------------------------
+  # Phase 2: 代码生成与质量保证
+  # ------------------------------------------------------------------------
+  - id: generate_source_code
+    name: "源代码生成"
+    description: "基于技术设计生成源代码"
+    tool: null  # 使用 CodeGenerator
+    depends_on: ["review_tech_design"]
+    continue_on_failure: false
+
+  - id: code_review
+    name: "代码审查"
+    description: "对生成的代码进行质量审查"
+    tool: "code_review"
+    tool_params:
+      file_path: "${source_file}"
+      check_style: true
+      check_security: true
+      check_performance: true
+    depends_on: ["generate_source_code"]
+    continue_on_failure: false
+
+  - id: auto_fix
+    name: "自动修复"
+    description: "根据代码审查结果自动修复问题"
+    tool: "auto_fixer"
+    tool_params:
+      file_path: "${source_file}"
+      create_backup: true
+      apply_fixes: true
+    condition: "${auto_fix_enabled} == true"
+    depends_on: ["code_review"]
+    continue_on_failure: true
+
+  - id: validate_code
+    name: "代码验证"
+    description: "使用 Validation Engine 验证最终代码"
+    tool: null  # 使用 ValidationEngine
+    depends_on: ["auto_fix"]
+    continue_on_failure: false
+
+  # ------------------------------------------------------------------------
+  # Phase 3: 测试生成与执行
+  # ------------------------------------------------------------------------
+  - id: generate_test_code
+    name: "测试代码生成"
+    description: "生成单元测试和集成测试代码"
+    tool: null  # 使用 TestGenerator
+    depends_on: ["validate_code"]
+    continue_on_failure: false
+
+  - id: run_tests
+    name: "运行测试"
+    description: "运行所有生成的测试"
+    tool: "test_runner"
+    tool_params:
+      test_file: "${test_file}"
+      source_file: "${source_file}"
+      timeout: 60
+    condition: "${run_tests_enabled} == true"
+    depends_on: ["generate_test_code"]
+    continue_on_failure: false
+
+  - id: analyze_test_results
+    name: "测试结果分析"
+    description: "分析测试运行结果，计算覆盖率"
+    tool: null
+    depends_on: ["run_tests"]
+    continue_on_failure: true
+
+  # ------------------------------------------------------------------------
+  # Phase 4: 文档生成与归档
+  # ------------------------------------------------------------------------
+  - id: generate_test_doc
+    name: "测试文档生成"
+    description: "生成完整的测试文档"
+    tool: "test_doc_generator"
+    tool_params:
+      source_file: "${source_file}"
+      test_file: "${test_file}"
+      output_file: "${project_name}/test_documentation.md"
+      include_run_results: true
+    depends_on: ["analyze_test_results"]
+    continue_on_failure: true
+
+  - id: create_snapshot
+    name: "创建快照"
+    description: "使用 SpecEngine 创建状态快照"
+    tool: null  # 使用 SpecEngine
+    depends_on: ["generate_test_doc"]
+    continue_on_failure: true
+
+  # ------------------------------------------------------------------------
+  # Phase 5: 影响分析报告
+  # ------------------------------------------------------------------------
+  - id: impact_analysis
+    name: "影响分析"
+    description: "使用 ArtifactGraph 分析本次变更的影响范围"
+    tool: null  # 使用 ArtifactGraph
+    depends_on: ["create_snapshot"]
+    continue_on_failure: true
+
+  - id: final_report
+    name: "生成最终报告"
+    description: "汇总所有步骤结果，生成最终报告"
+    tool: null
+    depends_on: ["impact_analysis"]
+    continue_on_failure: false
+
+# ============================================================================
+# 执行策略
+# ============================================================================
+
+execution:
+  # 失败策略: stop = 立即停止, continue = 继续执行不依赖的步骤
+  on_failure: "continue"
+
+  # 重试策略
+  retry:
+    max_attempts: 2
+    delay_seconds: 1
+    exponential_backoff: true
+
+  # 超时设置（秒）
+  timeout:
+    per_step: 300
+    total: 1800
+
+  # 并行执行: 无依赖的步骤可以并行执行
+  parallel: true
+  max_parallel_steps: 3
+
+# ============================================================================
+# 验证规则
+# ============================================================================
+
+validation:
+  # 前置条件
+  preconditions:
+    - "source_file must be set"
+    - "test_file must be set if run_tests_enabled is true"
+
+  # 后置条件
+  postconditions:
+    - "code_review must have less than 5 critical issues"
+    - "test pass rate must be >= 80%"
+
+# ============================================================================
+# 通知与报告
+# ============================================================================
+
+notifications:
+  on_start: false
+  on_step_complete: false
+  on_failure: true
+  on_success: true
+
+reporting:
+  format: ["markdown", "json"]
+  output_dir: ".spec/reports"
+  include_timings: true
+  include_metrics: true
+  include_artifacts: true
