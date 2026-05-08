@@ -2,11 +2,11 @@
 
 > **基于 Agent 技术的智能开发辅助系统**
 >
-> **版本：** v1.6
+> **版本：** v2.0
 >
 > **作者：** 李建
 >
-> **核心特性：** 测试编排系统 × 19个内置工具 × 自我改进 × 多模态支持
+> **核心特性：** OpenSpec 9阶段工作流 × 规范优先架构 × 22个内置工具 × 测试编排系统 × 自我改进 × 多模态支持
 >
 > **状态：** ✅ 生产可用
 
@@ -17,6 +17,7 @@
 - [✨ 核心特性](#-核心特性)
 - [🏗️ 整体架构](#️-整体架构)
 - [🔧 完整工具列表](#-完整工具列表)
+- [🚀 OpenSpec 9阶段工作流](#-openspec-9阶段工作流-v20里程碑)
 - [🎯 核心能力详解](#-核心能力详解)
 - [🚀 快速开始](#-快速开始)
 - [📖 使用示例](#-使用示例)
@@ -35,6 +36,14 @@
 
 | 特性 | 状态 | 说明 |
 |-----|------|------|
+| **🚀 OpenSpec 9阶段工作流** | ✅ v2.0 | **需求驱动开发引擎**，自动检测需求文件 → 9阶段完整开发流程 |
+| **📐 Spec-First 规范优先架构** | ✅ v2.0 | 需求规范 → 增量变更 → 工件关联 → 状态持久化 |
+| **🔍 四层验证引擎** | ✅ v2.0 | Format格式 → Semantic语义 → Parser解析 → Business业务规则 |
+| **📦 Delta 增量变更** | ✅ v2.0 | 增量写入而非全量覆盖，冲突检测，原子应用，可回滚 |
+| **🗺️ ArtifactGraph 工件依赖图** | ✅ v2.0 | 代码/测试/文档/需求自动关联，影响范围分析 |
+| **📢 EventBus 事件总线** | ✅ v2.0 | 发布订阅架构，优先级队列，7种标准事件，解耦通信 |
+| **🌍 多语言插件系统** | ✅ v2.0 | C++ 完整支持（12+规则），可扩展 Python/Rust/Go |
+| **🔄 渐进式发布引擎** | ✅ v2.0 | 诊断 → 策略 → 灰度 → 发布 → 回滚，统一错误处理 |
 | **🤖 智能工具编排** | ✅ v1.0 | 自动决定调用什么工具、什么顺序 |
 | **🧠 长短时记忆** | ✅ v1.0 | 记住对话历史、用户偏好、犯过的错误 |
 | **📋 任务规划** | ✅ v1.0 | 复杂任务自动拆解成步骤，先规划再执行 |
@@ -76,7 +85,7 @@
 │                    基础能力层 (Infrastructure)                     │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐        │
 │  │  LLM SDK │  │ Memory   │  │  Tools   │  │ Multimodal│        │
-│  │大模型封装 │  │ 记忆系统  │  │ 19个工具  │  │ 多模态    │        │
+│  │大模型封装 │  │ 记忆系统  │  │ 22个工具  │  │ 多模态    │        │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘        │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -119,6 +128,15 @@
 | **test_doc_generator** | 测试文档生成，结构化用例 |
 | **test_generator** | 测试代码生成，多语言模板 |
 | **test_runner** | 测试运行器，**MSVC/GCC 双支持** |
+| **code_review_report** | 代码审查报告生成器 |
+
+### 🚀 OpenSpec 规范优先工具 (3个)
+
+| 工具 | 功能 |
+|-----|------|
+| **project_generator** | **项目生成器**，从需求到完整项目结构 |
+| **spec_tool** | **规范工具**，SpecEngine 命令行接口 |
+| **openspec_cli** | **OpenSpec CLI**，9阶段工作流命令行 |
 
 ### 🔄 自我改进与扩展 (3个)
 
@@ -133,6 +151,94 @@
 | 工具 | 功能 |
 |-----|------|
 | **linked_list_tool** | 链表操作演示，验证 FunctionCall 机制 |
+
+---
+
+## 🚀 OpenSpec 9阶段工作流 (v2.0 里程碑)
+
+> **需求驱动开发引擎 - 从需求文档到可交付项目的一站式自动化**
+
+OpenSpec 是 DevPal Agent v2.0 的核心架构升级，实现"规范优先(Spec-First)"的开发范式。
+
+### 工作流触发方式
+
+```python
+# 方式1: 聊天模式自动触发
+用户输入："完整实现 requirements/my_project.md 中的所有需求"
+→ 自动检测关键词 + .md 文件 → 触发 9阶段工作流
+
+# 方式2: 显式触发
+用户输入："OpenSpec流程启动 requirements/auth_system.md"
+
+# 方式3: CLI 命令行
+python -m devpal.cli.openspec_cli --req-file requirements/auth_system.md
+```
+
+### 9阶段完整流程
+
+| 阶段 | 名称 | 核心动作 | 输出 |
+|-----|------|----------|------|
+| **Phase 1** | 🔍 需求文档解析 | 读取 Markdown + YAML Frontmatter，提取验收标准，识别语言类型 | 结构化需求对象 |
+| **Phase 2** | 📁 创建项目结构 | 自动生成 include/src/tests/docs/config/data 目录，初始化 .spec 状态目录 | 完整项目骨架 |
+| **Phase 3** | 💻 生成核心代码 | 根据语言类型（C++/Python）生成核心实现，User/Session/Authenticator 类 | 核心源码文件 |
+| **Phase 4** | 📊 代码质量审查 | 多语言静态分析，安全/性能/风格三维评级，问题分级（ERROR/WARN/INFO） | 审查报告 |
+| **Phase 5** | 🔧 自动修复 | 自动备份 → 应用 Delta 变更 → 修复可自动修复的问题 → 计算修复率 | 修复后的代码 |
+| **Phase 6** | 📝 生成测试文档 | 代码结构分析，功能/边界/异常测试用例生成，覆盖率估算，质量评分 | test_doc.md |
+| **Phase 7** | 🧪 生成测试代码 | Google Test / pytest 框架集成，断言逻辑，Setup/Teardown，运行配置 | test_*.cpp/py |
+| **Phase 8** | ▶️ 运行测试 | 编译（C++），执行测试用例，统计通过率，捕获输出，失败自动重试 | 测试报告 |
+| **Phase 9** | 📋 生成最终报告 | 汇总各阶段结果，执行时间统计，文件清单，可交付项目包 | 项目交付报告 |
+
+### OpenSpec 核心架构 (7层)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  交互层 (User / CLI / Web)                                   │
+├─────────────────────────────────────────────────────────────┤
+│  工作流执行层 (OpenSpecWorkflowExecutor / 9阶段调度)         │
+├─────────────────────────────────────────────────────────────┤
+│  Schema 核心层 (ValidationEngine / DeltaSpec / ArtifactGraph)│
+├─────────────────────────────────────────────────────────────┤
+│  事件总线层 (EventBus / Priority Queue / 7种事件类型)        │
+├─────────────────────────────────────────────────────────────┤
+│  深化体验层 (DiagnosticEngine / RolloutEngine / ConfigPolicy)│
+├─────────────────────────────────────────────────────────────┤
+│  多语言支持层 (LanguagePlugin / C++ 插件 / Compilation DB)   │
+├─────────────────────────────────────────────────────────────┤
+│  工具执行层 (22个工具 / ToolRegistry)                         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 触发关键词
+
+| 强触发（直接启动） | 弱触发（需.md文件） |
+|---------------------|---------------------|
+| `完整实现` + .md | `开发需求` + .md |
+| `需求实现` + .md | `生成项目` + .md |
+| `OpenSpec流程启动` | `实现` + .md |
+| `requirements 实现` | |
+
+### 支持的需求文档格式
+
+```markdown
+---
+title: 用户认证系统
+version: 1.0
+author: 李建
+created: 2026-05-08
+---
+
+## REQ-001: 用户注册功能
+
+**描述**: 用户可以通过用户名和密码注册账号
+
+**验收标准**:
+- [ ] 用户名长度 4-20 字符
+- [ ] 密码强度符合要求（8位+字母+数字）
+- [ ] 密码使用盐值哈希存储
+
+**优先级**: 1
+**标签**: security, authentication
+```
 
 ---
 
@@ -1130,7 +1236,7 @@ DevPalAgent/
 │   │   ├── long_term.py            # 长期记忆
 │   │   └── error_memory.py         # 错误记忆
 │   │
-│   ├── tools/                      # 工具系统层 (19个工具)
+│   ├── tools/                      # 工具系统层 (22个工具)
 │   │   ├── __init__.py
 │   │   ├── base.py                 # Tool 基类
 │   │   ├── function_call_base.py   # FunctionCall 抽象层
@@ -1618,24 +1724,39 @@ registry.execute_tool('plugin_system', {
 
 ## 📊 架构图
 
-所有架构图位于 `docs/` 目录，可直接查看 PNG 图片。
+### v2.0 OpenSpec 架构图 (最新)
 
-### 架构图清单
+所有 OpenSpec v2.0 架构图位于 `doc2.0/` 目录，包含 9 张高清 300 DPI PNG 图片：
 
 | 架构图 | 版本 | 内容详解 |
 |--------|------|----------|
-| **DevPal_Architecture_Overview_v1.6.png** | v1.6 | **整体架构概览**<br/>展示 4 层架构：交互层 → Agent 核心层（Planner/Executor/Reflector）→ 工具注册表 → 基础能力层 |
-| **Plan_Act_Reflect_Flowchart_v1.6.png** | v1.6 | **执行循环流程图**<br/>完整展示 规划 → 执行 → 反思 → 记忆 的闭环流程 |
-| **Complete_Data_Flow_v1.6.png** | v1.6 | **完整数据流图**<br/>展示从用户输入到最终输出的所有数据流转，包含测试编排的 6 步数据流向 |
-| **Test_Orchestrator_System_Architecture_v1.6.png** | v1.6 | **测试编排系统详情**<br/>展示 6 步一站式测试流程的模块关系和数据传递 |
-| **Tool_System_Architecture_v1.6.png** | v1.6 | **工具系统架构**<br/>展示 BaseTool 继承体系、19 个工具分类、以及 ToolRegistry 关系 |
+| **01_OpenSpec_Architecture_Overview.png** | v2.0 | **7层完整架构概览**<br/>交互层 → 工作流执行层 → Schema核心层 → 事件总线层 → 深化体验层 → 多语言支持层 → 工具执行层 → 持久化层 |
+| **02_OpenSpec_9_Phase_Workflow.png** | v2.0 | **9阶段工作流全图**<br/>需求解析 → 项目结构 → 代码生成 → 代码审查 → 自动修复 → 测试文档 → 测试代码 → 运行测试 → 最终报告 |
+| **03_Schema_Architecture_Layer.png** | v2.0 | **Schema 架构层详解**<br/>ValidationEngine + DeltaSpec + ArtifactGraph + WorkflowEngine + RequirementsManager + EventBus 关系图 |
+| **04_Validation_Engine_Four_Layer.png** | v2.0 | **四层验证引擎**<br/>Format格式验证 → Semantic语义验证 → Parser解析验证 → Business业务规则验证 |
+| **05_ArtifactGraph_Dependency.png** | v2.0 | **工件依赖图**<br/>需求文档 → 代码实现 → 测试代码 → 文档 → 配置 的完整依赖链 |
+| **06_DeltaSpec_Change_Flow.png** | v2.0 | **Delta 变更流程图**<br/>原始文件 → Delta操作 → 冲突检测 → 验证 → 增量应用 → 结果输出 |
+| **07_EventBus_Architecture.png** | v2.0 | **事件总线架构**<br/>发布者 → 优先级队列 → 过滤器 → 适配器 → 订阅者 的完整发布订阅流程 |
+| **08_Multilingual_Plugin_System.png** | v2.0 | **多语言插件系统**<br/>LanguagePlugin 接口 → C++ 插件 → 编译数据库（CMake/Make/MSVC）|
+| **09_Complete_Data_Flow.png** | v2.0 | **端到端完整数据流**<br/>7阶段数据流转：用户输入 → 检测解析 → Schema 处理 → 工作流执行 → Delta 变更 → 工具执行 → 输出交付 |
+
+### v1.6 经典架构图 (历史版本)
+
+位于 `docs/` 目录，包含测试编排系统架构：
+
+| 架构图 | 版本 | 内容详解 |
+|--------|------|----------|
+| **Complete_Data_Flow_v1.6.png** | v1.6 | 测试编排 6步数据流图 |
+| **Test_Orchestrator_System_Architecture_v1.6.png** | v1.6 | 测试编排系统详情 |
+| **Tool_System_Architecture_v1.6.png** | v1.6 | 工具系统架构 |
 
 ### 架构图生成脚本
 
-如需重新生成或自定义架构图，可使用提供的 Python 脚本：
-
 ```bash
-# 生成所有 v1.6 架构图
+# 重新生成 OpenSpec v2.0 架构图 (推荐)
+python doc2.0/generate_openspec_v2_architecture.py
+
+# 重新生成 v1.6 架构图 (历史)
 python docs/generate_architecture_diagrams_v1.6_final.py
 ```
 
@@ -1644,7 +1765,7 @@ python docs/generate_architecture_diagrams_v1.6_final.py
 pip install graphviz
 ```
 
-> 💡 注意：Graphviz 绘图引擎需要单独安装：
+> 💡 Graphviz 绘图引擎需要单独安装：
 > - Windows: `choco install graphviz` 或从官网下载
 > - macOS: `brew install graphviz`
 > - Linux: `sudo apt-get install graphviz`
@@ -1688,7 +1809,51 @@ set_config('DEBUG', True)
 
 ## 📈 更新日志
 
-### v1.6 (2024-05-05) ✅ 最新
+### v2.0 (2026-05-08) ✅ 最新 🔥
+
+> **OpenSpec 规范优先架构大版本 - 完整的需求驱动开发引擎**
+
+#### ✨ 核心架构升级
+
+- ✨ **OpenSpec 9阶段工作流引擎** - 从需求文档到可交付项目的一站式自动化
+- ✨ 需求自动检测机制 - 关键词识别 + .md 需求文件自动检测
+- ✨ **SpecEngine 规范引擎** - Spec-First 架构核心，需求规范 → 工件关联 → 状态持久化
+- ✨ **ValidationEngine 四层验证引擎** - Format格式 → Semantic语义 → Parser解析 → Business业务规则
+- ✨ **DeltaSpec 增量变更机制** - 原子 Delta 应用，冲突检测，自动回滚，安全写入
+- ✨ **ArtifactGraph 工件依赖图** - 需求/代码/测试/文档 自动关联，影响范围分析
+- ✨ **EventBus 事件总线** - 发布订阅架构，优先级队列，7种标准事件，解耦通信
+- ✨ **OpenSpecContext 统一上下文** - 7大模块统一入口，状态管理，快照/回滚
+
+#### ✨ 深化体验层 (Phase 5)
+
+- ✨ **DiagnosticEngine 智能诊断** - 健康评分，问题定位，根因分析
+- ✨ **RolloutEngine 渐进式发布** - 灰度发布 → 全量 → 回滚机制
+- ✨ **ConfigPolicy 配置策略** - 质量门禁，发布策略，规则引擎
+- ✨ **ErrorManager 统一错误处理** - 错误分类，恢复策略，重试机制
+
+#### ✨ 多语言支持层 (Phase 6)
+
+- ✨ **LanguagePlugin 插件系统** - 可扩展语言支持架构
+- ✨ **C++ 完整插件支持** - AST解析，12+代码质量规则，编译数据库集成
+- ✨ **CompilationDatabase 编译数据库** - CMake / Makefile / MSVC 自动检测
+- ✨ 预留 Python / Rust / Go 插件扩展接口
+
+#### ✨ 新增工具
+
+- ✨ **project_generator** - 从需求到项目生成器
+- ✨ **spec_tool** - SpecEngine 命令行工具
+- ✨ **openspec_cli** - OpenSpec 工作流命令行入口
+
+#### 📊 文档与架构
+
+- ✅ 9 张全新 OpenSpec v2.0 架构图（300 DPI 高清）
+- ✅ doc2.0/ 完整架构文档目录
+- ✅ OpenSpec 9阶段工作流指南 (`docs/OPENSPEC_WORKFLOW_GUIDE.md`)
+- ✅ 快速开始指南 (`QUICKSTART.md`)
+
+---
+
+### v1.6 (2026-05-05)
 
 - ✨ **新增测试编排系统**（TestOrchestrator）- 6步一站式流程
 - ✨ 新增 CodeReview 独立代码审查工具
@@ -1741,8 +1906,14 @@ MIT License
 - ✅ v1.0 - 基础 Agent 框架（阶段1）
 - ✅ v1.1 - 多模态 + 工具链扩展（阶段4）
 - ✅ v1.5 - 自我改进系统（阶段5）
-- ✅ **v1.6 - 测试编排系统（阶段6）← 当前版本**
-- 🚧 下一阶段：...
+- ✅ v1.6 - 测试编排系统（阶段6）
+- ✅ **v2.0 - OpenSpec 规范优先架构大版本 ← 当前最新**
+  - ✅ 9阶段需求驱动开发工作流
+  - ✅ SpecEngine 规范引擎 + DeltaSpec 增量变更
+  - ✅ 四层验证引擎 + 工件依赖图
+  - ✅ 事件总线架构 + 多语言插件系统
+  - ✅ 渐进式发布 + 统一错误处理
+- 🚧 下一阶段：Web UI 2.0 + 协作开发支持
 
 ---
 
