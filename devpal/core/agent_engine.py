@@ -1625,7 +1625,7 @@ endforeach()
 message(STATUS "========================================")
 message(STATUS " 项目: C++ 用户认证系统")
 message(STATUS " 版本: ${{PROJECT_VERSION}}")
-message(STATUS " C++ 标准: C++${CMAKE_CXX_STANDARD}")
+message(STATUS " C++ 标准: C++${{CMAKE_CXX_STANDARD}}")
 message(STATUS "========================================")
 """
                 result = self.tool_registry.execute_tool('file_writer', {
