@@ -6,7 +6,7 @@
 >
 > **作者：** 李建
 >
-> **核心特性：** OpenSpec 9阶段工作流 × 规范优先架构 × 22个内置工具 × 测试编排系统 × 自我改进 × 多模态支持
+> **核心特性：** OpenSpec 11阶段工作流 × 规范优先架构 × 26个内置工具 × 测试编排系统 × 自我改进 × 多模态支持
 >
 > **状态：** ✅ 生产可用
 
@@ -17,7 +17,7 @@
 - [✨ 核心特性](#-核心特性)
 - [🏗️ 整体架构](#️-整体架构)
 - [🔧 完整工具列表](#-完整工具列表)
-- [🚀 OpenSpec 9阶段工作流](#-openspec-9阶段工作流-v20里程碑)
+- [🚀 OpenSpec 11阶段工作流](#-openspec-11阶段工作流-v20里程碑)
 - [🎯 核心能力详解](#-核心能力详解)
 - [🚀 快速开始](#-快速开始)
 - [📖 使用示例](#-使用示例)
@@ -36,7 +36,7 @@
 
 | 特性 | 状态 | 说明 |
 |-----|------|------|
-| **🚀 OpenSpec 9阶段工作流** | ✅ v2.0 | **需求驱动开发引擎**，自动检测需求文件 → 9阶段完整开发流程 |
+| **🚀 OpenSpec 11阶段工作流** | ✅ v2.0 | **需求驱动开发引擎**，自动检测需求文件 → 11阶段完整开发流程（含代码审查+技术文档） |
 | **📐 Spec-First 规范优先架构** | ✅ v2.0 | 需求规范 → 增量变更 → 工件关联 → 状态持久化 |
 | **🔍 四层验证引擎** | ✅ v2.0 | Format格式 → Semantic语义 → Parser解析 → Business业务规则 |
 | **📦 Delta 增量变更** | ✅ v2.0 | 增量写入而非全量覆盖，冲突检测，原子应用，可回滚 |
@@ -85,7 +85,7 @@
 │                    基础能力层 (Infrastructure)                     │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐        │
 │  │  LLM SDK │  │ Memory   │  │  Tools   │  │ Multimodal│        │
-│  │大模型封装 │  │ 记忆系统  │  │ 22个工具  │  │ 多模态    │        │
+│  │大模型封装 │  │ 记忆系统  │  │ 26个工具  │  │ 多模态    │        │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘        │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -146,15 +146,16 @@
 | **self_improve** | **自我修复**，备份 + 修复 + 自检 |
 | **plugin_system** | **插件系统**，动态加载第三方工具 |
 
-### 🧩 其他工具 (1个)
+### 🧩 其他工具 (2个)
 
 | 工具 | 功能 |
 |-----|------|
 | **linked_list_tool** | 链表操作演示，验证 FunctionCall 机制 |
+| **hallucination_detector** | **幻觉检测器**，检测 AI 生成内容中的不存在函数/类/文件 |
 
 ---
 
-## 🚀 OpenSpec 9阶段工作流 (v2.0 里程碑)
+## 🚀 OpenSpec 11阶段工作流 (v2.0 里程碑)
 
 > **需求驱动开发引擎 - 从需求文档到可交付项目的一站式自动化**
 
@@ -165,7 +166,7 @@ OpenSpec 是 DevPal Agent v2.0 的核心架构升级，实现"规范优先(Spec-
 ```python
 # 方式1: 聊天模式自动触发
 用户输入："完整实现 requirements/my_project.md 中的所有需求"
-→ 自动检测关键词 + .md 文件 → 触发 9阶段工作流
+→ 自动检测关键词 + .md 文件 → 触发 11阶段工作流
 
 # 方式2: 显式触发
 用户输入："OpenSpec流程启动 requirements/auth_system.md"
@@ -174,7 +175,7 @@ OpenSpec 是 DevPal Agent v2.0 的核心架构升级，实现"规范优先(Spec-
 python -m devpal.cli.openspec_cli --req-file requirements/auth_system.md
 ```
 
-### 9阶段完整流程
+### 11阶段完整流程
 
 | 阶段 | 名称 | 核心动作 | 输出 |
 |-----|------|----------|------|
@@ -183,10 +184,12 @@ python -m devpal.cli.openspec_cli --req-file requirements/auth_system.md
 | **Phase 3** | 💻 生成核心代码 | 根据语言类型（C++/Python）生成核心实现，User/Session/Authenticator 类 | 核心源码文件 |
 | **Phase 4** | 📊 代码质量审查 | 多语言静态分析，安全/性能/风格三维评级，问题分级（ERROR/WARN/INFO） | 审查报告 |
 | **Phase 5** | 🔧 自动修复 | 自动备份 → 应用 Delta 变更 → 修复可自动修复的问题 → 计算修复率 | 修复后的代码 |
-| **Phase 6** | 📝 生成测试文档 | 代码结构分析，功能/边界/异常测试用例生成，覆盖率估算，质量评分 | test_doc.md |
-| **Phase 7** | 🧪 生成测试代码 | Google Test / pytest 框架集成，断言逻辑，Setup/Teardown，运行配置 | test_*.cpp/py |
-| **Phase 8** | ▶️ 运行测试 | 编译（C++），执行测试用例，统计通过率，捕获输出，失败自动重试 | 测试报告 |
-| **Phase 9** | 📋 生成最终报告 | 汇总各阶段结果，执行时间统计，文件清单，可交付项目包 | 项目交付报告 |
+| **Phase 6** | 📝 生成测试文档 | 结构化测试用例设计，覆盖功能/边界/异常/性能测试 | test_documentation.md (4.7K) |
+| **Phase 7** | 📚 生成 README | 项目介绍、编译指令、使用示例、架构说明、CMakeLists.txt | README.md + CMakeLists.txt |
+| **Phase 8** | 🔍 生成代码审查报告 | 调用 code_review 工具审查所有代码文件，生成详细质量报告 | code_review_report.md (7.0K) |
+| **Phase 9** | 🧪 编译并运行测试 | **规范化 MSVC/MinGW 编译器检测**，编译测试代码，运行测试并记录结果 | test_execution_report.md (1.3K) |
+| **Phase 10** | ✅ 生成验证报告 | 汇总所有阶段结果，验收标准检查，生成最终验证报告 | openspec_verification_report.md (2.3K) |
+| **Phase 11** | 📖 生成技术实现文档 | 架构设计、数据结构、核心算法、线程安全、安全机制、性能分析 | technical_implementation.md (13K) |
 
 ### OpenSpec 核心架构 (7层)
 
@@ -194,7 +197,7 @@ python -m devpal.cli.openspec_cli --req-file requirements/auth_system.md
 ┌─────────────────────────────────────────────────────────────┐
 │  交互层 (User / CLI / Web)                                   │
 ├─────────────────────────────────────────────────────────────┤
-│  工作流执行层 (OpenSpecWorkflowExecutor / 9阶段调度)         │
+│  工作流执行层 (OpenSpecWorkflowExecutor / 11阶段调度)         │
 ├─────────────────────────────────────────────────────────────┤
 │  Schema 核心层 (ValidationEngine / DeltaSpec / ArtifactGraph)│
 ├─────────────────────────────────────────────────────────────┤
@@ -204,7 +207,7 @@ python -m devpal.cli.openspec_cli --req-file requirements/auth_system.md
 ├─────────────────────────────────────────────────────────────┤
 │  多语言支持层 (LanguagePlugin / C++ 插件 / Compilation DB)   │
 ├─────────────────────────────────────────────────────────────┤
-│  工具执行层 (22个工具 / ToolRegistry)                         │
+│  工具执行层 (26个工具 / ToolRegistry)                       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -239,6 +242,74 @@ created: 2026-05-08
 **优先级**: 1
 **标签**: security, authentication
 ```
+
+### 🔧 规范化编译器检测 (Phase 9 核心改进)
+
+**问题**: 之前每次运行都找不到 MSVC 编译器，导致编译失败
+
+**解决方案**: 实现标准化的 Visual Studio 编译器检测流程
+
+#### 检测流程
+
+```python
+def find_visual_studio_compiler() -> Tuple[bool, str, Dict[str, str]]:
+    """规范化查找 Visual Studio MSVC 编译器
+    
+    步骤:
+    1. 使用 vswhere.exe 查找 VS 安装路径
+    2. 定位 vcvarsall.bat 脚本
+    3. 执行 vcvarsall.bat 并捕获环境变量
+    4. 验证 cl.exe 是否在 PATH 中
+    5. 返回完整的编译器环境变量字典
+    """
+```
+
+#### Windows 编译器优先级
+
+1. **MSVC (Visual Studio)** - 优先使用
+   - 通过 vswhere.exe 自动检测
+   - 支持 AddressSanitizer (/fsanitize=address)
+   - 完整的 C++17/20 支持
+
+2. **MinGW-w64 (g++)** - 备选方案
+   - 当 MSVC 不可用时使用
+   - 检查 `g++ --version` 是否可用
+
+#### 编译器环境变量传递
+
+```python
+# Phase 9: 编译测试代码
+if msvc_found:
+    result = subprocess.run(
+        ["cl", "/std:c++17", "/EHsc", ...],
+        env=msvc_env,  # 传递 vcvarsall.bat 提取的环境变量
+        ...
+    )
+
+# 运行测试时也传递环境变量
+test_result = subprocess.run(
+    [test_exe],
+    env=msvc_env if is_windows and msvc_env else None,
+    ...
+)
+```
+
+#### 检测结果示例
+
+```
+[1/3] 查找 Visual Studio (MSVC)...
+✅ MSVC 编译器已就绪 (VS Community, x64)
+   路径: C:\Program Files\Microsoft Visual Studio\2022\Community
+   版本: 19.xx.xxxxx
+   架构: x64
+
+[2/3] 使用 MSVC 编译...
+编译命令: cl /std:c++17 /EHsc /I"include" test_auth.cpp /Fe:test_auth.exe
+编译成功 ✅
+[3/3] 运行测试...
+测试通过: 5/5 ✅
+```
+
 
 ---
 
@@ -1221,11 +1292,32 @@ DevPalAgent/
 │   ├── cli.py                      # 命令行界面
 │   ├── config.py                   # 配置管理
 │   │
-│   ├── core/                       # 核心引擎层
+│   ├── core/             # 核心引擎层
 │   │   ├── __init__.py
-│   │   ├── agent_engine.py         # Agent 主引擎
+│   │   ├── agent_engine.py         # Agent 主引擎 (130K, 11阶段工作流)
 │   │   ├── planner.py              # 规划器
-│   │   └── reflector.py            # 反思器
+│   │   ├── reflector.py            # 反思器
+│   │   ├── openspec_workflow.py    # OpenSpec 工作流执行器
+│   ├── openspec_context.py     # OpenSpec 上下文管理
+│   │   │
+│   │   └── schema/          # OpenSpec v2.0 核心架构 ⭐
+│   │       ├── __init__.py
+│   │       ├── validation_engine.py    # 四层验证引擎 (27K)
+│   │       ├── delta_spec.py           # Delta 增量变更 (22K)
+│   │       ├── artifact_graph.py       # 工件依赖图 (42K)
+│   │       ├── workflow.py        # 声明式工作流 (27K)
+│   │       ├── requirements.py         # 需求文档管理 (14K)
+│   │       ├── event_bus.py        # 事件总线 (22K)
+│   │   ├── diagnostic_engine.py    # 诊断引擎 (26K)
+│   │       ├── rollout_engine.py       # 渐进式发布 (18K)
+│   │       ├── error_manager.py        # 错误管理器 (16K)
+│   │     ├── config_policy.py        # 配置策略 (17K)
+│   │       ├── compile_db.py           # 编译数据库 (12K)
+│   │       ├── spec.py                 # Spec 核心引擎 (59K)
+│   │       └── languages/              # 多语言插件
+│   │           ├── base.py
+│   │           ├── cpp_plugin.py       # C++ 语言插件
+│   │           └── cpp_rules.py        # C++ 规则引擎
 │   │
 │   ├── memory/                     # 记忆系统层
 │   │   ├── __init__.py
@@ -1236,7 +1328,7 @@ DevPalAgent/
 │   │   ├── long_term.py            # 长期记忆
 │   │   └── error_memory.py         # 错误记忆
 │   │
-│   ├── tools/                      # 工具系统层 (22个工具)
+│   ├── tools/                 # 工具系统层 (26个工具)
 │   │   ├── __init__.py
 │   │   ├── base.py                 # Tool 基类
 │   │   ├── function_call_base.py   # FunctionCall 抽象层
@@ -1247,9 +1339,14 @@ DevPalAgent/
 │   │   ├── code_search.py          # 🔍 代码搜索
 │   │   ├── command_executor.py     # 💻 命令执行
 │   │   ├── compiler_analyzer.py    # 🔧 编译分析
+│   │   ├── file_reader.py    # 📁 文件读取
+│   │   ├── file_writer.py          # 📁 文件写入 (Delta 模式支持)
+│   │   ├── code_search.py        # 🔍 代码搜索
+│   │   ├── command_executor.py     # 💻 命令执行
+│   │   ├── compiler_analyzer.py    # 🔧 编译分析
 │   │   ├── static_analyzer.py      # 📊 静态分析
 │   │   ├── msvc_asan_compiler.py   # ⚡ MSVC ASAN
-│   │   ├── git_tool.py             # 🌿 Git 操作
+│   │   ├── git_tool.py           # 🌿 Git 操作
 │   │   ├── code_review.py          # 👀 代码审查
 │   │   ├── code_review_report.py   # 📋 审查报告
 │   │   ├── auto_fixer.py           # 🔧 自动修复
@@ -1257,14 +1354,13 @@ DevPalAgent/
 │   │   ├── test_doc_generator.py   # 📄 测试文档生成
 │   │   ├── test_generator.py       # ✏️ 测试代码生成
 │   │   ├── test_runner.py          # 🚀 测试运行器
+│   │   ├── project_generator.py    # 🏗️ 项目生成器 (OpenSpec)
+│   │   ├── spec_tool.py            # 📐 规范工具 (SpecEngine CLI)
 │   │   ├── self_source_reader.py   # 🔍 自源码读取
 │   │   ├── self_improve.py         # 🔄 自我改进
 │   │   ├── plugin_system.py        # 🔌 插件系统
+│   │   ├── hallucination_detector.py # 🎯 幻觉检测器
 │   │   └── linked_list.py          # 🧩 链表演示
-│   │
-│   ├── multimodal/                 # 多模态层
-│   │   ├── __init__.py
-│   │   └── image_analyzer.py       # 🖼️ 图片分析
 │   │
 │   └── web/                        # Web 界面
 │       ├── __init__.py
