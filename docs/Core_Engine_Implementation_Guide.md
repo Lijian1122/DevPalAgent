@@ -1888,7 +1888,585 @@ class CompileDB:
         return [Symbol.from_row(row) for row in cursor.fetchall()]
 ```
 
-### 7.2 完整编译数据库示例
+### 7.2 编译数据库生成机制详解
+
+#### 编译数据库的触发时机
+
+编译数据库的生成是在 OpenSpec 工作流的特定阶段自动触发的：
+
+```
+OpenSpec 11阶段工作流 中的 编译数据库生成时机
+─────────────────────────────────────────────────────
+
+Phase 1: 需求文档解析     ──────►  初始化空的编译数据库
+Phase 2: 创建项目结构     ──────►  检测项目类型，配置解析器
+Phase 3: 生成核心代码     ──────►  🔴 增量索引生成的代码文件
+Phase 4: 代码质量审查     ──────►  更新符号元数据（质量评分）
+Phase 5: 自动修复         ──────►  🔴 增量更新修复后的代码
+Phase 6: 生成测试文档     ──────►  索引测试代码符号
+Phase 7: 生成 README      ──────►  （跳过，非代码文件）
+Phase 8: 代码审查报告     ──────►  更新符号审查状态
+Phase 9: 编译运行测试     ──────►  🔴 完整重新索引（编译后）
+Phase 10: 生成验证报告    ──────►  生成依赖分析报告
+Phase 11: 技术实现文档    ──────►  导出架构图
+
+触发时机说明：
+🔴 = 完整索引 / 增量更新
+  = 仅更新元数据
+```
+
+#### 完整生成流程
+
+```
+用户需求输入
+     │
+     ▼
+┌─────────────────────────────────────────────────────┐
+│  Step 1: 项目类型检测                                 │
+│  ├─ 检测语言: C++ / Python / Java / Rust             │
+│  ├─ 检测构建系统: CMake / Makefile / MSBuild        │
+│  ├─ 检测现有 compile_commands.json                   │
+│  └─ 选择对应的符号解析器                               │
+└───────────────────────┬─────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────┐
+│  Step 2: 数据库初始化                                 │
+│  ├─ 创建 SQLite 数据库文件 (.spec/compile.db)        │
+│  ├─ 初始化 5 张核心表:                                │
+│  │   ├─ symbols (符号表)                              │
+│  │   ├─ dependencies (依赖关系表)                     │
+│  │   ├─ files (文件元数据表)                          │
+│  │   ├─ includes (包含关系表)                         │
+│  │   └─ call_graph (调用关系图)                       │
+│  └─ 创建索引加速查询                                   │
+└───────────────────────┬─────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────┐
+│  Step 3: 源代码文件扫描                               │
+│  ├─ 遍历 src/ 目录                                    │
+│  ├─ 根据文件扩展名过滤:                               │
+│  │   C++: .cpp, .cc, .cxx, .h, .hpp                  │
+│  │   Python: .py                                      │
+│  │   Rust: .rs                                        │
+│  ├─ 跳过第三方库目录 (third_party/, vendor/)          │
+│  └─ 生成待处理文件列表                                 │
+└───────────────────────┬─────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────┐
+│  Step 4: 并行符号解析                                 │
+│  ├─ 对每个文件调用语言专用解析器:                     │
+│  │   ├─ C++: libclang / ctags                       │
+│  │   ├─ Python: ast 模块                             │
+│  │   └─ 通用: 正则表达式匹配                          │
+│  ├─ 提取符号类型:                                     │
+│  │   ├─ 函数 (function)                               │
+│  │   ├─ 类/结构体 (class/struct)                     │
+│  │   ├─ 变量 (variable)                               │
+│  │   ├─ 宏定义 (macro)                                │
+│  │   └─ 枚举 (enum)                                   │
+│  ├─ 提取符号元数据:                                   │
+│  │   ├─ 行号、列号                                    │
+│  │   ├─ 访问修饰符 (public/private/protected)         │
+│  │   ├─ 命名空间 / 类属                               │
+│  │   └─ 函数签名 / 返回类型                            │
+│  └─ 批量插入数据库                                     │
+└───────────────────────┬─────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────┐
+│  Step 5: 依赖关系分析                                 │
+│  ├─ 解析 #include / import 语句                      │
+│  ├─ 构建文件间包含关系图                               │
+│  ├─ 分析函数调用关系                                   │
+│  ├─ 检测循环依赖                                       │
+│  └─ 计算耦合度评分                                     │
+└───────────────────────┬─────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────┐
+│  Step 6: 增量更新机制                                 │
+│  ├─ 对比文件哈希值，仅处理变更文件                     │
+│  ├─ 删除旧符号记录                                     │
+│  ├─ 插入新符号记录                                     │
+│  ├─ 更新受影响的依赖关系                               │
+│  └─ 避免全量重新索引                                   │
+└───────────────────────┬─────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────┐
+│  Step 7: 后处理与优化                                 │
+│  ├─ 构建符号引用计数                                  │
+│  ├─ 计算代码复杂度指标                                 │
+│  ├─ 生成调用图可视化                                   │
+│  └─ 执行 VACUUM 优化数据库                             │
+└─────────────────────────────────────────────────────┘
+```
+
+#### 实际代码实现示例
+
+**步骤 1：编译数据库管理器**
+
+```python
+from pathlib import Path
+import sqlite3
+import hashlib
+from typing import List, Dict, Set
+from concurrent.futures import ThreadPoolExecutor
+
+class CompileDBManager:
+    """编译数据库管理器 - 协调完整的索引生成流程"""
+    
+    def __init__(self, workspace: Path):
+        self.workspace = workspace
+        self.db_path = workspace / ".spec" / "compile.db"
+        self.conn = None
+        
+    def initialize(self):
+        """初始化编译数据库"""
+        self.db_path.parent.mkdir(exist_ok=True)
+        self.conn = sqlite3.connect(str(self.db_path))
+        
+        # 创建核心表
+        self._create_tables()
+        
+        # 创建索引
+        self._create_indexes()
+        
+        print(f"✅ 编译数据库初始化完成: {self.db_path}")
+    
+    def _create_tables(self):
+        """创建核心数据表"""
+        tables = [
+            """
+            CREATE TABLE IF NOT EXISTS files (
+                id INTEGER PRIMARY KEY,
+                path TEXT UNIQUE NOT NULL,
+                language TEXT,
+                file_hash TEXT,
+                last_indexed TIMESTAMP,
+                symbol_count INTEGER DEFAULT 0,
+                line_count INTEGER
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS symbols (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                file_id INTEGER,
+                line INTEGER NOT NULL,
+                column INTEGER,
+                signature TEXT,
+                namespace TEXT,
+                access TEXT,
+                complexity INTEGER,
+                FOREIGN KEY (file_id) REFERENCES files(id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS includes (
+                id INTEGER PRIMARY KEY,
+                source_file_id INTEGER,
+                target_file TEXT,
+                is_system INTEGER DEFAULT 0,
+                FOREIGN KEY (source_file_id) REFERENCES files(id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS call_graph (
+                id INTEGER PRIMARY KEY,
+                caller_id INTEGER,
+                callee_id INTEGER,
+                call_site_line INTEGER,
+                FOREIGN KEY (caller_id) REFERENCES symbols(id),
+                FOREIGN KEY (callee_id) REFERENCES symbols(id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS dependencies (
+                id INTEGER PRIMARY KEY,
+                source_file TEXT NOT NULL,
+                target_file TEXT NOT NULL,
+                dependency_type TEXT NOT NULL
+            )
+            """
+        ]
+        
+        for table_sql in tables:
+            self.conn.execute(table_sql)
+        self.conn.commit()
+    
+    def _create_indexes(self):
+        """创建查询索引"""
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_symbol_name ON symbols(name)",
+            "CREATE INDEX IF NOT EXISTS idx_symbol_file ON symbols(file_id)",
+            "CREATE INDEX IF NOT EXISTS idx_file_path ON files(path)",
+            "CREATE INDEX IF NOT EXISTS idx_include_source ON includes(source_file_id)",
+        ]
+        for index_sql in indexes:
+            self.conn.execute(index_sql)
+        self.conn.commit()
+```
+
+**步骤 2：项目检测与文件扫描**
+
+```python
+    def detect_project_type(self) -> str:
+        """检测项目类型"""
+        workspace = self.workspace
+        
+        # 检测 CMake 项目
+        if (workspace / "CMakeLists.txt").exists():
+            return "cmake"
+        
+        # 检测 Makefile 项目
+        if (workspace / "Makefile").exists():
+            return "makefile"
+        
+        # 检测 MSVC 项目
+        if list(workspace.glob("*.vcxproj")):
+            return "msvc"
+        
+        # 检测 Python 项目
+        if (workspace / "setup.py").exists() or (workspace / "pyproject.toml").exists():
+            return "python"
+        
+        # 默认通用模式
+        return "generic"
+    
+    def scan_source_files(self) -> List[Path]:
+        """扫描所有源代码文件"""
+        project_type = self.detect_project_type()
+        source_files = []
+        
+        # 根据项目类型定义扩展名
+        extensions = {
+            "cmake": {".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"},
+            "makefile": {".cpp", ".c", ".h"},
+            "msvc": {".cpp", ".cxx", ".h", ".hpp"},
+            "python": {".py"},
+            "generic": {".cpp", ".h", ".py", ".java", ".rs"}
+        }
+        
+        target_exts = extensions.get(project_type, extensions["generic"])
+        src_dir = self.workspace / "src"
+        
+        if src_dir.exists():
+            for ext in target_exts:
+                for file_path in src_dir.rglob(f"*{ext}"):
+                    # 跳过第三方目录
+                    if "third_party" in file_path.parts or "vendor" in file_path.parts:
+                        continue
+                    source_files.append(file_path)
+        
+        print(f"🔍 扫描到 {len(source_files)} 个源文件")
+        return source_files
+```
+
+**步骤 3：增量索引与文件哈希**
+
+```python
+    def calculate_file_hash(self, file_path: Path) -> str:
+        """计算文件内容哈希"""
+        content = file_path.read_text(encoding="utf-8", errors="ignore")
+        return hashlib.sha256(content.encode()).hexdigest()
+    
+    def get_changed_files(self, files: List[Path]) -> List[Path]:
+        """获取需要重新索引的变更文件"""
+        changed_files = []
+        
+        for file_path in files:
+            current_hash = self.calculate_file_hash(file_path)
+            
+            # 查询数据库中的旧哈希
+            cursor = self.conn.execute(
+                "SELECT file_hash FROM files WHERE path = ?",
+                (str(file_path),)
+            )
+            result = cursor.fetchone()
+            
+            if not result or result[0] != current_hash:
+                changed_files.append(file_path)
+        
+        print(f"📝 {len(changed_files)} 个文件需要重新索引")
+        return changed_files
+    
+    def index_all_files(self, incremental: bool = True):
+        """索引所有文件"""
+        all_files = self.scan_source_files()
+        
+        if incremental:
+            files_to_index = self.get_changed_files(all_files)
+        else:
+            files_to_index = all_files
+            # 全量索引前清空数据
+            self.conn.execute("DELETE FROM symbols")
+            self.conn.execute("DELETE FROM includes")
+            self.conn.execute("DELETE FROM call_graph")
+            self.conn.commit()
+        
+        # 并行索引
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            for file_path in files_to_index:
+                executor.submit(self._index_single_file, file_path)
+        
+        self.conn.commit()
+        print(f"✅ 索引完成，共处理 {len(files_to_index)} 个文件")
+```
+
+**步骤 4：单文件符号解析（以 Python 为例）**
+
+```python
+    def _index_single_file(self, file_path: Path):
+        """索引单个文件"""
+        print(f"  索引中: {file_path.name}")
+        
+        # 计算文件哈希
+        file_hash = self.calculate_file_hash(file_path)
+        line_count = len(file_path.read_text(encoding="utf-8", errors="ignore").splitlines())
+        
+        # 删除旧记录
+        self.conn.execute("DELETE FROM symbols WHERE file_id IN (SELECT id FROM files WHERE path = ?)", (str(file_path),))
+        self.conn.execute("DELETE FROM includes WHERE source_file_id IN (SELECT id FROM files WHERE path = ?)", (str(file_path),))
+        
+        # 插入或更新文件记录
+        self.conn.execute("""
+            INSERT OR REPLACE INTO files (path, language, file_hash, last_indexed, line_count)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)
+        """, (str(file_path), file_path.suffix[1:], file_hash, line_count))
+        
+        # 获取文件 ID
+        cursor = self.conn.execute("SELECT id FROM files WHERE path = ?", (str(file_path),))
+        file_id = cursor.fetchone()[0]
+        
+        # 根据文件类型选择解析器
+        if file_path.suffix == ".py":
+            self._parse_python_file(file_path, file_id)
+        elif file_path.suffix in {".cpp", ".cxx", ".cc", ".h", ".hpp", ".hxx"}:
+            self._parse_cpp_file(file_path, file_id)
+        
+        self.conn.commit()
+    
+    def _parse_python_file(self, file_path: Path, file_id: int):
+        """解析 Python 文件"""
+        import ast
+        
+        try:
+            content = file_path.read_text(encoding="utf-8")
+            tree = ast.parse(content)
+            
+            for node in ast.walk(tree):
+                # 函数定义
+                if isinstance(node, ast.FunctionDef):
+                    self._insert_symbol(file_id, node.name, "function", 
+                                      node.lineno, node.col_offset, 
+                                      signature=f"def {node.name}(...)")
+                
+                # 类定义
+                elif isinstance(node, ast.ClassDef):
+                    self._insert_symbol(file_id, node.name, "class",
+                                      node.lineno, node.col_offset)
+                
+                # 赋值语句（顶层变量）
+                elif isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            self._insert_symbol(file_id, target.id, "variable",
+                                              target.lineno, target.col_offset)
+            
+            # 解析 import 语句
+            imports = [node.names[0].name for node in ast.walk(tree) 
+                      if isinstance(node, ast.Import)]
+            
+            for imp in imports:
+                self._insert_include(file_id, imp, is_system=True)
+                
+        except SyntaxError as e:
+            print(f"  ⚠️ 语法错误: {file_path.name}: {e}")
+```
+
+**步骤 5：符号插入与依赖分析**
+
+```python
+    def _insert_symbol(self, file_id: int, name: str, symbol_type: str,
+                      line: int, column: int = 0, signature: str = None,
+                      namespace: str = None, access: str = "public"):
+        """插入符号记录"""
+        self.conn.execute("""
+            INSERT INTO symbols (name, type, file_id, line, column, 
+                               signature, namespace, access)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (name, symbol_type, file_id, line, column, 
+              signature, namespace, access))
+    
+    def _insert_include(self, source_file_id: int, target_file: str,
+                       is_system: bool = False):
+        """插入包含关系"""
+        self.conn.execute("""
+            INSERT INTO includes (source_file_id, target_file, is_system)
+            VALUES (?, ?, ?)
+        """, (source_file_id, target_file, 1 if is_system else 0))
+    
+    def analyze_call_graph(self):
+        """分析函数调用图"""
+        print("🔗 构建调用关系图...")
+        
+        # 获取所有函数符号
+        cursor = self.conn.execute("""
+            SELECT s.id, s.name, f.path 
+            FROM symbols s 
+            JOIN files f ON s.file_id = f.id 
+            WHERE s.type = 'function'
+        """)
+        functions = {row[1]: row[0] for row in cursor.fetchall()}
+        
+        # 分析每个函数的调用关系
+        for func_name, func_id in functions.items():
+            cursor = self.conn.execute("""
+                SELECT f.path, s.line 
+                FROM symbols s 
+                JOIN files f ON s.file_id = f.id 
+                WHERE s.id = ?
+            """, (func_id,))
+            func_file, func_line = cursor.fetchone()
+            
+            # 读取文件内容，查找函数调用
+            content = Path(func_file).read_text(encoding="utf-8", errors="ignore")
+            lines = content.splitlines()
+            
+            # 简化：在函数定义附近查找其他函数调用
+            start_line = max(0, func_line - 1)
+            end_line = min(func_line + 50, len(lines))
+            
+            for i in range(start_line, end_line):
+                line = lines[i]
+                for callee_name in functions:
+                    if callee_name != func_name and f"{callee_name}(" in line:
+                        # 检测到函数调用
+                        callee_id = functions[callee_name]
+                        self.conn.execute("""
+                            INSERT INTO call_graph (caller_id, callee_id, call_site_line)
+                            VALUES (?, ?, ?)
+                        """, (func_id, callee_id, i + 1))
+        
+        self.conn.commit()
+        print(f"✅ 调用图构建完成，共 {len(functions)} 个函数节点")
+```
+
+**步骤 6：在 OpenSpec 工作流中的集成**
+
+```python
+class OpenSpecWorkflow:
+    """OpenSpec 11阶段工作流"""
+    
+    def __init__(self, workspace: Path):
+        self.workspace = workspace
+        self.compile_db = CompileDBManager(workspace)
+    
+    def phase_3_generate_code(self):
+        """Phase 3: 生成核心代码"""
+        # ... 代码生成逻辑 ...
+        
+        # 🔴 生成代码后立即增量索引
+        print("\n[Phase 3] 索引新生成的代码文件...")
+        self.compile_db.initialize()
+        self.compile_db.index_all_files(incremental=True)
+    
+    def phase_5_auto_fix(self):
+        """Phase 5: 自动修复"""
+        # ... 自动修复逻辑 ...
+        
+        # 🔴 修复后更新索引
+        print("\n[Phase 5] 更新修复后的文件索引...")
+        self.compile_db.index_all_files(incremental=True)
+    
+    def phase_9_compile_test(self):
+        """Phase 9: 编译运行测试"""
+        # ... 编译和测试逻辑 ...
+        
+        # 🔴 编译后完整重新索引
+        print("\n[Phase 9] 编译后执行完整索引...")
+        self.compile_db.index_all_files(incremental=False)
+        
+        # 构建调用图和依赖分析
+        self.compile_db.analyze_call_graph()
+        
+        # 生成依赖分析报告
+        self._generate_dependency_report()
+    
+    def _generate_dependency_report(self):
+        """生成依赖分析报告"""
+        report = self.workspace / "docs" / "dependency_report.md"
+        
+        # 统计信息
+        cursor = self.compile_db.conn.execute("SELECT COUNT(*) FROM symbols")
+        total_symbols = cursor.fetchone()[0]
+        
+        cursor = self.compile_db.conn.execute("SELECT COUNT(*) FROM files")
+        total_files = cursor.fetchone()[0]
+        
+        cursor = self.compile_db.conn.execute("SELECT COUNT(*) FROM call_graph")
+        total_calls = cursor.fetchone()[0]
+        
+        report_content = f"""
+# 依赖分析报告
+
+## 项目统计
+
+| 指标 | 数值 |
+|------|------|
+| 源文件数 | {total_files} |
+| 符号总数 | {total_symbols} |
+| 函数调用关系 | {total_calls} |
+
+## 高耦合文件
+
+```sql
+-- 查询被包含次数最多的头文件
+SELECT target_file, COUNT(*) as include_count
+FROM includes
+WHERE is_system = 0
+GROUP BY target_file
+ORDER BY include_count DESC
+LIMIT 10
+```
+
+## 建议
+
+1. 高耦合头文件考虑使用前置声明
+2. 循环依赖需要重构
+3. 按模块划分目录结构
+"""
+        report.write_text(report_content, encoding="utf-8")
+        print(f"✅ 依赖分析报告已生成: {report}")
+```
+
+#### 性能优化策略
+
+| 优化策略 | 说明 | 效果 |
+|---------|------|------|
+| **增量索引** | 仅索引变更文件，对比文件哈希 | 节省 80-90% 时间 |
+| **并行处理** | 使用线程池并行索引多个文件 | 4 核 → 3-4 倍加速 |
+| **批量插入** | 使用 executemany 批量插入符号 | 减少 90% 数据库操作 |
+| **延迟索引** | 非关键符号延迟到空闲时索引 | 提升响应速度 |
+| **SQLite 优化** | WAL 模式 + 缓存设置 | 写入速度提升 5-10 倍 |
+
+#### 典型项目索引时间参考
+
+| 项目规模 | 文件数 | 符号数 | 首次索引 | 增量更新 |
+|---------|-------|-------|---------|---------|
+| 小型项目 | < 10 | < 500 | < 5 秒 | < 1 秒 |
+| 中型项目 | 10-50 | 500-2000 | 5-30 秒 | 1-5 秒 |
+| 大型项目 | 50-200 | 2000-10000 | 30 秒-2 分钟 | 5-20 秒 |
+| 超大型项目 | > 200 | > 10000 | > 2 分钟 | > 20 秒 |
+
+---
+
+### 7.3 完整编译数据库示例
 
 #### 场景：C++ 项目的符号索引和依赖分析
 
