@@ -176,21 +176,23 @@ OpenSpec 是 DevPal Agent v2.0 的核心架构升级，实现"规范优先(Spec-
 python -m devpal.cli.openspec_cli --req-file requirements/auth_system.md
 ```
 
-### 11阶段完整流程
+### 11阶段完整流程（先设计后实现）
+
+> **v2.1 改进**: 技术设计文档移到代码生成之前，遵循"先设计后实现"的真实开发流程
 
 | 阶段 | 名称 | 核心动作 | 输出 |
 |-----|------|----------|------|
 | **Phase 1** | 🔍 需求文档解析 | 读取 Markdown + YAML Frontmatter，提取验收标准，识别语言类型 | 结构化需求对象 |
 | **Phase 2** | 📁 创建项目结构 | 自动生成 include/src/tests/docs/config/data 目录，初始化 .spec 状态目录 | 完整项目骨架 |
-| **Phase 3** | 💻 生成核心代码 | 根据语言类型（C++/Python）生成核心实现，User/Session/Authenticator 类 | 核心源码文件 |
-| **Phase 4** | 📊 代码质量审查 | 多语言静态分析，安全/性能/风格三维评级，问题分级（ERROR/WARN/INFO） | 审查报告 |
-| **Phase 5** | 🔧 自动修复 | 自动备份 → 应用 Delta 变更 → 修复可自动修复的问题 → 计算修复率 | 修复后的代码 |
-| **Phase 6** | 📝 生成测试文档 | 结构化测试用例设计，覆盖功能/边界/异常/性能测试 | test_documentation.md (4.7K) |
-| **Phase 7** | 📚 生成 README | 项目介绍、编译指令、使用示例、架构说明、CMakeLists.txt | README.md + CMakeLists.txt |
-| **Phase 8** | 🔍 生成代码审查报告 | 调用 code_review 工具审查所有代码文件，生成详细质量报告 | code_review_report.md (7.0K) |
-| **Phase 9** | 🧪 编译并运行测试 | **规范化 MSVC/MinGW 编译器检测**，编译测试代码，运行测试并记录结果 | test_execution_report.md (1.3K) |
-| **Phase 10** | ✅ 生成验证报告 | 汇总所有阶段结果，验收标准检查，生成最终验证报告 | openspec_verification_report.md (2.3K) |
-| **Phase 11** | 📖 生成技术实现文档 | 架构设计、数据结构、核心算法、线程安全、安全机制、性能分析 | technical_implementation.md (13K) |
+| **Phase 3** | ✏️ **生成技术设计文档** | **【v2.1 新位置】** 先设计后编码，包含架构设计、数据结构、核心算法、线程安全、技术决策理由 | technical_implementation.md (13K) |
+| **Phase 4** | 💻 生成核心实现代码 | 根据技术设计文档生成代码，从 `auth_templates/` 读取验证过的 C++ 模板 | auth.h, auth.cpp, main.cpp |
+| **Phase 5** | 🧪 生成测试代码 | 依据需求的验收标准生成测试用例，覆盖所有功能点 | test_auth.cpp (280+ 行) |
+| **Phase 6** | 🔧 生成 CMakeLists.txt | CMake 构建配置，支持 MSVC/GCC/Clang 多编译器 | CMakeLists.txt |
+| **Phase 7** | 📝 生成测试文档 | 结构化测试用例设计，覆盖功能/边界/异常/性能测试 | test_documentation.md |
+| **Phase 8** | 📚 生成项目文档 | 项目介绍、编译指令、使用示例、架构说明 | README.md |
+| **Phase 9** | 🔍 代码质量审查 | 多语言静态分析，安全/性能/风格三维评级，问题分级 | code_review_report.md |
+| **Phase 10** | 🧪 编译并运行测试 | **CMake + VS 环境智能检测**，自动查找 MSVC 编译器，运行所有测试 | test_execution_report.md |
+| **Phase 11** | ✅ 生成最终验证报告 | 汇总所有阶段结果，验收标准检查，生成完整验证报告 | openspec_verification_report.md |
 
 ### OpenSpec 核心架构 (7层)
 
