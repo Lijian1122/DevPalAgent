@@ -3,6 +3,7 @@ title: 用户登录功能需求
 version: 1.0
 author: DevPal Team
 created: 2026-05-06
+language: C++
 ---
 
 # 用户登录功能需求
