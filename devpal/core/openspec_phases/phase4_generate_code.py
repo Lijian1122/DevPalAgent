@@ -1,113 +1,260 @@
 # -*- coding: utf-8 -*-
-"""
-Phase 4: 生成核心实现代码 - 使用通用模板系统
+"""Phase 4: Generate core implementation code via templates + AI.
+
+Step 1: apply infrastructure templates (CMake, README, skeleton, test_base).
+Step 2: invoke Claude with a write_file tool to emit business headers,
+        implementations, main.cpp, and unit tests.
 """
 
 from pathlib import Path
+from typing import Any, Dict, List
+
 from .base import PhaseInterface, PhaseResult, OpenSpecContext
 from ..compiledb import CompileDB
+from ..llm_client import get_llm_client
 from ..templates import registry, TemplateContext
 
 
+_AI_SYSTEM_PROMPT = (
+    "You are a senior C++ developer. Given a software requirements document "
+    "and a technical design document, write concrete, compilable C++17 code.\n\n"
+    "CRITICAL RULES:\n"
+    "- You MUST use the write_file tool for EVERY file. Do NOT write code in prose.\n"
+    "- Call write_file once per file immediately. No planning, no discussion first.\n"
+    "- Start with your first write_file call right away.\n\n"
+    "REQUIRED FILES (you MUST generate ALL of these):\n"
+    "1. For each class: include/<name>.h AND src/<name>.cpp (both header and implementation)\n"
+    "2. src/main.cpp - a working main program that demonstrates the core functionality\n"
+    "3. At least one tests/test_<class>.cpp for each non-trivial class\n"
+    "Output rules:\n"
+    "- path is relative to project root (include/user.h, src/user.cpp, "
+    "src/main.cpp, tests/test_user.cpp).\n"
+    "- Each class lives in its own pair of include/<name>.h plus src/<name>.cpp "
+    "(snake_case file, PascalCase class).\n"
+    "- Include guards use the uppercase filename (e.g. #ifndef USER_H).\n"
+    "- All code goes inside namespace {namespace}.\n"
+    "- Use only C++17 STL unless the design mandates otherwise.\n"
+    "- src/main.cpp must include a working main() function that exercises the primary workflow.\n"
+    "- For every non-trivial class, emit at least one tests/test_<class>.cpp "
+    "that includes \"test_base.h\" and uses ASSERT_TRUE / ASSERT_EQ macros.\n"
+    "- Do NOT regenerate CMakeLists.txt, README.md, include/<project>.h, "
+    "or tests/test_base.h - they already exist.\n"
+    "- After all files are written, respond with a one-line summary and stop.\n"
+)
+
+
+_WRITE_FILE_TOOL: Dict[str, Any] = {
+    "name": "write_file",
+    "description": (
+        "Write a single source file. Path is relative to project root. "
+        "Overwrites if path exists."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Project-relative path (e.g. include/user.h)",
+            },
+            "content": {
+                "type": "string",
+                "description": "Full file content to write.",
+            },
+            "description": {
+                "type": "string",
+                "description": "Optional human-readable description.",
+            },
+        },
+        "required": ["path", "content"],
+    },
+}
+
+
 class Phase4GenerateCode(PhaseInterface):
-    """Phase 4: 生成核心实现代码 - 使用通用模板系统"""
+    """Phase 4: infrastructure templates + AI-generated business code."""
 
     def __init__(self, context: OpenSpecContext, tool_registry):
         super().__init__(context)
         self.phase_number = 4
-        self.phase_name = "生成核心实现代码"
+        self.phase_name = "Generate core code"
         self.tool_registry = tool_registry
         self.compiledb = CompileDB()
 
     def execute(self) -> PhaseResult:
-        """执行 Phase 4"""
-        self.log("开始生成核心代码 (使用通用模板系统)...")
-
+        self.log("Phase 4 start: infrastructure templates + AI code generation")
         project_dir = self.context.project_dir
-        project_name = self.context.project_name or "MyProject"
+        project_name = self.context.project_name or "myproject"
+        project_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. 索引现有项目（增量模式）
+        infra_files, infra_errors = self._apply_infrastructure_templates(project_name)
+        self.log("  [Infra] generated {} scaffolding files".format(len(infra_files)))
+
+        if not self.context.tech_design_content:
+            return PhaseResult.fail(
+                "tech_design_content is empty - did Phase 3 succeed?",
+                errors=["missing tech_design_content"],
+            )
+
+        try:
+            client = get_llm_client()
+        except Exception as exc:
+            return PhaseResult.fail(
+                "LLM client init failed: {}".format(exc),
+                errors=[str(exc)],
+            )
+
+        ai_files: List[Path] = []
+        ai_errors: List[str] = []
+
+        def tool_handler(tool_name, tool_input):
+            if tool_name != "write_file":
+                return "[error] unknown tool {}".format(tool_name)
+            rel = (tool_input.get("path") or "").strip()
+            content = tool_input.get("content") or ""
+            if not rel or not content:
+                return "[error] path and content are required"
+            target = (project_dir / rel).resolve()
+            try:
+                target.relative_to(project_dir.resolve())
+            except ValueError:
+                return "[error] path escapes project root: {}".format(rel)
+
+                  # Check if file already exists
+            if target.exists():
+                self.log("    [SKIP] {} already exists, not overwriting".format(rel))
+                return "[skipped] {} already exists".format(rel)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+            ai_files.append(target)
+            self.log("    [AI] wrote {} ({} chars)".format(rel, len(content)))
+            return "wrote {}".format(rel)
+
+        existing_overview = self._build_existing_files_overview(project_dir)
+        namespace = (
+            project_name.lower().replace("-", "_").replace(" ", "_")
+        )
+        system_prompt = _AI_SYSTEM_PROMPT.format(namespace=namespace)
+        user_message = (
+            "Produce all business code now. Use write_file for each .h/.cpp.\n\n"
+            "=== EXISTING FILES (do not regenerate) ===\n"
+            + existing_overview
+        )
+        cached_context = [
+            self.context.requirements_content,
+            self.context.tech_design_content,
+        ]
+
+        try:
+            result = client.generate_with_tool_loop(
+                system=system_prompt,
+                user_message=user_message,
+                tools=[_WRITE_FILE_TOOL],
+                tool_handler=tool_handler,
+                cached_context=cached_context,
+                max_turns=15,
+                max_tokens=8192,
+            )
+        except Exception as exc:
+            self.log("  [FAIL] AI tool loop exception: {}".format(exc))
+            return PhaseResult.fail(
+                "AI code generation exception: {}".format(exc),
+                errors=[str(exc)],
+            )
+
+        self._update_usage_stats(client)
+
+        if not ai_files:
+            return PhaseResult.fail(
+                "AI produced no code files",
+                errors=[
+                    "stop_reason={}".format(result.stop_reason),
+                    "turns={}".format(result.turns),
+                    "text={}".format(result.text_output[:500]),
+                ],
+            )
+
+        self.context.ai_generated_files.extend(ai_files)
+        self.context.generated_files.extend(infra_files + ai_files)
+
+        self.compiledb.index_project(project_dir, use_cache=False)
+        self.compiledb.save_cache(project_dir)
+        self.log(
+            "  [OK] re-indexed {} files".format(len(self.compiledb.get_all_files()))
+        )
+
+        errors = infra_errors + ai_errors
+        if errors:
+            return PhaseResult.fail(
+                "Code generation completed with errors",
+                errors=errors,
+            )
+
+        return PhaseResult.ok(
+            "Phase 4 complete",
+            infra_count=len(infra_files),
+            ai_count=len(ai_files),
+            total_files=len(infra_files) + len(ai_files),
+            llm_calls=client.usage.calls,
+            llm_input_tokens=client.usage.input_tokens,
+            llm_output_tokens=client.usage.output_tokens,
+            turns=result.turns,
+        )
+
+    def _apply_infrastructure_templates(self, project_name):
+        """Apply CMake/README/skeleton/test_base templates."""
+        project_dir = self.context.project_dir
         if project_dir.exists():
             self.compiledb.index_project(project_dir)
-            self.log(f"  索引现有项目: {len(self.compiledb.get_all_files())} 个文件")
-
-        # 2. 准备模板上下文
         template_ctx = TemplateContext(
             project_name=project_name,
             language=self.context.language,
             features=self._detect_features(),
             existing_files=self.compiledb.get_all_files(),
-            existing_symbols=[s.name for s in self.compiledb.get_all_symbols()]
+            existing_symbols=[s.name for s in self.compiledb.get_all_symbols()],
         )
-
-        # 3. 获取匹配的模板
-        matching_templates = registry.get_matching_templates(template_ctx)
-        self.log(f"  匹配到 {len(matching_templates)} 个模板")
-        for t in matching_templates:
-            self.log(f"    - {t.name}")
-
-        # 4. 生成所有模板文件
-        generated_files = []
-        errors = []
-
-        all_files = registry.generate_all(template_ctx)
-        for gen_file in all_files:
-            file_path = project_dir / gen_file.path
-
-            # 增量检查：如果文件已存在，检查是否需要更新
-            if file_path.exists():
-                file_symbols = self.compiledb.get_file_symbols(str(file_path))
-                if file_symbols:
-                    self.log(f"  [SKIP] {gen_file.path} 已存在 (含 {len(file_symbols)} 个符号)")
-                    continue
-
-            # 确保目录存在
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_text(gen_file.content, encoding='utf-8')
-            generated_files.append(file_path)
-            self.log(f"  [OK] {gen_file.path}")
-
-        self.context.generated_files.extend(generated_files)
-        self.log(f"[OK] 核心代码生成完成: {len(generated_files)} 个文件")
-
-        # 重新索引项目，确保 CompileDB 缓存包含新生成的文件
-        if generated_files:
-            self.compiledb.index_project(project_dir, use_cache=False)
-            # 显式保存缓存（use_cache=False 时不会自动保存）
-            self.compiledb.save_cache(project_dir)
-            self.log(f"  [OK] 重新索引项目: {len(self.compiledb.get_all_files())} 个文件")
-
-        if errors:
-            return PhaseResult.fail(
-                "核心代码生成存在部分错误",
-                errors=errors
+        matching = registry.get_matching_templates(template_ctx)
+        self.log(
+            "  [Infra] matched {} templates: {}".format(
+                len(matching), [t.name for t in matching]
             )
-
-        return PhaseResult.ok(
-            "核心代码生成成功",
-            generated_count=len(generated_files),
-            files=[str(f.name) for f in generated_files],
-            templates_used=[t.name for t in matching_templates]
         )
+        generated: List[Path] = []
+        errors: List[str] = []
+        for gen_file in registry.generate_all(template_ctx):
+            out = project_dir / gen_file.path
+            if out.exists():
+                self.log("    [SKIP] {} already exists".format(gen_file.path))
+                continue
+            try:
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_text(gen_file.content, encoding="utf-8")
+                generated.append(out)
+                self.log("    [OK] {}".format(gen_file.path))
+            except Exception as exc:
+                errors.append("{}: {}".format(gen_file.path, exc))
+        return generated, errors
+
+    def _build_existing_files_overview(self, project_dir):
+        """Return a short bullet list of existing files for AI context."""
+        lines: List[str] = []
+        if project_dir.exists():
+            for path in sorted(project_dir.rglob("*")):
+                if not path.is_file():
+                    continue
+                rel = path.relative_to(project_dir).as_posix()
+                if rel.startswith(("build", ".spec", "data")):
+                    continue
+                lines.append("- {}".format(rel))
+        return "\n".join(lines) if lines else "(empty project)"
+
+    def _update_usage_stats(self, client):
+        """Sync LLM usage stats from client to context."""
+        ctx = self.context
+        ctx.llm_calls = client.usage.calls
+        ctx.llm_input_tokens = client.usage.input_tokens
+        ctx.llm_output_tokens = client.usage.output_tokens
+        ctx.llm_cache_read_tokens = client.usage.cache_read_tokens
 
     def _detect_features(self) -> list:
-        """从需求内容检测功能特性"""
-        content = self.context.requirements_content.lower()
-        features = ['auth']  # 默认包含认证
-
-        feature_keywords = {
-            'database': ['数据库', 'database', 'db', 'sql'],
-            'api': ['api', '接口', 'http', 'rest'],
-            'web': ['web', '网页', '前端'],
-            'cli': ['cli', '命令行', 'cmd'],
-            'test': ['测试', 'test', '单元测试'],
-            'docs': ['文档', 'doc', 'readme'],
-        }
-
-        for feature, keywords in feature_keywords.items():
-            for kw in keywords:
-                if kw in content:
-                    features.append(feature)
-                    break
-
-        return list(set(features))
+        """Phase 4 no longer keyword-matches business features; AI parses reqs."""
+        return ["test", "docs"]

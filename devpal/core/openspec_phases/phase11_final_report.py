@@ -1,133 +1,160 @@
 # -*- coding: utf-8 -*-
-"""
-Phase 11: 生成最终验证报告
-"""
+"""Phase 11: final verification report (with LLM usage stats)."""
 
 from pathlib import Path
+
 from .base import PhaseInterface, PhaseResult, OpenSpecContext
 
 
 class Phase11FinalReport(PhaseInterface):
-    """Phase 11: 生成最终验证报告"""
+    """Phase 11: emit docs/final_report.md summarising the whole run."""
 
     def __init__(self, context: OpenSpecContext):
         super().__init__(context)
         self.phase_number = 11
-        self.phase_name = "生成最终验证报告"
+        self.phase_name = "Final report"
 
     def execute(self) -> PhaseResult:
-        """执行 Phase 11"""
-        self.log("开始生成最终验证报告...")
+        self.log("Phase 11: generating final report...")
 
         report_content = self._generate_final_report()
-        report_path = self.context.project_dir / 'docs' / '最终验证报告.md'
-        report_path.write_text(report_content, encoding='utf-8')
+        report_path = self.context.project_dir / "docs" / "final_report.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(report_content, encoding="utf-8")
 
         self.context.generated_files.append(report_path)
-        self.log(f"  [OK] 最终验证报告已生成: {report_path}")
+        self.log("  [OK] report at {}".format(report_path))
 
         self.log("")
         self.log("=" * 60)
-        self.log("  OpenSpec 11 阶段流程全部完成!")
-        self.log(f"  项目位置: {self.context.project_dir}")
-        self.log(f"  测试结果: {self.context.test_passed}/{self.context.test_total} 通过")
-        self.log(f"  生成文件: {len(self.context.generated_files)} 个")
+        self.log("  OpenSpec 11-phase pipeline complete")
+        self.log("  project: {}".format(self.context.project_dir))
+        self.log(
+            "  tests: {}/{} passed".format(
+                self.context.test_passed, self.context.test_total
+            )
+        )
+        self.log(
+            "  files generated: {}".format(len(set(self.context.generated_files)))
+        )
+        self.log(
+            "  llm: {} calls, in={} out={} cache_read={}".format(
+                self.context.llm_calls,
+                self.context.llm_input_tokens,
+                self.context.llm_output_tokens,
+                self.context.llm_cache_read_tokens,
+            )
+        )
+        self.log("  self-heal attempts: {}".format(self.context.self_heal_attempts))
         self.log("=" * 60)
 
         return PhaseResult.ok(
-            "最终验证报告生成成功",
+            "Final report generated",
             report_path=str(report_path),
             project_dir=str(self.context.project_dir),
             test_passed=self.context.test_passed,
             test_total=self.context.test_total,
-            generated_files=len(self.context.generated_files)
+            generated_files=len(set(self.context.generated_files)),
+            llm_calls=self.context.llm_calls,
+            llm_input_tokens=self.context.llm_input_tokens,
+            llm_output_tokens=self.context.llm_output_tokens,
+            llm_cache_read_tokens=self.context.llm_cache_read_tokens,
+            self_heal_attempts=self.context.self_heal_attempts,
         )
 
     def _generate_final_report(self) -> str:
-        """生成最终验证报告内容"""
-        # 去重处理（避免多个 Phase 重复添加相同文件）
         unique_files = sorted(set(self.context.generated_files))
+        passed = self.context.test_passed
+        total = self.context.test_total
+        rate = "{:.1f}%".format(passed / total * 100) if total else "n/a"
+
+        phase_names = {
+            1: "Parse requirements",
+            2: "Create project structure",
+            3: "Generate tech design (AI)",
+            4: "Generate core code (AI)",
+            5: "Verify tests",
+            6: "CMake config",
+            7: "Test docs",
+            8: "README",
+            9: "Code review",
+            10: "Compile and run tests",
+            11: "Final report",
+        }
 
         lines = [
-            "# OpenSpec - 最终验证报告",
+            "# OpenSpec - Final Report",
             "",
-            "> **生成时间**: 2026-05-08",
-            "> **项目类型**: C++ 用户认证系统",
+            "## 1. Project Overview",
             "",
-            "## 1. 项目概览",
+            "- Project dir: `{}`".format(self.context.project_dir),
+            "- Requirements: `{}`".format(self.context.requirements_file),
+            "- Files generated: {}".format(len(unique_files)),
             "",
-            f"- **项目目录**: `{self.context.project_dir}`",
-            f"- **需求文档**: `{self.context.requirements_file}`",
-            f"- **生成文件**: {len(unique_files)} 个",
+            "## 2. AI Usage",
             "",
-            "## 2. 测试结果",
+            "- LLM calls: {}".format(self.context.llm_calls),
+            "- Input tokens: {}".format(self.context.llm_input_tokens),
+            "- Output tokens: {}".format(self.context.llm_output_tokens),
+            "- Cache read tokens: {}".format(self.context.llm_cache_read_tokens),
+            "- Self-heal attempts: {}".format(self.context.self_heal_attempts),
+            "- AI-generated files: {}".format(len(self.context.ai_generated_files)),
             "",
-            f"- **测试通过**: {self.context.test_passed}/{self.context.test_total}",
-            f"- **成功率**: {self.context.test_passed/self.context.test_total*100:.1f}%" if self.context.test_total > 0 else "",
+            "## 3. Test Results",
             "",
-            "### 测试输出",
+            "- Passed: {}/{}".format(passed, total),
+            "- Pass rate: {}".format(rate),
+            "",
+            "### Test Output",
             "",
             "```",
-            self.context.test_output or "无测试输出",
+            self.context.test_output or "(no test output captured)",
             "```",
             "",
-            "## 3. 生成的文件列表",
+            "## 4. Generated Files",
             "",
             "```",
         ]
-
-        # 去重处理（避免多个 Phase 重复添加相同文件）
-        unique_files = sorted(set(self.context.generated_files))
         for f in unique_files:
-            rel_path = Path(f).relative_to(self.context.project_dir)
-            lines.append(f"  {rel_path}")
+            try:
+                          rel = Path(f).relative_to(self.context.project_dir.resolve())
+            except ValueError:
+                rel = Path(f).name
+            lines.append("  {}".format(rel))
 
-        lines.extend([
-            "```",
-            "",
-            "## 4. 阶段完成情况",
-            "",
-            "| 阶段 | 名称 | 状态 |",
-            "|-----|------|------|",
-        ])
-
-        phase_names = {
-            1: "解析需求文档",
-            2: "创建项目结构",
-            3: "生成技术设计文档",
-            4: "生成核心代码",
-            5: "生成测试代码",
-            6: "生成 CMake 配置",
-            7: "生成测试文档",
-            8: "生成 README",
-            9: "代码质量审查",
-            10: "编译运行测试",
-            11: "生成最终报告",
-        }
-
+        lines.extend(
+            [
+                "```",
+                "",
+                "## 5. Phase Status",
+                "",
+                "| Phase | Name | Status |",
+                "|-------|------|--------|",
+            ]
+        )
         for phase_num in range(1, 12):
             result = self.context.get_phase_result(phase_num)
-            # Phase11 就是当前正在执行的阶段，肯定是成功的
             if phase_num == 11:
-                status = "✅"
+                status = "OK"
+            elif result and result.success:
+                status = "OK"
+            elif result is None:
+                status = "skipped"
             else:
-                status = "✅" if (result and result.success) else "❌"
-            lines.append(f"| {phase_num} | {phase_names.get(phase_num, '')} | {status} |")
+                status = "FAIL"
+            lines.append(
+                "| {} | {} | {} |".format(
+                    phase_num, phase_names.get(phase_num, ""), status
+                )
+            )
 
-        lines.extend([
-            "",
-            "## 5. 总结",
-            "",
-            "OpenSpec 11 阶段需求驱动开发流程已全部完成。",
-            "项目已通过编译测试，可以直接使用。",
-            "",
-            "### 下一步",
-            "",
-            "1. 查看 `docs/技术实现文档.md` 了解技术实现细节",
-            "2. 查看 `docs/测试文档.md` 了解测试覆盖情况",
-            "3. 进入项目目录，运行 `cmake` 构建",
-            "4. 执行 `build_test/test_auth.exe` 运行单元测试",
-            "",
-        ])
-
-        return '\n'.join(lines)
+        lines.extend(
+            [
+                "",
+                "## 6. Summary",
+                "",
+                "OpenSpec 11-phase pipeline finished. Artefacts are in the project directory above.",
+                "",
+            ]
+        )
+        return "\n".join(lines)

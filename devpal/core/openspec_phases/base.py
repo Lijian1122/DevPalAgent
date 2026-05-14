@@ -50,7 +50,20 @@ class OpenSpecContext:
     # 测试结果
     test_passed: int = 0
     test_failed: int = 0
+    test_total: int = 0
     test_output: str = ""
+    test_docs: List[str] = field(default_factory=list)  # Phase 5 生成的测试文档路径列表
+
+    # AI 驱动流程 (Phase 3 产出 → Phase 4/10 复用)
+    tech_design_content: str = ""
+    ai_generated_files: List[Path] = field(default_factory=list)
+    self_heal_attempts: int = 0
+
+    # LLM 调用统计 (Phase 11 报告)
+    llm_calls: int = 0
+    llm_input_tokens: int = 0
+    llm_output_tokens: int = 0
+    llm_cache_read_tokens: int = 0
 
     def get_phase_result(self, phase_num: int) -> Optional[PhaseResult]:
         return self.phase_results.get(phase_num)
