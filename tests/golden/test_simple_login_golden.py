@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import json
 import os
 import re
 import shutil
@@ -93,6 +94,21 @@ def test_simple_login_golden_flow():
     assert passed == total
     assert "| 10 | Compile and run tests | OK |" in final_report_text
     assert "| 11 | Final report | OK |" in final_report_text
+    assert "## 6. Acceptance Matrix" in final_report_text
+    assert "| Requirement | Implementation | Tests | Status |" in final_report_text
+    assert "| REQ-" in final_report_text
+    assert "| Passed |" in final_report_text
+
+    requirements_json = PROJECT_DIR / ".spec" / "requirements.json"
+    assert requirements_json.exists()
+    requirements_data = json.loads(requirements_json.read_text(encoding="utf-8"))
+    assert requirements_data.get("requirements")
+
+    artifact_graph_json = PROJECT_DIR / ".spec" / "artifact_graph.json"
+    assert artifact_graph_json.exists()
+    artifact_graph = json.loads(artifact_graph_json.read_text(encoding="utf-8"))
+    assert any(node.get("type") == "requirement" for node in artifact_graph.get("nodes", []))
+    assert any(edge.get("relation") == "verified_by" for edge in artifact_graph.get("edges", []))
 
     logs = sorted(PROJECT_DIR.glob("cpp_simple_login_*.log"), key=lambda p: p.stat().st_mtime)
     assert logs, "expected an OpenSpec log file"

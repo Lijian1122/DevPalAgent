@@ -33,6 +33,8 @@ class OpenSpecContext:
     project_dir: Path
     requirements_file: Path
     requirements_content: str = ""
+    structured_requirements: List[Dict[str, Any]] = field(default_factory=list)
+    artifact_graph_data: Dict[str, Any] = field(default_factory=dict)
 
     # 项目配置
     project_name: str = ""

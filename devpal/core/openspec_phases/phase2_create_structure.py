@@ -5,7 +5,9 @@ Phase 2: 创建项目目录结构
 简化版本：直接使用和 Phase4 一致的命名逻辑，不调用多余的 project_generator
 """
 
+import json
 from pathlib import Path
+
 from .base import PhaseInterface, PhaseResult, OpenSpecContext
 
 
@@ -37,6 +39,18 @@ class Phase2CreateStructure(PhaseInterface):
         for subdir in ['src', 'tests', 'include', 'docs', 'data', '.spec']:
             (project_dir / subdir).mkdir(exist_ok=True)
             self.log(f"  [OK] 创建子目录: {subdir}/")
+
+        requirements_json = project_dir / '.spec' / 'requirements.json'
+        requirements_json.write_text(
+            json.dumps(
+                {"requirements": self.context.structured_requirements},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding='utf-8',
+        )
+        self.context.generated_files.append(requirements_json)
+        self.log(f"  [OK] 写入结构化需求: {requirements_json}")
 
         return PhaseResult.ok(
             "项目结构创建成功",

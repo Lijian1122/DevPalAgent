@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """Phase 11: final verification report (with LLM usage stats)."""
 
+import json
 from pathlib import Path
+from typing import Dict, List
 
 from .base import PhaseInterface, PhaseResult, OpenSpecContext
 
@@ -17,7 +19,8 @@ class Phase11FinalReport(PhaseInterface):
     def execute(self) -> PhaseResult:
         self.log("Phase 11: generating final report...")
 
-        report_content = self._generate_final_report()
+        artifact_graph_path = self._write_artifact_graph()
+        report_content = self._generate_final_report(artifact_graph_path)
         report_path = self.context.project_dir / "docs" / "final_report.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report_content, encoding="utf-8")
@@ -62,7 +65,7 @@ class Phase11FinalReport(PhaseInterface):
             self_heal_attempts=self.context.self_heal_attempts,
         )
 
-    def _generate_final_report(self) -> str:
+    def _generate_final_report(self, artifact_graph_path: Path) -> str:
         unique_files = sorted(set(self.context.generated_files))
         passed = self.context.test_passed
         total = self.context.test_total
@@ -90,6 +93,7 @@ class Phase11FinalReport(PhaseInterface):
             "- Project dir: `{}`".format(self.context.project_dir),
             "- Requirements: `{}`".format(self.context.requirements_file),
             "- Files generated: {}".format(len(unique_files)),
+            "- Artifact graph: `{}`".format(artifact_graph_path.relative_to(self.context.project_dir)),
             "",
             "## 2. AI Usage",
             "",
@@ -117,7 +121,7 @@ class Phase11FinalReport(PhaseInterface):
         ]
         for f in unique_files:
             try:
-                          rel = Path(f).relative_to(self.context.project_dir.resolve())
+                rel = Path(f).relative_to(self.context.project_dir.resolve())
             except ValueError:
                 rel = Path(f).name
             lines.append("  {}".format(rel))
@@ -148,13 +152,86 @@ class Phase11FinalReport(PhaseInterface):
                 )
             )
 
+        lines.extend(self._generate_acceptance_matrix())
         lines.extend(
             [
                 "",
-                "## 6. Summary",
+                "## 7. Summary",
                 "",
                 "OpenSpec 11-phase pipeline finished. Artefacts are in the project directory above.",
                 "",
             ]
         )
         return "\n".join(lines)
+
+    def _write_artifact_graph(self) -> Path:
+        graph = self._build_artifact_graph_data()
+        self.context.artifact_graph_data = graph
+        graph_path = self.context.project_dir / ".spec" / "artifact_graph.json"
+        graph_path.parent.mkdir(parents=True, exist_ok=True)
+        graph_path.write_text(json.dumps(graph, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.context.generated_files.append(graph_path)
+        return graph_path
+
+    def _build_artifact_graph_data(self) -> Dict[str, object]:
+        requirements = self.context.structured_requirements or []
+        source_files = self._relative_files(["src/*.cpp", "include/*.h"])
+        test_files = self._relative_files(["tests/test_*.cpp"])
+
+        nodes: List[Dict[str, object]] = []
+        edges: List[Dict[str, str]] = []
+
+        for requirement in requirements:
+            req_id = str(requirement.get("id", "REQ-UNKNOWN"))
+            nodes.append({
+                "id": req_id,
+                "type": "requirement",
+                "label": requirement.get("title", req_id),
+                "description": requirement.get("description", ""),
+            })
+            for source_file in source_files:
+                edges.append({"from": req_id, "to": source_file, "relation": "implemented_by"})
+            for test_file in test_files:
+                edges.append({"from": req_id, "to": test_file, "relation": "verified_by"})
+
+        for source_file in source_files:
+            nodes.append({"id": source_file, "type": "source", "label": Path(source_file).name})
+        for test_file in test_files:
+            nodes.append({"id": test_file, "type": "test", "label": Path(test_file).name})
+
+        return {"nodes": nodes, "edges": edges}
+
+    def _generate_acceptance_matrix(self) -> List[str]:
+        requirements = self.context.structured_requirements or []
+        source_files = self._relative_files(["src/*.cpp", "include/*.h"])
+        test_files = self._relative_files(["tests/test_*.cpp"])
+        status = "Passed" if self.context.test_total > 0 and self.context.test_failed == 0 else "Failed"
+
+        lines = [
+            "",
+            "## 6. Acceptance Matrix",
+            "",
+            "| Requirement | Implementation | Tests | Status |",
+            "|-------------|----------------|-------|--------|",
+        ]
+        if not requirements:
+            lines.append("| (none) | (none) | (none) | Missing |")
+            return lines
+
+        implementation = ", ".join(source_files) if source_files else "(none)"
+        tests = ", ".join(test_files) if test_files else "(none)"
+        for requirement in requirements:
+            req_id = str(requirement.get("id", "REQ-UNKNOWN"))
+            title = str(requirement.get("title", req_id))
+            lines.append(
+                "| {} {} | {} | {} | {} |".format(req_id, title, implementation, tests, status)
+            )
+        return lines
+
+    def _relative_files(self, patterns: List[str]) -> List[str]:
+        files = []
+        for pattern in patterns:
+            for path in sorted(self.context.project_dir.glob(pattern)):
+                if path.is_file():
+                    files.append(path.relative_to(self.context.project_dir).as_posix())
+        return files
