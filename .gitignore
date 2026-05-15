@@ -43,3 +43,6 @@ Thumbs.db
 # ===== 数据 =====
 data/
 *.log
+
+# ===== OpenSpec generated projects =====
+cpp_simple_login/

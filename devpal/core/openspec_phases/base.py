@@ -65,6 +65,13 @@ class OpenSpecContext:
     llm_output_tokens: int = 0
     llm_cache_read_tokens: int = 0
 
+    # 日志系统
+    logger: Optional[Any] = None  # OpenSpecLogger 实例
+    log_file: Optional[Path] = None  # 日志文件路径
+
+    # 失败策略
+    abort_on_critical_failure: bool = True  # 关键阶段失败时终止流程
+
     def get_phase_result(self, phase_num: int) -> Optional[PhaseResult]:
         return self.phase_results.get(phase_num)
 
@@ -79,12 +86,45 @@ class PhaseInterface(ABC):
         self.context = context
         self.phase_number = 0
         self.phase_name = "Base Phase"
+        self.is_critical = False  # 标记是否为关键阶段
 
     @abstractmethod
     def execute(self) -> PhaseResult:
         """执行当前阶段"""
         pass
 
+    def execute_with_timing(self) -> tuple:
+        """执行阶段并记录耗时
+
+        Returns:
+            (PhaseResult, duration): 执行结果和耗时（秒）
+        """
+        import time
+        start_time = time.time()
+
+        try:
+            result = self.execute()
+        except Exception as exc:
+            duration = time.time() - start_time
+            self.log_error(f"Phase {self.phase_number} 异常: {exc}", exc)
+            return PhaseResult.fail(
+                f"Phase {self.phase_number} 执行异常",
+                errors=[str(exc)]
+            ), duration
+
+        duration = time.time() - start_time
+        return result, duration
+
     def log(self, message: str) -> None:
         """输出阶段日志"""
-        print(f"[Phase {self.phase_number}/11] {message}")
+        if hasattr(self.context, 'logger') and self.context.logger:
+            self.context.logger.info(f"[Phase {self.phase_number}/11] {message}")
+        else:
+            print(f"[Phase {self.phase_number}/11] {message}")
+
+    def log_error(self, message: str, exc: Optional[Exception] = None) -> None:
+        """输出错误日志"""
+        if hasattr(self.context, 'logger') and self.context.logger:
+            self.context.logger.error(f"[Phase {self.phase_number}/11] {message}", exc)
+        else:
+            print(f"[Phase {self.phase_number}/11] ERROR: {message}")

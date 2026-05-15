@@ -39,7 +39,27 @@ _AI_SYSTEM_PROMPT = (
     "that includes \"test_base.h\" and uses ASSERT_TRUE / ASSERT_EQ macros.\n"
     "- Do NOT regenerate CMakeLists.txt, README.md, include/<project>.h, "
     "or tests/test_base.h - they already exist.\n"
-    "- After all files are written, respond with a one-line summary and stop.\n"
+    "- After all files are written, respond with a one-line summary and stop.\n\n"
+    "C++ BEST PRACTICES (CRITICAL):\n"
+    "- ALWAYS provide a default constructor for classes that will be stored in STL containers "
+    "(std::vector, std::map, std::unordered_map, etc.).\n"
+    "- If a class has member variables, provide BOTH a default constructor AND a parameterized constructor.\n"
+    "- Example: class User should have User() and User(params...).\n"
+    "- Initialize all member variables in the constructor initializer list.\n"
+    "- Use const references for string parameters to avoid unnecessary copies.\n\n"
+    "TEST FRAMEWORK REQUIREMENTS (CRITICAL):\n"
+    "- Each test file MUST include test_base.h and use exactly these provided macros: ASSERT_TRUE, ASSERT_EQ, RUN_TEST, TEST_MAIN_BEGIN, TEST_MAIN_END.\n"
+    "- Each test file MUST define int main() with TEST_MAIN_BEGIN as the first statement and TEST_MAIN_END as the last statement.\n"
+    "- Example test structure:\n"
+    "  int main() {{\n"
+    "      TEST_MAIN_BEGIN\n"
+    "      RUN_TEST(testFunction1);\n"
+    "      RUN_TEST(testFunction2);\n"
+    "      TEST_MAIN_END\n"
+    "  }}\n"
+    "- Do NOT define custom pass/fail counters, custom try-catch wrappers, or custom assertion macros.\n"
+    "- Do NOT call throw directly in generated test files; ASSERT_TRUE/ASSERT_EQ already signal failures.\n"
+    "- Ensure test data is valid and matches the requirements (e.g., passwords must have both letters and digits).\n"
 )
 
 
@@ -119,10 +139,18 @@ class Phase4GenerateCode(PhaseInterface):
             except ValueError:
                 return "[error] path escapes project root: {}".format(rel)
 
-                  # Check if file already exists
-            if target.exists():
+            infrastructure_files = {
+                "CMakeLists.txt",
+                "README.md",
+                "tests/test_base.h",
+                f"include/{namespace}.h",
+            }
+            normalized_rel = rel.replace("\\", "/")
+            if target.exists() and normalized_rel in infrastructure_files:
                 self.log("    [SKIP] {} already exists, not overwriting".format(rel))
                 return "[skipped] {} already exists".format(rel)
+            if target.exists():
+                self.log("    [OVERWRITE] {} already exists, overwriting".format(rel))
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
             ai_files.append(target)
@@ -136,7 +164,13 @@ class Phase4GenerateCode(PhaseInterface):
         system_prompt = _AI_SYSTEM_PROMPT.format(namespace=namespace)
         user_message = (
             "Produce all business code now. Use write_file for each .h/.cpp.\n\n"
-            "=== EXISTING FILES (do not regenerate) ===\n"
+            "IMPORTANT INSTRUCTIONS:\n"
+            "- You MUST generate ALL business code files based on the technical design.\n"
+            "- Even if files exist, REGENERATE business files (*.cpp, *.h in src/ and include/).\n"
+            "- ONLY skip infrastructure files: CMakeLists.txt, README.md, tests/test_base.h, include/<project>.h.\n"
+            "- Do not invent test framework APIs; test_base.h provides ASSERT_TRUE, ASSERT_EQ, RUN_TEST, TEST_MAIN_BEGIN, TEST_MAIN_END.\n"
+            "=== EXISTING FILES (regenerate business, skip infrastructure) ===\n"
+            f"Current Time: 2026-05-15 10:00:00 (Beijing, China)\n\n"
             + existing_overview
         )
         cached_context = [

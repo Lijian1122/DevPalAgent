@@ -812,17 +812,48 @@ ALWAYS: Extract real parameter values from user's natural language query!"""
                 if not req_file:
                     req_file = 'requirements/login_requirements.md'  # Default
 
-                # 使用新的模块化 OpenSpec 调度器
-                scheduler = OpenSpecPhaseScheduler(req_file, self.tool_registry)
-                result = scheduler.run_all_phases()
+                # 使用增强版 OpenSpec 调度器（带超时、重试、断点续传）
+                try:
+                    from .openspec_phases.enhanced_scheduler import EnhancedOpenSpecScheduler
+                    scheduler = EnhancedOpenSpecScheduler(
+                        req_file,
+                        self.tool_registry,
+                        enable_timeout=True,
+                        enable_retry=True,
+                        enable_checkpoint=True,
+                        enable_progress=True
+                    )
+                except ImportError:
+                    from .openspec_phases.scheduler import OpenSpecPhaseScheduler
+                    scheduler = OpenSpecPhaseScheduler(req_file, self.tool_registry)
 
-                return f"""OpenSpec 11 阶段流程已完成！
+                result = scheduler.run_all_phases(resume=False)  # 禁用断点续传（避免 context 丢失）
+
+                # 安全获取结果字段
+                project_dir = result.get("project_dir", "Unknown")
+                test_passed = result.get("test_passed", 0)
+                test_total = result.get("test_total", 0)
+                success = result.get("success", False)
+
+                if success:
+                    return f"""OpenSpec 11 阶段流程已完成！
 
 ✅ **项目信息**
-- 项目目录: `{result['project_dir']}`
-- 测试结果: {result['test_passed']}/{result['test_total']} 通过
+- 项目目录: `{project_dir}`
+- 测试结果: {test_passed}/{test_total} 通过
 
 所有代码、测试、文档已生成完成，可以直接使用。"""
+                else:
+                    errors = result.get("errors", ["Unknown error"])
+                    failed_phase = result.get("failed_phase", "Unknown")
+                    return f"""OpenSpec 11 阶段流程执行失败
+
+❌ **错误信息**
+- 项目目录: `{project_dir}`
+- 失败阶段: Phase {failed_phase}
+- 失败原因: {', '.join(str(e) for e in errors)}
+
+请检查日志文件获取详细信息。"""
 
     def chat(self):
         """Start interactive chat mode"""

@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""End-to-end smoke test for the AI-driven OpenSpec flow.
+"""
+OpenSpec 完整工作流测试脚本
 
-Runs: Phase 2 (structure) -> Phase 3 (AI tech design) -> Phase 4 (infra + AI code)
-     -> Phase 5 (verify tests) -> Phase 9 (review) -> Phase 10 (compile+test w/ self-heal)
-     -> Phase 11 (final report).
+使用 OpenSpecPhaseScheduler 执行完整的 11 阶段流程。
 
 Prerequisites:
   1. pip install anthropic pyyaml
@@ -11,125 +10,92 @@ Prerequisites:
   3. A requirements file under requirements/*.md
 """
 
+import argparse
 import os
-import shutil
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
-from devpal.core.openspec_phases.base import OpenSpecContext
-from devpal.core.openspec_phases.phase2_create_structure import Phase2CreateStructure
-from devpal.core.openspec_phases.phase3_technical_design import Phase3TechnicalDesign
-from devpal.core.openspec_phases.phase4_generate_code import Phase4GenerateCode
-from devpal.core.openspec_phases.phase5_generate_tests import Phase5GenerateTests
-from devpal.core.openspec_phases.phase9_code_review import Phase9CodeReview
-from devpal.core.openspec_phases.phase10_run_tests import Phase10RunTests
-from devpal.core.openspec_phases.phase11_final_report import Phase11FinalReport
+from devpal.core.openspec_phases.scheduler import OpenSpecPhaseScheduler
 from devpal.tools.registry import registry as tool_registry
 
 
-# ---- Configurable --
-REQUIREMENTS_FILE = ROOT / "requirements" / "simple_login.md"
-PROJECT_NAME = "simple_auth"
-PROJECT_DIR = ROOT / "simple_auth_project"
-# ----------------
+def main() -> int:
+    """执行 OpenSpec 完整工作流
 
+    Returns:
+        int: 退出码 (0=成功, 1=失败)
+    """
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(
+        description='OpenSpec 需求驱动开发工作流',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  python run_ai_flow.py
+  python run_ai_flow.py -r requirements/simple_login.md
+  python run_ai_flow.py --no-abort  # 关键阶段失败时不终止"""
+    )
+    parser.add_argument(
+        '--requirements', '-r',
+        default='requirements/simple_login.md',
+        help='需求文档路径 (默认: requirements/simple_login.md)'
+    )
+    parser.add_argument(
+        '--no-abort',
+        action='store_true',
+        help='关键阶段失败时不终止流程（默认会终止）'
+    )
+    args = parser.parse_args()
 
-def reset_project_dir():
-    if PROJECT_DIR.exists():
-        shutil.rmtree(PROJECT_DIR)
-    PROJECT_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def run_phase(phase, name):
-    print("\n" + "=" * 70)
-    print("  {}".format(name))
-    print("=" * 70)
-    result = phase.execute()
-    status = "OK" if result.success else "FAIL"
-    print("[{}] {}".format(status, result.message))
-    if result.errors:
-        for err in result.errors:
-            print("  error: {}".format(err[:300]))
-    return result
-
-
-def main():
-    if not REQUIREMENTS_FILE.exists():
-        print("requirements file not found: {}".format(REQUIREMENTS_FILE))
+    # 检查需求文件
+    requirements_file = ROOT / args.requirements
+    if not requirements_file.exists():
+        print(f"[ERROR] 需求文件不存在: {requirements_file}")
         return 1
 
-    if not os.environ.get("ANTHROPIC_AUTH_TOKEN") and not os.environ.get(
-        "ANTHROPIC_API_KEY"
-    ):
-        print("WARNING: ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY not set.")
-        print("Set one of them or populate config/config.yaml before running.")
+    # 检查 API 密钥
+    if not os.environ.get("ANTHROPIC_AUTH_TOKEN") and not os.environ.get("ANTHROPIC_API_KEY"):
+        print("[WARNING] ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY 未设置")
+        print("      请设置环境变量或填充 config/config.yaml 后再运行")
+        print()
 
-    print("=" * 70)
-    print("  OpenSpec AI Flow - Smoke Test")
-    print("  requirements: {}".format(REQUIREMENTS_FILE))
-    print("  project_dir : {}".format(PROJECT_DIR))
-    print("=" * 70)
-
-    reset_project_dir()
-    requirements_content = REQUIREMENTS_FILE.read_text(encoding="utf-8")
-
-    ctx = OpenSpecContext(
-        project_dir=PROJECT_DIR,
-        requirements_file=REQUIREMENTS_FILE,
-        requirements_content=requirements_content,
-        project_name=PROJECT_NAME,
-        language="cpp",
-        is_cpp=True,
+    # 创建调度器并执行
+    scheduler = OpenSpecPhaseScheduler(
+        requirements_file=str(requirements_file),
+        tool_registry=tool_registry,
+        abort_on_critical_failure=not args.no_abort
     )
 
-    # Phase 2: create structure
-    r2 = run_phase(Phase2CreateStructure(ctx, tool_registry), "Phase 2: Create structure")
-    ctx.set_phase_result(2, r2)
-    if not r2.success:
+    result = scheduler.run_all_phases()
+
+    # 处理结果
+    if not result['success']:
+        print("\n" + "=" * 70)
+        print(
+            f"[CRITICAL] 流程失败于 Phase {result['failed_phase']}: "
+            f"{result['failed_phase_name']}"
+        )
+        print(f"错误: {result['error_message']}")
+
+        if result.get('errors'):
+            print("详细错误:")
+            for error in result['errors']:
+                print(f"  - {error}")
+
+        if result.get('log_file'):
+            print(f"\n详细日志: {result['log_file']}")
+
+        print("=" * 70)
         return 1
 
-    # Phase 3: AI tech design
-    r3 = run_phase(Phase3TechnicalDesign(ctx), "Phase 3: Tech design (AI)")
-    ctx.set_phase_result(3, r3)
-    if not r3.success:
-        return 1
-
-    # Phase 4: infra templates + AI code
-    r4 = run_phase(Phase4GenerateCode(ctx, tool_registry), "Phase 4: Generate code (templates + AI)")
-    ctx.set_phase_result(4, r4)
-    if not r4.success:
-        return 1
-
-    # Phase 5: verify tests
-    r5 = run_phase(Phase5GenerateTests(ctx, tool_registry), "Phase 5: Verify tests")
-    ctx.set_phase_result(5, r5)
-
-    # Phase 9: code review (optional, non-fatal)
-    r9 = run_phase(Phase9CodeReview(ctx, tool_registry), "Phase 9: Code review")
-    ctx.set_phase_result(9, r9)
-
-    # Phase 10: compile + test + self-heal
-    r10 = run_phase(Phase10RunTests(ctx, tool_registry), "Phase 10: Compile + test + self-heal")
-    ctx.set_phase_result(10, r10)
-
-    # Phase 11: final report (always run)
-    r11 = run_phase(Phase11FinalReport(ctx), "Phase 11: Final report")
-    ctx.set_phase_result(11, r11)
-
-    print("\n" + "=" * 70)
-    print("  DONE")
-    print("  project : {}".format(PROJECT_DIR))
-    print("  ai_files: {}".format(len(ctx.ai_generated_files)))
-    print("  tests   : {}/{} passed".format(ctx.test_passed, ctx.test_total))
-    print("  llm     : {} calls, in={} out={}".format(
-        ctx.llm_calls, ctx.llm_input_tokens, ctx.llm_output_tokens
-    ))
-    print("  heal    : {} attempts".format(ctx.self_heal_attempts))
-    print("=" * 70)
-    return 0 if r10.success else 2
+    # 成功
+    print("\n[SUCCESS] 流程成功完成")
+    if result.get('log_file'):
+        print(f"详细日志: {result['log_file']}")
+    return 0
 
 
 if __name__ == "__main__":

@@ -35,27 +35,26 @@ class Phase10RunTests(PhaseInterface):
 
     def execute(self) -> PhaseResult:
         self.log("Phase 10 start: compile + run tests + update docs (AI self-heal enabled)")
-        
+
         project_dir = self.context.project_dir
         tests_dir = project_dir / "tests"
-        
+
         if not tests_dir.exists():
-            self.log("  [WARN] tests/ directory not found")
-            return PhaseResult.ok("No tests to run", test_passed=0, test_total=0)
+            self.log("  [FAIL] tests/ directory not found")
+            return PhaseResult.fail("No tests to run", errors=["tests/ directory not found"])
 
         test_files = list(tests_dir.glob("test_*.cpp"))
         if not test_files:
-            self.log("  [WARN] no test files found")
-            return PhaseResult.ok("No tests to run", test_passed=0, test_total=0)
+            self.log("  [FAIL] no test files found")
+            return PhaseResult.fail("No tests to run", errors=["no test_*.cpp files found"])
 
         # 检测编译器
         compiler_cmd, compiler_env = self._detect_compiler()
         if not compiler_cmd:
-            self.log("  [WARN] no compiler found (MSVC/g++)")
-            return PhaseResult.ok(
+            self.log("  [FAIL] no compiler found (MSVC/g++)")
+            return PhaseResult.fail(
                 "No compiler available",
-                test_passed=0,
-                test_total=0
+                errors=["MSVC/g++ compiler not found"]
             )
 
         # 初始化自愈器（带错误处理）
@@ -70,6 +69,16 @@ class Phase10RunTests(PhaseInterface):
             self.log("  [INFO] Self-healing will be disabled for this run")
             self.self_healer = None
 
+        # 编译主程序（如果存在）
+        main_cpp = project_dir / "src" / "main.cpp"
+        if main_cpp.exists():
+            self.log("  [BUILD] Compiling main program...")
+            main_success = self._compile_main_program(project_dir, compiler_cmd, compiler_env)
+            if main_success:
+                self.log("  [OK] Main program compiled successfully")
+            else:
+                self.log("  [WARN] Main program compilation failed")
+
 
         # 编译和运行测试
         build_dir = project_dir / "build_test"
@@ -83,29 +92,31 @@ class Phase10RunTests(PhaseInterface):
 
         for test_file in test_files:
             self.log(f"  === Testing {test_file.name} ===")
-            
+
             # 尝试编译、测试、自愈的循环
             final_result = None
             for attempt in range(MAX_HEAL_ATTEMPTS + 1):
                 attempt_label = f"attempt {attempt + 1}/{MAX_HEAL_ATTEMPTS + 1}" if attempt > 0 else "initial"
-                
+
                 # 编译（自愈后需要强制重新编译）
                 exe_path, compile_success, compile_output = self._compile_test(
                     test_file, project_dir, build_dir, compiler_cmd, compiler_env,
                     force_rebuild=(attempt > 0)
                 )
-                
+
                 if not compile_success:
                     self.log(f"  [FAIL] compile failed ({attempt_label})")
-                    
+
                     # 如果还有尝试机会，使用 AI 修复编译错误
                     if attempt < MAX_HEAL_ATTEMPTS and self.self_healer:
-                        if self.self_healer.heal_compile_error(test_file, compile_output):
+                     # 第一次尝试使用默认模型，第二次尝试使用 Opus
+                        use_fallback = (attempt > 0)
+                        if self.self_healer.heal_compile_error(test_file, compile_output, use_fallback=use_fallback):
                             self.context.self_heal_attempts += 1
                             continue  # 重新编译
                         else:
                             self.log(f"  [HEAL] Failed to fix compile error, giving up")
-                    
+
                     # 记录最终失败结果
                     final_result = {
                         'test_file': str(test_file),
@@ -116,12 +127,12 @@ class Phase10RunTests(PhaseInterface):
                         'output': compile_output
                     }
                     break
-                
+
                 self.log(f"  [OK] compile succeeded ({attempt_label})")
-                
+
                 # 运行测试
                 run_success, test_output, passed, total = self._run_test(exe_path)
-                
+
                 # 检查测试是否全部通过
                 if passed == total and total > 0:
                     self.log(f"  [OK] tests: {passed}/{total} passed ({attempt_label})")
@@ -134,9 +145,9 @@ class Phase10RunTests(PhaseInterface):
                         'output': test_output
                     }
                     break  # 成功，退出循环
-                
+
                 self.log(f"  [FAIL] tests: {passed}/{total} passed ({attempt_label})")
-                
+
                 # 如果还有尝试机会，使用 AI 修复测试失败
                 if attempt < MAX_HEAL_ATTEMPTS and self.self_healer:
                     if self.self_healer.heal_test_failure(test_file, test_output, passed, total):
@@ -144,7 +155,7 @@ class Phase10RunTests(PhaseInterface):
                         continue  # 重新编译和测试
                     else:
                         self.log(f"  [HEAL] Failed to fix test failures, giving up")
-                
+
                 # 记录最终结果（部分通过或全部失败）
                 final_result = {
                     'test_file': str(test_file),
@@ -155,7 +166,7 @@ class Phase10RunTests(PhaseInterface):
                     'output': test_output
                 }
                 break
-            
+
             # 累计统计
             if final_result:
                 test_results.append(final_result)
@@ -166,7 +177,7 @@ class Phase10RunTests(PhaseInterface):
         # 更新测试文档
         if hasattr(self.context, 'test_docs') and self.context.test_docs:
             self.log("  === Updating test documentation with results ===")
-            
+
             for i, test_doc in enumerate(self.context.test_docs):
                 if i < len(test_results):
                     result = test_results[i]
@@ -179,12 +190,29 @@ class Phase10RunTests(PhaseInterface):
         self.context.test_failed = total_failed
         self.context.test_total = total_all
 
+        # 判断是否有测试运行
+        if total_all == 0:
+            # 编译失败或没有测试
+            return PhaseResult.fail(
+           "Compilation failed: no tests were run",
+             errors=["Compilation failed or no test files found"]
+       )
+
+        # 判断测试是否全部通过
+        if total_passed < total_all:
+            # 有测试失败
+            return PhaseResult.fail(
+            f"Tests failed: {total_passed}/{total_all} passed",
+                errors=[f"{total_failed} test(s) failed"]
+            )
+
+        # 所有测试通过
         return PhaseResult.ok(
-            "Compile + test complete",
+            f"All tests passed: {total_passed}/{total_all}",
             test_passed=total_passed,
             test_failed=total_failed,
             test_total=total_all,
-            test_results=test_results
+          test_results=test_results
         )
 
     def _detect_compiler(self) -> Tuple[Optional[str], Optional[Dict]]:
@@ -208,11 +236,11 @@ class Phase10RunTests(PhaseInterface):
 
         return None, None
 
-    def _compile_test(self, test_file: Path, project_dir: Path, 
+    def _compile_test(self, test_file: Path, project_dir: Path,
                       build_dir: Path, compiler: str, compiler_env: Optional[Dict] = None,
                       force_rebuild: bool = False) -> Tuple[Optional[Path], bool, str]:
         """使用 CMake 编译测试文件
-        
+
         Args:
             test_file: 测试源文件路径
             project_dir: 项目根目录
@@ -220,35 +248,35 @@ class Phase10RunTests(PhaseInterface):
             compiler: 编译器类型 (msvc/g++)
             compiler_env: 编译器环境变量
             force_rebuild: 是否强制重新编译
-        
+
         Returns:
             (exe_path, success, output)
         """
         exe_name = f"{test_file.stem}.exe"
-        
+
         # CMake 生成的可执行文件位置
         if compiler == "msvc":
             exe_path = build_dir / "Release" / exe_name
         else:
             exe_path = build_dir / exe_name
-        
+
         # 增量编译检查
         if not force_rebuild and exe_path.exists():
             test_mtime = test_file.stat().st_mtime
             exe_mtime = exe_path.stat().st_mtime
-            
+
             if exe_mtime >= test_mtime:
                 self.log(f"  [SKIP] {exe_name} is up-to-date, skipping compilation")
                 return exe_path, True, "Skipped: executable is up-to-date"
-        
+
         output_lines = []
-        
+
         try:
             # Step 1: CMake 配置（只在第一次或强制重建时执行）
             cmake_cache = build_dir / "CMakeCache.txt"
             if force_rebuild or not cmake_cache.exists():
                 self.log(f"  [CMAKE] Configuring...")
-                
+
                 if compiler == "msvc":
                     # MSVC: 使用 Visual Studio generator
                     configure_cmd = [
@@ -266,7 +294,7 @@ class Phase10RunTests(PhaseInterface):
                         "-S", str(project_dir),
                         "-B", str(build_dir)
                     ]
-                
+
                 result = subprocess.run(
                     configure_cmd,
                     capture_output=True,
@@ -274,24 +302,24 @@ class Phase10RunTests(PhaseInterface):
                     timeout=120,
                     env=compiler_env
                 )
-                
+
                 output_lines.append("=== CMake Configure ===")
                 output_lines.append(result.stdout)
                 output_lines.append(result.stderr)
-                
+
                 if result.returncode != 0:
                     return None, False, "\n".join(output_lines)
-            
+
             # Step 2: CMake 编译
             self.log(f"  [CMAKE] Building {test_file.stem}...")
-            
+
             build_cmd = [
                 "cmake",
                 "--build", str(build_dir),
                 "--config", "Release",
                 "--target", test_file.stem
             ]
-            
+
             result = subprocess.run(
                 build_cmd,
                 capture_output=True,
@@ -299,16 +327,16 @@ class Phase10RunTests(PhaseInterface):
                 timeout=120,
                 env=compiler_env
             )
-            
+
             output_lines.append("=== CMake Build ===")
             output_lines.append(result.stdout)
             output_lines.append(result.stderr)
-            
+
             if exe_path.exists():
                 return exe_path, True, "\n".join(output_lines)
             else:
                 return None, False, "\n".join(output_lines)
-                
+
         except Exception as e:
             output_lines.append(f"Exception: {str(e)}")
             return None, False, "\n".join(output_lines)
@@ -424,6 +452,78 @@ class Phase10RunTests(PhaseInterface):
             section += "\n```\n\n"
 
         return section
+
+    def _compile_main_program(self, project_dir: Path, compiler: str,
+                  compiler_env: Optional[Dict] = None) -> bool:
+        """Compile main program using CMake
+
+        Args:
+            project_dir: Project root directory
+            compiler: Compiler type (msvc/g++)
+            compiler_env: Compiler environment variables
+
+        Returns:
+            True if compilation succeeded, False otherwise
+        """
+        build_dir = project_dir / "build"
+        build_dir.mkdir(exist_ok=True)
+
+        try:
+            # Step 1: CMake configure
+            if compiler == "msvc":
+                configure_cmd = [
+                    "cmake",
+                    "-G", "Visual Studio 16 2019",
+                    "-A", "x64",
+                    "-S", str(project_dir),
+                    "-B", str(build_dir)
+                ]
+            else:
+                configure_cmd = [
+                    "cmake",
+                    "-G", "Unix Makefiles",
+                    "-S", str(project_dir),
+                    "-B", str(build_dir)
+                ]
+
+            result = subprocess.run(
+                configure_cmd,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=compiler_env
+            )
+
+            if result.returncode != 0:
+                self.log(f"  [FAIL] CMake configure failed: {result.stderr[:200]}")
+                return False
+
+            # Step 2: CMake build
+            target_name = f"{project_dir.name}_app"
+            build_cmd = [
+                "cmake",
+                "--build", str(build_dir),
+                "--config", "Release",
+                "--target", target_name
+            ]
+
+            result = subprocess.run(
+                build_cmd,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=compiler_env
+            )
+
+            if result.returncode == 0:
+                return True
+            else:
+                self.log(f"  [FAIL] CMake build failed: {result.stderr[:200]}")
+                return False
+
+        except Exception as e:
+            self.log(f"  [FAIL] Compilation exception: {e}")
+            return False
 
     def _update_usage_stats(self, client) -> None:
         ctx = self.context
