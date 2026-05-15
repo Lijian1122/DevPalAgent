@@ -52,6 +52,33 @@ python test_openspec_phase6_integration.py
 python -m devpal.main
 ```
 
+### 4. 运行 OpenSpec 11 阶段生成流程
+
+推荐使用 `run_ai_flow.py` 作为稳定的完整链路验证入口：
+
+```bash
+python run_ai_flow.py -r requirements/simple_login.md
+```
+
+为了节省 token，`run_ai_flow.py` 默认采用“复用已有业务代码”策略：
+
+- 如果生成项目中已经存在业务代码，Phase 4 不会再次调用 AI 重新生成代码。
+- 后续仍会继续执行文档、审查、编译、测试和最终报告阶段。
+- 这个默认跳过策略 **只在 `run_ai_flow.py` 入口生效**。
+- 其他入口（例如交互模式 `python -m devpal.main`）仍保持默认重新生成行为，避免因为复用旧代码掩盖问题。
+
+如果你希望强制重新生成业务代码，使用：
+
+```bash
+python run_ai_flow.py -r requirements/simple_login.md --force-regenerate-code
+```
+
+| 命令 | Phase 4 行为 |
+|------|--------------|
+| `python run_ai_flow.py -r requirements/simple_login.md` | 已有业务代码时跳过 AI 重新生成，节省 token |
+| `python run_ai_flow.py -r requirements/simple_login.md --force-regenerate-code` | 即使业务代码已存在，也强制调用 AI 重新生成 |
+| `python -m devpal.main` | 不受该节省 token 策略影响，默认走完整重新生成流程 |
+
 ## 如何使用需求文档驱动流程
 
 ### 步骤 1: 创建需求文档

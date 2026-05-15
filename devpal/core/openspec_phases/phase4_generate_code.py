@@ -117,6 +117,25 @@ class Phase4GenerateCode(PhaseInterface):
         infra_files, infra_errors = self._apply_infrastructure_templates(project_name)
         self.log("  [Infra] generated {} scaffolding files".format(len(infra_files)))
 
+        force_regenerate = bool(getattr(self.context, "force_regenerate_code", False))
+        existing_business_files = self._find_existing_business_files(project_dir, project_name)
+        if existing_business_files and not force_regenerate:
+            self.log(
+                "  [SKIP] business code already exists; use --force-regenerate-code to regenerate"
+            )
+            self.context.ai_generated_files.extend(existing_business_files)
+            self.context.generated_files.extend(infra_files + existing_business_files)
+            self.compiledb.index_project(project_dir, use_cache=False)
+            self.compiledb.save_cache(project_dir)
+            return PhaseResult.ok(
+                "Phase 4 skipped existing business code",
+                infra_count=len(infra_files),
+                ai_count=0,
+                reused_count=len(existing_business_files),
+                total_files=len(infra_files) + len(existing_business_files),
+                skipped_ai_generation=True,
+            )
+
         if not self.context.tech_design_content:
             return PhaseResult.fail(
                 "tech_design_content is empty - did Phase 3 succeed?",
@@ -157,6 +176,9 @@ class Phase4GenerateCode(PhaseInterface):
             if target.exists() and normalized_rel in infrastructure_files:
                 self.log("    [SKIP] {} already exists, not overwriting".format(rel))
                 return "[skipped] {} already exists".format(rel)
+            if target.exists() and not force_regenerate:
+                self.log("    [SKIP] {} already exists, not overwriting".format(rel))
+                return "[skipped] {} already exists".format(rel)
             if target.exists():
                 self.log("    [OVERWRITE] {} already exists, overwriting".format(rel))
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -174,7 +196,7 @@ class Phase4GenerateCode(PhaseInterface):
             "Produce all business code now. Use write_file for each .h/.cpp.\n\n"
             "IMPORTANT INSTRUCTIONS:\n"
             "- You MUST generate ALL business code files based on the technical design.\n"
-            "- Even if files exist, REGENERATE business files (*.cpp, *.h in src/ and include/).\n"
+            "- This run was explicitly configured to regenerate business files; overwrite existing business files when needed.\n"
             "- ONLY skip infrastructure files: CMakeLists.txt, README.md, tests/test_base.h, include/<project>.h.\n"
             "- Do not invent test framework APIs; test_base.h provides ASSERT_TRUE, ASSERT_EQ, RUN_TEST, TEST_MAIN_BEGIN, TEST_MAIN_END.\n"
             "=== EXISTING FILES (regenerate business, skip infrastructure) ===\n"
@@ -275,6 +297,29 @@ class Phase4GenerateCode(PhaseInterface):
             except Exception as exc:
                 errors.append("{}: {}".format(gen_file.path, exc))
         return generated, errors
+
+    def _find_existing_business_files(self, project_dir: Path, project_name: str) -> List[Path]:
+        """Return existing generated business files that make AI regeneration optional."""
+        if not project_dir.exists():
+            return []
+
+        namespace = project_name.lower().replace("-", "_").replace(" ", "_")
+        infrastructure_files = {
+            "CMakeLists.txt",
+            "README.md",
+            "tests/test_base.h",
+            f"include/{namespace}.h",
+        }
+        business_files: List[Path] = []
+        for folder in ("src", "include", "tests"):
+            root = project_dir / folder
+            if not root.exists():
+                continue
+            for path in sorted(root.glob("*.cpp" if folder != "include" else "*.h")):
+                rel = path.relative_to(project_dir).as_posix()
+                if rel not in infrastructure_files:
+                    business_files.append(path)
+        return business_files
 
     def _build_existing_files_overview(self, project_dir):
         """Return a short bullet list of existing files for AI context."""

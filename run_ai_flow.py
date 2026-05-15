@@ -48,6 +48,11 @@ def main() -> int:
         action='store_true',
         help='关键阶段失败时不终止流程（默认会终止）'
     )
+    parser.add_argument(
+        '--force-regenerate-code',
+        action='store_true',
+        help='即使业务代码已存在，也强制调用 AI 重新生成业务代码'
+    )
     args = parser.parse_args()
 
     # 检查需求文件
@@ -71,6 +76,7 @@ def main() -> int:
         enable_retry=True,
         enable_checkpoint=True,
         enable_progress=True,
+        force_regenerate_code=args.force_regenerate_code,
     )
 
     result = scheduler.run_all_phases(resume=False)

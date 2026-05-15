@@ -72,6 +72,9 @@ class OpenSpecContext:
     # 失败策略
     abort_on_critical_failure: bool = True  # 关键阶段失败时终止流程
 
+    # 生成策略
+    force_regenerate_code: bool = True  # 已存在业务代码时是否强制重新生成
+
     def get_phase_result(self, phase_num: int) -> Optional[PhaseResult]:
         return self.phase_results.get(phase_num)
 

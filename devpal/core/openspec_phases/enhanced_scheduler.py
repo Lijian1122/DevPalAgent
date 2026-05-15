@@ -210,7 +210,8 @@ class EnhancedOpenSpecScheduler:
                  enable_retry: bool = True,
                  enable_checkpoint: bool = True,
                  enable_progress: bool = True,
-                 abort_on_critical_failure: bool = True):
+                 abort_on_critical_failure: bool = True,
+                 force_regenerate_code: bool = True):
         """"""
 
         #
@@ -225,6 +226,7 @@ class EnhancedOpenSpecScheduler:
         #  base_scheduler  context
         # : from .context import Context; self.context = Context(requirements_file)
         self.context = self.base_scheduler.context
+        self.context.force_regenerate_code = force_regenerate_code
 
         #
         self.enable_timeout = enable_timeout
