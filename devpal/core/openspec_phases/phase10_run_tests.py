@@ -106,6 +106,7 @@ class Phase10RunTests(PhaseInterface):
 
                 if not compile_success:
                     self.log(f"  [FAIL] compile failed ({attempt_label})")
+                    self._log_compile_error_summary(compile_output)
 
                     # 如果还有尝试机会，使用 AI 修复编译错误
                     if attempt < MAX_HEAL_ATTEMPTS and self.self_healer:
@@ -341,6 +342,34 @@ class Phase10RunTests(PhaseInterface):
             output_lines.append(f"Exception: {str(e)}")
             return None, False, "\n".join(output_lines)
 
+    def _extract_compile_error_summary(self, compile_output: str, limit: int = 8) -> List[str]:
+        patterns = [
+            r"fatal error",
+            r"error C\d+",
+            r"undefined reference",
+            r"No such file or directory",
+            r"cannot find",
+            r"无法打开包括文件",
+            r"error:",
+        ]
+        matches = []
+        for line in compile_output.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if any(re.search(pattern, stripped, re.IGNORECASE) for pattern in patterns):
+                matches.append(stripped)
+                if len(matches) >= limit:
+                    break
+        return matches
+
+    def _log_compile_error_summary(self, compile_output: str) -> None:
+        summary = self._extract_compile_error_summary(compile_output)
+        if not summary:
+            return
+        self.log("  [ERROR SUMMARY] compiler reported:")
+        for line in summary:
+            self.log(f"    {line}")
 
     def _run_test(self, exe_path: Path) -> Tuple[bool, str, int, int]:
         """运行测试并解析结果"""

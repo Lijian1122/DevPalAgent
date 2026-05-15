@@ -2,7 +2,7 @@
 """
 OpenSpec 完整工作流测试脚本
 
-使用 OpenSpecPhaseScheduler 执行完整的 11 阶段流程。
+使用 EnhancedOpenSpecScheduler 执行完整的 11 阶段流程。
 
 Prerequisites:
   1. pip install anthropic pyyaml
@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
-from devpal.core.openspec_phases.scheduler import OpenSpecPhaseScheduler
+from devpal.core.openspec_phases.enhanced_scheduler import EnhancedOpenSpecScheduler
 from devpal.tools.registry import registry as tool_registry
 
 
@@ -63,13 +63,17 @@ def main() -> int:
         print()
 
     # 创建调度器并执行
-    scheduler = OpenSpecPhaseScheduler(
+    scheduler = EnhancedOpenSpecScheduler(
         requirements_file=str(requirements_file),
         tool_registry=tool_registry,
-        abort_on_critical_failure=not args.no_abort
+        abort_on_critical_failure=not args.no_abort,
+        enable_timeout=True,
+        enable_retry=True,
+        enable_checkpoint=True,
+        enable_progress=True,
     )
 
-    result = scheduler.run_all_phases()
+    result = scheduler.run_all_phases(resume=False)
 
     # 处理结果
     if not result['success']:
