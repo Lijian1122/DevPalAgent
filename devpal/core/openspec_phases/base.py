@@ -82,6 +82,31 @@ class OpenSpecContext:
         self.phase_results[phase_num] = result
 
 
+def validate_phase_success(phase_num: int, result: PhaseResult) -> List[str]:
+    """Return policy violations for phase results that are too weak to count as success."""
+    if not result.success:
+        return []
+
+    violations: List[str] = []
+    if phase_num == 4:
+        ai_count = int(result.data.get("ai_count", 0) or 0)
+        skipped_ai_generation = bool(result.data.get("skipped_ai_generation", False))
+        if ai_count <= 0 and not skipped_ai_generation:
+            violations.append(
+                "Phase 4 succeeded without generated code or explicit skipped_ai_generation"
+            )
+
+    if phase_num == 10:
+        test_total = int(result.data.get("test_total", 0) or 0)
+        test_failed = int(result.data.get("test_failed", 0) or 0)
+        if test_total <= 0:
+            violations.append("Phase 10 succeeded with test_total <= 0")
+        if test_failed != 0:
+            violations.append("Phase 10 succeeded with failing tests")
+
+    return violations
+
+
 class PhaseInterface(ABC):
     """Phase 接口基类"""
 

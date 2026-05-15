@@ -18,6 +18,7 @@ class GoldenCaseSummary:
     tests_passed: int
     tests_total: int
     test_binary_count: int
+    force_regenerate_code: bool
     checks: List[Tuple[str, str]]
 
 
@@ -37,6 +38,7 @@ def render_markdown(summary: GoldenCaseSummary) -> str:
         f"| Latest log | `{summary.latest_log}` |",
         f"| Tests | {summary.tests_passed}/{summary.tests_total} passed |",
         f"| Test binaries | {summary.test_binary_count} |",
+        f"| Force regenerate code | {'Enabled' if summary.force_regenerate_code else 'Disabled'} |",
         "",
         "### Golden Checks",
         "",

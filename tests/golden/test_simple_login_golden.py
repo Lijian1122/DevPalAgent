@@ -58,7 +58,8 @@ def test_simple_login_golden_flow():
 
     command = [sys.executable, "run_ai_flow.py", "-r", "requirements/simple_login.md"]
     display_command = "python run_ai_flow.py -r requirements/simple_login.md"
-    if os.environ.get("DEVPAL_GOLDEN_FORCE_REGENERATE") == "1":
+    force_regenerate_code = os.environ.get("DEVPAL_GOLDEN_FORCE_REGENERATE") == "1"
+    if force_regenerate_code:
         command.append("--force-regenerate-code")
         display_command += " --force-regenerate-code"
 
@@ -127,6 +128,7 @@ def test_simple_login_golden_flow():
         tests_passed=passed,
         tests_total=total,
         test_binary_count=len(test_binaries),
+        force_regenerate_code=force_regenerate_code,
         checks=[
             ("Exit code is zero", "OK"),
             ("No unexpected `[SKIP] Phase 1-9`", "OK"),

@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Dict, Optional
 from contextlib import contextmanager
 
+from .base import PhaseResult, validate_phase_success
+
 #
 PHASE_TIMEOUTS = {
     1: 30,   # Phase 1:
@@ -281,9 +283,14 @@ class EnhancedOpenSpecScheduler:
         print("=" * 70)
         print(f"  Requirements: {context.requirements_file}")
         print(f"  Language: {'C++' if context.is_cpp else 'Python'}")
-        print(f"   : {'' if self.enable_timeout else ''}")
-        print(f" : {'' if self.enable_retry else ''}")
-        print(f" : {'' if self.enable_checkpoint else ''}")
+        print(f"  Timeout: {'Enabled' if self.enable_timeout else 'Disabled'}")
+        print(f"  Retry: {'Enabled' if self.enable_retry else 'Disabled'}")
+        print(f"  Checkpoint: {'Enabled' if self.enable_checkpoint else 'Disabled'}")
+        print(
+            "  Force regenerate code: {}".format(
+                "Enabled" if getattr(context, "force_regenerate_code", True) else "Disabled"
+            )
+        )
         print("=" * 70)
         print()
 
@@ -326,6 +333,7 @@ class EnhancedOpenSpecScheduler:
             #  context.logger  Phase 2
             if i == 2:
                 result, duration = self._execute_phase(i, phase)
+                result = self._apply_success_policy(i, result)
                 context.set_phase_result(i, result)
 
                 #  Phase 2  project_dir
@@ -371,6 +379,7 @@ class EnhancedOpenSpecScheduler:
 
             #
             result, duration = self._execute_phase(i, phase)
+            result = self._apply_success_policy(i, result)
             context.set_phase_result(i, result)
 
             #
@@ -423,6 +432,21 @@ class EnhancedOpenSpecScheduler:
             'log_file': str(context.log_file) if context.log_file else None,
             'phases': context.phase_results
         }
+
+    def _apply_success_policy(self, phase_num: int, result: PhaseResult) -> PhaseResult:
+        violations = validate_phase_success(phase_num, result)
+        if not violations:
+            return result
+        message = "Phase {} success policy violation".format(phase_num)
+        if self.context.logger:
+            self.context.logger.error(message)
+            for violation in violations:
+                self.context.logger.error(" - {}".format(violation))
+        else:
+            print("[ERROR] {}".format(message))
+            for violation in violations:
+                print("[ERROR]  - {}".format(violation))
+        return PhaseResult.fail(message, errors=violations)
 
     def _execute_phase(self, phase_num: int, phase) -> tuple:
         """"""
