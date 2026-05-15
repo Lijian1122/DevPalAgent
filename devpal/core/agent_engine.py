@@ -812,22 +812,21 @@ ALWAYS: Extract real parameter values from user's natural language query!"""
                 if not req_file:
                     req_file = 'requirements/login_requirements.md'  # Default
 
-                # 使用增强版 OpenSpec 调度器（带超时、重试、断点续传）
-                try:
-                    from .openspec_phases.enhanced_scheduler import EnhancedOpenSpecScheduler
-                    scheduler = EnhancedOpenSpecScheduler(
-                        req_file,
-                        self.tool_registry,
+                # 使用统一 OpenSpec 执行入口（带超时、重试、断点续传配置）
+                from .openspec_executor import OpenSpecRunOptions, OpenSpecWorkflowExecutor
+
+                executor = OpenSpecWorkflowExecutor(self.tool_registry)
+                result = executor.run(
+                    req_file,
+                    OpenSpecRunOptions(
                         enable_timeout=True,
                         enable_retry=True,
                         enable_checkpoint=True,
-                        enable_progress=True
-                    )
-                except ImportError:
-                    from .openspec_phases.scheduler import OpenSpecPhaseScheduler
-                    scheduler = OpenSpecPhaseScheduler(req_file, self.tool_registry)
-
-                result = scheduler.run_all_phases(resume=False)  # 禁用断点续传（避免 context 丢失）
+                        enable_progress=True,
+                        resume=False,
+                        force_regenerate_code=True,
+                    ),
+                )
 
                 # 安全获取结果字段
                 project_dir = result.get("project_dir", "Unknown")
