@@ -293,13 +293,17 @@ class Phase4GenerateCode(PhaseInterface):
             )
 
             self.context.ai_generated_files.extend(ai_files)
-            self.context.generated_files.extend(infra_files + ai_files)
+            # P2.3: mark all requirements as IN_PROGRESS
+        for req in (self.context.structured_requirements or []):
+                self.context.update_requirement_status(
+                    req.get("id", ""), "IN_PROGRESS")
+                self.context.generated_files.extend(infra_files + ai_files)
 
-            self._update_artifact_graph(project_dir, ai_files)
+                self._update_artifact_graph(project_dir, ai_files)
 
-            self.compiledb.index_project(project_dir, use_cache=False)
-            self.compiledb.save_cache(project_dir)
-            self.log(
+                self.compiledb.index_project(project_dir, use_cache=False)
+                self.compiledb.save_cache(project_dir)
+                self.log(
             "  [OK] re-indexed {} files".format(len(self.compiledb.get_all_files()))
         )
 

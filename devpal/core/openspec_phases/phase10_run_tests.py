@@ -190,6 +190,11 @@ class Phase10RunTests(PhaseInterface):
         self.context.test_passed = total_passed
         self.context.test_failed = total_failed
         self.context.test_total = total_all
+        # P2.3: update requirement statuses based on test outcome
+        final_status = "VERIFIED" if total_all > 0 and total_failed == 0 else "FAILED"
+        for req in (self.context.structured_requirements or []):
+            self.context.update_requirement_status(
+                req.get("id", ""), final_status)
 
      # 更新 ArtifactGraph 中的测试结果
         self._update_artifact_graph_test_results(test_results)

@@ -78,6 +78,10 @@ class OpenSpecContext:
     phase_results: Dict[int, PhaseResult] = field(default_factory=dict)
     generated_files: List[Path] = field(default_factory=list)
 
+    # 需求状态生命周期 (P2.3): req_id -> status string
+    # PROPOSED -> IN_PROGRESS -> VERIFIED | FAILED
+    requirements_status: Dict[str, str] = field(default_factory=dict)
+
     # 编译相关
     build_dir: Optional[Path] = None
     compiler_path: Optional[str] = None
@@ -115,6 +119,20 @@ class OpenSpecContext:
 
     def set_phase_result(self, phase_num: int, result: PhaseResult) -> None:
         self.phase_results[phase_num] = result
+
+    def update_requirement_status(self, req_id: str, status: str) -> None:
+        """Update lifecycle status for a requirement. status: PROPOSED|IN_PROGRESS|VERIFIED|FAILED"""
+        self.requirements_status[req_id] = status
+
+    def get_requirement_status(self, req_id: str) -> str:
+        return self.requirements_status.get(req_id, "PROPOSED")
+
+    def get_status_summary(self) -> Dict[str, int]:
+        """Return count of requirements per status."""
+        summary: Dict[str, int] = {}
+        for status in self.requirements_status.values():
+            summary[status] = summary.get(status, 0) + 1
+        return summary
 
     def to_checkpoint_dict(self) -> Dict[str, Any]:
         return {

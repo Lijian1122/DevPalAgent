@@ -114,6 +114,10 @@ class Phase11FinalReport(PhaseInterface):
             "- Passed: {}/{}".format(passed, total),
             "- Pass rate: {}".format(rate),
             "",
+            "### Requirement Status",
+            "",
+      ] + self._generate_status_summary() + [
+         "",
             "### Test Output",
             "",
             "```",
@@ -221,6 +225,23 @@ class Phase11FinalReport(PhaseInterface):
             nodes.append({"id": test_file, "type": "test", "label": Path(test_file).name})
 
         return {"nodes": nodes, "edges": edges}
+
+    def _generate_status_summary(self) -> list:
+        """Return markdown lines showing requirement status distribution."""
+        summary = self.context.get_status_summary()
+        reqs = self.context.structured_requirements or []
+        lines = []
+        for req in reqs:
+            req_id = req.get("id", "REQ-???")
+            status = self.context.get_requirement_status(req_id)
+            icon = {"VERIFIED": "OK", "FAILED": "FAIL",
+                  "IN_PROGRESS": "WIP"}.get(status, "NEW")
+            lines.append("- [{}] `{}`: {}".format(icon, req_id, status))
+        if summary:
+            lines.append("")
+            for st, count in sorted(summary.items()):
+                lines.append("- **{}**: {}".format(st, count))
+        return lines if lines else ["- No status data available"]
 
     def _generate_acceptance_matrix(self) -> List[str]:
          requirements = self.context.structured_requirements or []
