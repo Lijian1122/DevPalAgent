@@ -35,6 +35,7 @@ class OpenSpecLogger:
         # 创建 logger
         self.logger = logging.getLogger(f"OpenSpec_{project_name}")
         self.logger.setLevel(logging.DEBUG)
+        self.logger.propagate = False
 
         # 清除已有的 handlers（避免重复）
         self.logger.handlers.clear()

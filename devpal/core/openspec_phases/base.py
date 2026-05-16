@@ -9,6 +9,18 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, Path):
+        return value.as_posix()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
 @dataclass
 class PhaseResult:
     """阶段执行结果"""
@@ -25,6 +37,25 @@ class PhaseResult:
     @classmethod
     def fail(cls, message: str, errors: List[str] = None) -> 'PhaseResult':
         return cls(success=False, message=message, errors=errors or [])
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "success": self.success,
+            "message": self.message,
+            "data": _json_safe(self.data),
+            "errors": list(self.errors),
+            "warnings": list(self.warnings),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'PhaseResult':
+        return cls(
+            success=bool(data.get("success", False)),
+            message=str(data.get("message", "")),
+            data=dict(data.get("data", {}) or {}),
+            errors=list(data.get("errors", []) or []),
+            warnings=list(data.get("warnings", []) or []),
+        )
 
 
 @dataclass
@@ -82,6 +113,76 @@ class OpenSpecContext:
 
     def set_phase_result(self, phase_num: int, result: PhaseResult) -> None:
         self.phase_results[phase_num] = result
+
+    def to_checkpoint_dict(self) -> Dict[str, Any]:
+        return {
+            "requirements_file": self.requirements_file.as_posix(),
+            "project_dir": self.project_dir.as_posix(),
+            "requirements_content": self.requirements_content,
+            "structured_requirements": _json_safe(self.structured_requirements),
+            "artifact_graph_data": _json_safe(self.artifact_graph_data),
+            "project_name": self.project_name,
+            "language": self.language,
+            "is_cpp": self.is_cpp,
+            "phase_results": {
+                str(num): result.to_dict()
+                for num, result in self.phase_results.items()
+            },
+            "generated_files": [path.as_posix() for path in self.generated_files],
+            "build_dir": self.build_dir.as_posix() if self.build_dir else None,
+            "compiler_path": self.compiler_path,
+            "test_passed": self.test_passed,
+            "test_failed": self.test_failed,
+            "test_total": self.test_total,
+            "test_output": self.test_output,
+            "test_docs": list(self.test_docs),
+            "tech_design_content": self.tech_design_content,
+            "ai_generated_files": [path.as_posix() for path in self.ai_generated_files],
+            "self_heal_attempts": self.self_heal_attempts,
+            "llm_calls": self.llm_calls,
+            "llm_input_tokens": self.llm_input_tokens,
+            "llm_output_tokens": self.llm_output_tokens,
+            "llm_cache_read_tokens": self.llm_cache_read_tokens,
+            "log_file": self.log_file.as_posix() if self.log_file else None,
+            "abort_on_critical_failure": self.abort_on_critical_failure,
+            "force_regenerate_code": self.force_regenerate_code,
+        }
+
+    def restore_from_checkpoint(self, data: Dict[str, Any]) -> None:
+        if not data:
+            return
+        self.requirements_file = Path(data.get("requirements_file", self.requirements_file))
+        self.project_dir = Path(data.get("project_dir", self.project_dir))
+        self.requirements_content = data.get("requirements_content", self.requirements_content)
+        self.structured_requirements = list(data.get("structured_requirements", self.structured_requirements) or [])
+        self.artifact_graph_data = dict(data.get("artifact_graph_data", self.artifact_graph_data) or {})
+        self.project_name = data.get("project_name", self.project_name)
+        self.language = data.get("language", self.language)
+        self.is_cpp = bool(data.get("is_cpp", self.is_cpp))
+        self.phase_results = {
+            int(num): PhaseResult.from_dict(result)
+            for num, result in (data.get("phase_results", {}) or {}).items()
+        }
+        self.generated_files = [Path(path) for path in data.get("generated_files", []) or []]
+        build_dir = data.get("build_dir")
+        self.build_dir = Path(build_dir) if build_dir else self.build_dir
+        self.compiler_path = data.get("compiler_path", self.compiler_path)
+        self.test_passed = int(data.get("test_passed", self.test_passed) or 0)
+        self.test_failed = int(data.get("test_failed", self.test_failed) or 0)
+        self.test_total = int(data.get("test_total", self.test_total) or 0)
+        self.test_output = data.get("test_output", self.test_output)
+        self.test_docs = list(data.get("test_docs", self.test_docs) or [])
+        self.tech_design_content = data.get("tech_design_content", self.tech_design_content)
+        self.ai_generated_files = [Path(path) for path in data.get("ai_generated_files", []) or []]
+        self.self_heal_attempts = int(data.get("self_heal_attempts", self.self_heal_attempts) or 0)
+        self.llm_calls = int(data.get("llm_calls", self.llm_calls) or 0)
+        self.llm_input_tokens = int(data.get("llm_input_tokens", self.llm_input_tokens) or 0)
+        self.llm_output_tokens = int(data.get("llm_output_tokens", self.llm_output_tokens) or 0)
+        self.llm_cache_read_tokens = int(data.get("llm_cache_read_tokens", self.llm_cache_read_tokens) or 0)
+        log_file = data.get("log_file")
+        self.log_file = Path(log_file) if log_file else self.log_file
+        self.abort_on_critical_failure = bool(data.get("abort_on_critical_failure", self.abort_on_critical_failure))
+        self.force_regenerate_code = bool(data.get("force_regenerate_code", self.force_regenerate_code))
 
 
 def validate_phase_success(phase_num: int, result: PhaseResult) -> List[str]:

@@ -36,7 +36,8 @@ def main() -> int:
 示例:
   python run_ai_flow.py
   python run_ai_flow.py -r requirements/simple_login.md
-  python run_ai_flow.py --no-abort  # 关键阶段失败时不终止"""
+  python run_ai_flow.py --no-abort  # 关键阶段失败时不终止
+  python run_ai_flow.py --resume    # 从项目 checkpoint 恢复"""
     )
     parser.add_argument(
         '--requirements', '-r',
@@ -52,6 +53,11 @@ def main() -> int:
         '--force-regenerate-code',
         action='store_true',
         help='即使业务代码已存在，也强制调用 AI 重新生成业务代码'
+    )
+    parser.add_argument(
+        '--resume',
+        action='store_true',
+        help='从项目 .spec/checkpoint.json 恢复执行（默认从头执行）'
     )
     args = parser.parse_args()
 
@@ -77,7 +83,7 @@ def main() -> int:
             enable_retry=True,
             enable_checkpoint=True,
             enable_progress=True,
-            resume=False,
+              resume=args.resume,
             force_regenerate_code=args.force_regenerate_code,
         ),
     )
