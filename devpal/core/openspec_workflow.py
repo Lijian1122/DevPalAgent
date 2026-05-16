@@ -1,3 +1,10 @@
+import warnings
+warnings.warn(
+    "openspec_workflow.py is deprecated. Use devpal.core.openspec_executor.OpenSpecWorkflowExecutor instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 # -*- coding: utf-8 -*-
 """
 OpenSpec 完整流程执行器 - 9 阶段需求驱动开发工作流

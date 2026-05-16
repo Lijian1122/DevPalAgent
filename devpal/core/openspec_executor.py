@@ -43,4 +43,6 @@ class OpenSpecWorkflowExecutor:
             enable_checkpoint=opts.enable_checkpoint,
             enable_progress=opts.enable_progress,
             force_regenerate_code=opts.force_regenerate_code,
+            verbose=opts.verbose,
+            debug=opts.debug,
         )

@@ -21,7 +21,7 @@ class OpenSpecLogger:
     - 异常堆栈跟踪
     """
 
-    def __init__(self, project_name: str, project_dir: Path):
+    def __init__(self, project_name: str, project_dir: Path, verbose: bool = False, debug: bool = False):
         """初始化日志系统
 
         Args:
@@ -36,6 +36,8 @@ class OpenSpecLogger:
         self.logger = logging.getLogger(f"OpenSpec_{project_name}")
         self.logger.setLevel(logging.DEBUG)
         self.logger.propagate = False
+        self.verbose = verbose
+        self.debug_mode = debug
 
         # 清除已有的 handlers（避免重复）
         self.logger.handlers.clear()
@@ -51,7 +53,8 @@ class OpenSpecLogger:
 
         # 控制台处理器 - 只显示 INFO 及以上级别
         console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
+        console_level = logging.DEBUG if debug else logging.INFO
+        console_handler.setLevel(console_level)
         console_formatter = logging.Formatter('[%(levelname)s] %(message)s')
         console_handler.setFormatter(console_formatter)
 

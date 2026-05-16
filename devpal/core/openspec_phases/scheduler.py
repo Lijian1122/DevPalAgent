@@ -1,3 +1,10 @@
+import warnings
+warnings.warn(
+    "scheduler.py is deprecated. Use devpal.core.openspec_executor.OpenSpecWorkflowExecutor instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 # -*- coding: utf-8 -*-
 """
 OpenSpec Phase 调度器

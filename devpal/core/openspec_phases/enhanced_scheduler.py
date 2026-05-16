@@ -261,7 +261,9 @@ class EnhancedOpenSpecScheduler:
                  enable_checkpoint: bool = True,
                  enable_progress: bool = True,
                  abort_on_critical_failure: bool = True,
-                 force_regenerate_code: bool = True):
+             force_regenerate_code: bool = True,
+             verbose: bool = False,
+             debug: bool = False):
         """"""
 
         #
@@ -283,6 +285,8 @@ class EnhancedOpenSpecScheduler:
         self.enable_retry = enable_retry
         self.enable_checkpoint = enable_checkpoint
         self.enable_progress = enable_progress
+        self.verbose = verbose
+        self.debug = debug
 
         #
         self.progress = ProgressMonitor() if enable_progress else None
@@ -329,7 +333,7 @@ class EnhancedOpenSpecScheduler:
         try:
             from .logger import OpenSpecLogger
             context.project_dir.mkdir(parents=True, exist_ok=True)
-            context.logger = OpenSpecLogger(context.project_name, context.project_dir)
+            context.logger = OpenSpecLogger(context.project_name, context.project_dir, verbose=self.verbose, debug=self.debug)
             context.log_file = context.logger.log_file
             print(f"[INFO] resume log: {context.log_file}")
             context.logger.info(f"[RESUME] start_phase={start_phase}")
@@ -427,7 +431,7 @@ class EnhancedOpenSpecScheduler:
                     try:
                         #
                         context.project_dir.mkdir(parents=True, exist_ok=True)
-                        context.logger = OpenSpecLogger(context.project_name, context.project_dir)
+                        context.logger = OpenSpecLogger(context.project_name, context.project_dir, verbose=self.verbose, debug=self.debug)
                         context.log_file = context.logger.log_file
                         print(f"[INFO] : {context.log_file}")
                         self._backfill_pre_logger_phases(context, current_phase=i, current_duration=duration)

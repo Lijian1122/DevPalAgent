@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-OpenSpec 完整工作流测试脚本
+OpenSpec 完整工作流入口
 
 使用 OpenSpecWorkflowExecutor 执行完整的 11 阶段流程。
 
 Prerequisites:
   1. pip install anthropic pyyaml
-  2. Set env ANTHROPIC_AUTH_TOKEN (or edit config/config.yaml with anthropic.auth_token)
+  2. Set env ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN)
   3. A requirements file under requirements/*.md
 """
 
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -22,105 +23,244 @@ from devpal.core.openspec_executor import OpenSpecRunOptions, OpenSpecWorkflowEx
 from devpal.tools.registry import registry as tool_registry
 
 
-def main() -> int:
-    """执行 OpenSpec 完整工作流
+# --------------------------------------
+# P2.3: Environment variable config support
+# ---------------------------------------------
 
-    Returns:
-        int: 退出码 (0=成功, 1=失败)
-    """
-    # 解析命令行参数
+def _apply_env_overrides() -> None:
+    """Apply environment variable overrides to config.yaml values at runtime."""
+    config_path = ROOT / "config" / "config.yaml"
+    if not config_path.exists():
+        return
+    try:
+        import yaml
+        with open(config_path, encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+
+        changed = False
+        anthropic = config.setdefault("anthropic", {})
+
+        for env_key, cfg_key in [
+            ("ANTHROPIC_API_KEY", "api_key"),
+            ("ANTHROPIC_AUTH_TOKEN", "auth_token"),
+            ("OPENSPEC_MODEL", "model"),
+    ]:
+            val = os.environ.get(env_key)
+        if val:
+                anthropic[cfg_key] = val
+                changed = True
+
+                timeout_val = os.environ.get("OPENSPEC_TIMEOUT")
+        if timeout_val:
+            try:
+              config["timeout"] = int(timeout_val)
+              changed = True
+            except ValueError:
+                pass
+
+        if changed:
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.dump(config, f, allow_unicode=True)
+    except Exception:
+        pass  # non-fatal
+
+
+# ------------------------------------------------------
+# P2.2: Health check
+# ------------------------------------------------
+
+def _run_health_check() -> int:
+    """Check system prerequisites and print a status report."""
+    print("OpenSpec Health Check")
+    print("=" * 50)
+    ok = True
+
+    # API key
+    has_key = bool(
+        os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+    )
+    _check("API key configured", has_key)
+    if not has_key:
+        ok = False
+
+    # CMake
+    cmake = shutil.which("cmake")
+    _check("CMake available", bool(cmake), cmake or "not found")
+
+    # C++ compiler
+    gpp = shutil.which("g++")
+    cl = shutil.which("cl")
+    has_compiler = bool(gpp or cl)
+    _check("C++ compiler (g++ or cl)", has_compiler, gpp or cl or "not found")
+
+    # Python deps
+    for pkg in ["anthropic", "yaml"]:
+        try:
+            __import__(pkg)
+            _check(f"Python package: {pkg}", True)
+        except ImportError:
+            _check(f"Python package: {pkg}", False, "not installed")
+            ok = False
+
+    # Requirements dir
+    req_dir = ROOT / "requirements"
+    _check("requirements/ directory", req_dir.exists(), str(req_dir))
+
+    print("=" * 50)
+    if ok:
+      print("[OK] All checks passed")
+    else:
+        print("[WARN] Some checks failed — see above")
+    return 0 if ok else 1
+
+
+def _check(label: str, passed: bool, detail: str = "") -> None:
+    status = "[OK]  " if passed else "[FAIL]"
+    suffix = f"  ({detail})" if detail else ""
+    print(f"  {status} {label}{suffix}")
+
+
+# ---------------------------------------------------
+# P2.1: Dry-run
+# ------------------------------------------------
+
+def _run_dry_run(requirements_file: Path) -> int:
+    """Print the execution plan without running anything."""
+    from devpal.core.openspec_phases.enhanced_scheduler import PHASE_TIMEOUTS, CRITICAL_PHASES
+
+    phase_names = {
+        1: "Parse requirements",
+        2: "Create project structure",
+        3: "Generate tech design (AI)",
+        4: "Generate core code (AI)",
+        5: "Verify tests + generate test docs",
+        6: "CMake config",
+        7: "Test docs (merged into Phase 5)",
+        8: "README",
+        9: "Quality gate",
+        10: "Compile and run tests",
+        11: "Final report",
+    }
+
+    print("OpenSpec Dry-Run — Execution Plan")
+    print("=" * 60)
+    print(f"  Requirements: {requirements_file}")
+    print()
+    print(f"  {'Phase':<6} {'Name':<38} {'Timeout':>8}  {'Critical'}")
+    print(f"  {'-'*6} {'-'*38} {'-'*8}  {'-'*8}")
+    for num in range(1, 12):
+        name = phase_names.get(num, "")
+        timeout = PHASE_TIMEOUTS.get(num, 30)
+        critical = "YES" if num in CRITICAL_PHASES else ""
+        print(f"  {num:<6} {name:<38} {timeout:>6}s  {critical}")
+    print()
+    print("[DRY-RUN] No files written.")
+    return 0
+
+
+# ------------------------------------------------------
+# Main
+# -----------------------------------------
+
+def main() -> int:
     parser = argparse.ArgumentParser(
-        description='OpenSpec 需求驱动开发工作流',
+        description="OpenSpec 需求驱动开发工作流",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
   python run_ai_flow.py
   python run_ai_flow.py -r requirements/simple_login.md
-  python run_ai_flow.py --no-abort  # 关键阶段失败时不终止
-  python run_ai_flow.py --resume    # 从项目 checkpoint 恢复"""
+  python run_ai_flow.py --dry-run          # 预览执行计划
+  python run_ai_flow.py --health-check     # 检查系统配置
+  python run_ai_flow.py --no-abort         # 关键阶段失败时不终止
+  python run_ai_flow.py --resume           # 从 checkpoint 恢复
+  python run_ai_flow.py --verbose          # 详细输出
+  python run_ai_flow.py --debug        # DEBUG 级别日志
+
+环境变量:
+  ANTHROPIC_API_KEY    Anthropic API 密钥
+  ANTHROPIC_AUTH_TOKEN 同上（备用）
+  OPENSPEC_MODEL       覆盖 config.yaml 中的模型名
+  OPENSPEC_TIMEOUT     覆盖全局超时（秒）""",
     )
     parser.add_argument(
-        '--requirements', '-r',
-        default='requirements/simple_login.md',
-        help='需求文档路径 (默认: requirements/simple_login.md)'
+        "--requirements", "-r",
+        default="requirements/simple_login.md",
+        help="需求文档路径 (默认: requirements/simple_login.md)",
     )
-    parser.add_argument(
-        '--no-abort',
-        action='store_true',
-        help='关键阶段失败时不终止流程（默认会终止）'
-    )
-    parser.add_argument(
-        '--force-regenerate-code',
-        action='store_true',
-        help='强制重新生成所有业务代码（默认为增量模式：仅在需求变更时重新生成）'
-    )
-    parser.add_argument(
-        '--resume',
-        action='store_true',
-      help='从项目 .spec/checkpoint.json 恢复执行（默认从头执行）'
-    )
-    parser.add_argument(
-        '--verbose', '-v',
-        action='store_true',
-      help='启用详细输出模式'
-    )
-    parser.add_argument(
-        '--debug',
-        action='store_true',
-        help='启用调试日志（包含所有 DEBUG 级别信息）'
-    )
+    parser.add_argument("--no-abort", action="store_true",
+                  help="关键阶段失败时不终止流程")
+    parser.add_argument("--force-regenerate-code", action="store_true",
+                   help="强制重新生成所有业务代码")
+    parser.add_argument("--resume", action="store_true",
+             help="从 .spec/checkpoint.json 恢复执行")
+    parser.add_argument("--verbose", "-v", action="store_true",
+               help="启用详细输出模式")
+    parser.add_argument("--debug", action="store_true",
+                    help="启用 DEBUG 级别日志")
+    parser.add_argument("--dry-run", action="store_true",
+                  help="预览执行计划，不实际运行")
+    parser.add_argument("--health-check", action="store_true",
+                        help="检查系统配置（API 密钥、编译器、依赖等）")
     args = parser.parse_args()
 
-    # 检查需求文件
+    # P2.2: health check (no requirements file needed)
+    if args.health_check:
+        return _run_health_check()
+
+    # P2.3: apply env var overrides before anything else
+    _apply_env_overrides()
+
+    # Validate requirements file
     requirements_file = ROOT / args.requirements
     if not requirements_file.exists():
         print(f"[ERROR] 需求文件不存在: {requirements_file}")
         return 1
 
-    # 检查 API 密钥
+    # P2.1: dry-run
+    if args.dry_run:
+        return _run_dry_run(requirements_file)
+
+    # Warn if no API key
     if not os.environ.get("ANTHROPIC_AUTH_TOKEN") and not os.environ.get("ANTHROPIC_API_KEY"):
         print("[WARNING] ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY 未设置")
-        print("      请设置环境变量或填充 config/config.yaml 后再运行")
+        print("          请设置环境变量或填充 config/config.yaml 后再运行")
         print()
 
-    # 创建执行器并执行
     executor = OpenSpecWorkflowExecutor(tool_registry)
     result = executor.run(
         str(requirements_file),
         OpenSpecRunOptions(
             abort_on_critical_failure=not args.no_abort,
-            enable_timeout=True,
+        enable_timeout=True,
             enable_retry=True,
             enable_checkpoint=True,
             enable_progress=True,
-              resume=args.resume,
+            resume=args.resume,
             force_regenerate_code=args.force_regenerate_code,
+            verbose=args.verbose,
+          debug=args.debug,
         ),
     )
 
-    # 处理结果
-    if not result['success']:
+    if not result["success"]:
         print("\n" + "=" * 70)
         print(
             f"[CRITICAL] 流程失败于 Phase {result['failed_phase']}: "
             f"{result['failed_phase_name']}"
         )
         print(f"错误: {result['error_message']}")
-
-        if result.get('errors'):
+        if result.get("errors"):
             print("详细错误:")
-            for error in result['errors']:
+            for error in result["errors"]:
                 print(f"  - {error}")
-
-        if result.get('log_file'):
+        if result.get("log_file"):
             print(f"\n详细日志: {result['log_file']}")
-
         print("=" * 70)
         return 1
 
-    # 成功
     print("\n[SUCCESS] 流程成功完成")
-    if result.get('log_file'):
+    if result.get("log_file"):
         print(f"详细日志: {result['log_file']}")
     return 0
 
