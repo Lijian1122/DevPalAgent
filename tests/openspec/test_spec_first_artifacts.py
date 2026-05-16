@@ -46,14 +46,18 @@ def test_phase1_extracts_structured_requirements(tmp_path):
     result = phase.execute()
 
     assert result.success
-    assert context.structured_requirements == [
-        {
-            "id": "REQ-001",
-            "title": "用户登录",
-            "description": "用户可以登录。",
-            "acceptance_criteria": ["用户名和密码正确时登录成功", "密码错误时登录失败"],
-        }
-    ]
+    reqs = context.structured_requirements
+    assert len(reqs) == 1
+    req = reqs[0]
+    assert req["id"] == "REQ-001"
+    assert req["title"] == "用户登录"
+    assert req["description"] == "用户可以登录。"
+    assert req["acceptance_criteria"] == ["用户名和密码正确时登录成功", "密码错误时登录失败"]
+    # P1.1/P1.2: new fields must be present
+    assert "scenarios" in req
+    assert "priority" in req
+    assert "status" in req
+    assert req["status"] == "PROPOSED"
 
 
 def test_phase2_writes_requirements_json(tmp_path, monkeypatch):

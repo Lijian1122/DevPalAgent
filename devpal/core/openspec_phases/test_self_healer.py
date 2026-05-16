@@ -41,7 +41,13 @@ class TestSelfHealer:
 
             prompt = self._build_compile_error_fix_prompt(test_file.name, test_code, source_code_context, error_output)
             self.log(f" [HEAL] Calling AI to analyze and fix...")
-            response = self.llm_client.generate(
+            if use_fallback:
+                client = LLMClient(model=self.fallback_model)
+                self.model_switches += 1
+                self.log(f" [HEAL] Switched to fallback model: {self.fallback_model}")
+            else:
+                client = self.llm_client
+            response = client.generate(
                 system="You are a C++ expert helping fix code issues.",
                 user_message=prompt
             )
