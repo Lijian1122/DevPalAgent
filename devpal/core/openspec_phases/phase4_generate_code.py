@@ -161,16 +161,29 @@ class Phase4GenerateCode(PhaseInterface):
                     self.log("  [SELECTIVE] Cannot determine affected files, will regenerate all")
 
 
-        if existing_business_files and not force_regenerate:
+        # Check if we should skip AI generation
+
+
+
+        delta = self.context.requirements_delta
+
+
+
+        delta_changed = delta.get("changed", False) if delta else False
+
+
+
+
+        if existing_business_files and not force_regenerate and not delta_changed:
             self.log(
-                "  [SKIP] business code already exists; use --force-regenerate-code to regenerate"
+                "  [SKIP] business code already exists and requirements unchanged; use --force-regenerate-code to regenerate"
             )
             self.context.ai_generated_files.extend(existing_business_files)
             self.context.generated_files.extend(infra_files + existing_business_files)
             self.compiledb.index_project(project_dir, use_cache=False)
             self.compiledb.save_cache(project_dir)
             return PhaseResult.ok(
-                "Phase 4 skipped existing business code",
+                "Phase 4 skipped existing business code (no delta)",
                 infra_count=len(infra_files),
                 ai_count=0,
                 reused_count=len(existing_business_files),

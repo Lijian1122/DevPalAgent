@@ -378,7 +378,7 @@ class Phase10RunTests(PhaseInterface):
         """运行测试并解析结果"""
         try:
             result = subprocess.run(
-                [str(exe_path)],
+                [str(exe_path, timeout=300)],
                 capture_output=True,
                 text=True,
                 timeout=60,
