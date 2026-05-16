@@ -3,7 +3,9 @@
 Phase 1: 解析需求文档
 """
 
+import json
 import re
+from pathlib import Path
 from typing import Dict, List
 
 from .base import PhaseInterface, PhaseResult, OpenSpecContext
@@ -39,11 +41,19 @@ class Phase1ParseRequirements(PhaseInterface):
         self.log(f"[OK] 需求文档已读取 ({len(result.content)} 字符)")
         self.log(f"[OK] 结构化需求: {len(self.context.structured_requirements)} 项")
 
+        delta = self._compute_requirements_delta()
+        self.context.requirements_delta = delta
+        if delta["changed"]:
+            self.log(f"[DELTA] 需求变更: +{len(delta['added'])} ~{len(delta['modified'])} -{len(delta['removed'])}")
+        else:
+            self.log("[DELTA] 需求未变更")
+
         return PhaseResult.ok(
             "需求文档解析成功",
-            content_length=len(result.content),
+       content_length=len(result.content),
             file_path=str(self.context.requirements_file),
             requirement_count=len(self.context.structured_requirements),
+          delta_changed=delta["changed"],
         )
 
     def _parse_structured_requirements(self, content: str) -> List[Dict[str, object]]:
@@ -103,3 +113,59 @@ class Phase1ParseRequirements(PhaseInterface):
             })
 
         return requirements
+
+    def _compute_requirements_delta(self) -> Dict[str, object]:
+        """Compare current requirements with previous version to detect changes."""
+        spec_dir = self.context.project_dir / ".spec"
+        prev_req_file = spec_dir / "requirements.json"
+
+        current_reqs = {req["id"]: req for req in self.context.structured_requirements}
+
+        if not prev_req_file.exists():
+            return {
+                "changed": bool(current_reqs),
+                "added": list(current_reqs.keys()),
+                "modified": [],
+                "removed": [],
+            }
+
+        try:
+            prev_data = json.loads(prev_req_file.read_text(encoding="utf-8"))
+            prev_reqs = {req["id"]: req for req in prev_data}
+        except Exception:
+            return {
+           "changed": bool(current_reqs),
+                "added": list(current_reqs.keys()),
+                "modified": [],
+                "removed": [],
+            }
+
+        added = [req_id for req_id in current_reqs if req_id not in prev_reqs]
+        removed = [req_id for req_id in prev_reqs if req_id not in current_reqs]
+        modified = []
+
+        for req_id in current_reqs:
+            if req_id in prev_reqs:
+                curr = current_reqs[req_id]
+                prev = prev_reqs[req_id]
+                if (curr.get("title") != prev.get("title") or
+                    curr.get("description") != prev.get("description") or
+                    curr.get("acceptance_criteria") != prev.get("acceptance_criteria")):
+                 modified.append(req_id)
+
+        changed = bool(added or modified or removed)
+
+        # Save current requirements for next comparison
+        if changed:
+            spec_dir.mkdir(parents=True, exist_ok=True)
+            prev_req_file.write_text(
+                json.dumps(self.context.structured_requirements, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+
+        return {
+            "changed": changed,
+            "added": added,
+            "modified": modified,
+            "removed": removed,
+     }

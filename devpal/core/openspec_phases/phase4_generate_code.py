@@ -117,8 +117,50 @@ class Phase4GenerateCode(PhaseInterface):
         infra_files, infra_errors = self._apply_infrastructure_templates(project_name)
         self.log("  [Infra] generated {} scaffolding files".format(len(infra_files)))
 
+        # 检查增量模式和需求变更
         force_regenerate = bool(getattr(self.context, "force_regenerate_code", False))
+        requirements_delta = getattr(self.context, "requirements_delta", {})
+        delta_changed = requirements_delta.get("changed", False)
+
+        # 如果需求未变更且不强制重新生成，跳过 AI 生成
         existing_business_files = self._find_existing_business_files(project_dir, project_name)
+        if existing_business_files and not force_regenerate and not delta_changed:
+            self.log("  [INCREMENTAL] No requirement changes detected, skipping AI generation")
+            self.context.ai_generated_files.extend(existing_business_files)
+            self.context.generated_files.extend(infra_files + existing_business_files)
+            self.compiledb.index_project(project_dir, use_cache=False)
+            self.compiledb.save_cache(project_dir)
+            return PhaseResult.ok(
+              "Phase 4 skipped: no requirement changes",
+                infra_count=len(infra_files),
+                ai_count=0,
+                reused_count=len(existing_business_files),
+                total_files=len(infra_files) + len(existing_business_files),
+                skipped_ai_generation=True,
+                incremental_mode=True,
+            )
+
+        # 选择性文件重新生成：如果有需求变更，确定受影响的文件
+        affected_requirements = []
+        if delta_changed and not force_regenerate:
+            affected_requirements = (
+        requirements_delta.get("added", []) +
+          requirements_delta.get("modified", [])
+            )
+            if affected_requirements:
+                self.log("  [SELECTIVE] Requirements changed: {}".format(
+                    ", ".join(affected_requirements)))
+                # 使用 ArtifactGraph 确定受影响的文件（如果可用）
+                affected_files = self._get_affected_files_from_graph(affected_requirements)
+                if affected_files:
+                    self.log("  [SELECTIVE] Will regenerate {} affected files".format(
+                    len(affected_files)))
+                    # 将受影响的文件信息存储到 context
+                    self.context.selective_regenerate_files = affected_files
+                else:
+                    self.log("  [SELECTIVE] Cannot determine affected files, will regenerate all")
+
+
         if existing_business_files and not force_regenerate:
             self.log(
                 "  [SKIP] business code already exists; use --force-regenerate-code to regenerate"
@@ -237,12 +279,14 @@ class Phase4GenerateCode(PhaseInterface):
                 ],
             )
 
-        self.context.ai_generated_files.extend(ai_files)
-        self.context.generated_files.extend(infra_files + ai_files)
+            self.context.ai_generated_files.extend(ai_files)
+            self.context.generated_files.extend(infra_files + ai_files)
 
-        self.compiledb.index_project(project_dir, use_cache=False)
-        self.compiledb.save_cache(project_dir)
-        self.log(
+            self._update_artifact_graph(project_dir, ai_files)
+
+            self.compiledb.index_project(project_dir, use_cache=False)
+            self.compiledb.save_cache(project_dir)
+            self.log(
             "  [OK] re-indexed {} files".format(len(self.compiledb.get_all_files()))
         )
 
@@ -321,6 +365,54 @@ class Phase4GenerateCode(PhaseInterface):
                     business_files.append(path)
         return business_files
 
+
+    def _update_artifact_graph(self, project_dir: Path, ai_files: List[Path]) -> None:
+        """Populate context.artifact_graph with requirement->source/test edges."""
+        try:
+            from devpal.core.schema.artifact_graph import (
+                ArtifactGraph, ArtifactNode, ArtifactType, DependencyType,
+          )
+        except ImportError:
+            return
+
+        graph = self.context.artifact_graph
+        if graph is None:
+            graph = ArtifactGraph()
+            self.context.artifact_graph = graph
+
+        requirements = self.context.structured_requirements or []
+        for req in requirements:
+            req_id = str(req.get("id", "REQ-UNKNOWN"))
+            node_id = f"req:{req_id}"
+            if not graph.get_node(node_id):
+                graph.add_node(ArtifactNode(
+              id=node_id,
+            type=ArtifactType.REQUIREMENT,
+             name=req_id,
+             description=str(req.get("title", "")),
+                ))
+
+        for file_path in ai_files:
+            rel = file_path.relative_to(project_dir).as_posix()
+            is_test = rel.startswith("tests/")
+            artifact_type = ArtifactType.TEST if is_test else ArtifactType.CODE
+            file_node_id = f"file:{rel}"
+            if not graph.get_node(file_node_id):
+                graph.add_node(ArtifactNode(
+                    id=file_node_id,
+            type=artifact_type,
+                    path=file_path,
+                name=file_path.name,
+             ))
+            for req in requirements:
+                req_id = str(req.get("id", "REQ-UNKNOWN"))
+                req_node_id = f"req:{req_id}"
+                dep = DependencyType.TESTS if is_test else DependencyType.IMPLEMENTS
+            try:
+                 graph.add_dependency(file_node_id, req_node_id, dep)
+            except ValueError:
+              pass
+
     def _build_existing_files_overview(self, project_dir):
         """Return a short bullet list of existing files for AI context."""
         lines: List[str] = []
@@ -345,3 +437,35 @@ class Phase4GenerateCode(PhaseInterface):
     def _detect_features(self) -> list:
         """Phase 4 no longer keyword-matches business features; AI parses reqs."""
         return ["test", "docs"]
+
+    def _get_affected_files_from_graph(self, changed_req_ids: List[str]) -> List[str]:
+        """使用 ArtifactGraph 确定受需求变更影响的文件列表
+        
+        Args:
+            changed_req_ids: 变更的需求 ID 列表（added + modified）
+            
+        Returns:
+            受影响的文件路径列表（相对于项目根目录）
+        """
+        graph = self.context.artifact_graph
+        if graph is None:
+            return []
+        
+        try:
+            from devpal.core.schema.artifact_graph import ArtifactType
+        except ImportError:
+            return []
+        
+        affected_files = set()
+        
+        for req_id in changed_req_ids:
+            req_node_id = f"req:{req_id}"
+          
+            # 获取实现该需求的代码文件
+            for node, dep_type in graph.get_dependents(req_node_id):
+                if node.type in (ArtifactType.CODE, ArtifactType.TEST):
+                    if node.path:
+                      rel_path = node.path.relative_to(self.context.project_dir).as_posix()
+                      affected_files.add(rel_path)
+        
+        return sorted(list(affected_files))

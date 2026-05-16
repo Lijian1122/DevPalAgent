@@ -165,12 +165,28 @@ class Phase11FinalReport(PhaseInterface):
         return "\n".join(lines)
 
     def _write_artifact_graph(self) -> Path:
-        graph = self._build_artifact_graph_data()
-        self.context.artifact_graph_data = graph
         graph_path = self.context.project_dir / ".spec" / "artifact_graph.json"
         graph_path.parent.mkdir(parents=True, exist_ok=True)
-        graph_path.write_text(json.dumps(graph, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # Try using full ArtifactGraph instance
+        graph = self.context.artifact_graph
+        if graph is not None:
+         try:
+            graph.save_to_file(graph_path)
+            self.context.artifact_graph_data = json.loads(
+                    graph_path.read_text(encoding="utf-8"))
+            self.context.generated_files.append(graph_path)
+            self.log("  [OK] Saved using ArtifactGraph.save_to_file()")
+            return graph_path
+         except Exception as e:
+                self.log("  [WARN] ArtifactGraph.save_to_file() failed: {}".format(e))
+
+        # Fallback: simple JSON
+        simple_graph = self._build_artifact_graph_data()
+        self.context.artifact_graph_data = simple_graph
+        graph_path.write_text(json.dumps(simple_graph, ensure_ascii=False, indent=2), encoding="utf-8")
         self.context.generated_files.append(graph_path)
+        self.log("  [OK] Saved using fallback JSON")
         return graph_path
 
     def _build_artifact_graph_data(self) -> Dict[str, object]:
@@ -202,31 +218,90 @@ class Phase11FinalReport(PhaseInterface):
         return {"nodes": nodes, "edges": edges}
 
     def _generate_acceptance_matrix(self) -> List[str]:
-        requirements = self.context.structured_requirements or []
-        source_files = self._relative_files(["src/*.cpp", "include/*.h"])
-        test_files = self._relative_files(["tests/test_*.cpp"])
-        status = "Passed" if self.context.test_total > 0 and self.context.test_failed == 0 else "Failed"
+         requirements = self.context.structured_requirements or []
 
-        lines = [
+         lines = [
             "",
             "## 6. Acceptance Matrix",
             "",
             "| Requirement | Implementation | Tests | Status |",
             "|-------------|----------------|-------|--------|",
         ]
-        if not requirements:
+
+         if not requirements:
             lines.append("| (none) | (none) | (none) | Missing |")
             return lines
 
-        implementation = ", ".join(source_files) if source_files else "(none)"
-        tests = ", ".join(test_files) if test_files else "(none)"
-        for requirement in requirements:
+         graph = self.context.artifact_graph
+         if graph is not None:
+            try:
+                from devpal.core.schema.artifact_graph import ArtifactType, DependencyType
+                matrix = graph.get_traceability_matrix()
+
+                for requirement in requirements:
+                    req_id = str(requirement.get("id", "REQ-UNKNOWN"))
+                    title = str(requirement.get("title", req_id))
+                    req_node_id = "req:{}".format(req_id)
+
+                    code_files = []
+                    test_files = []
+                    try:
+                        dependents = graph.get_dependents(req_node_id)
+                        for node_id, dep_type in dependents:
+                            node = graph.get_node(node_id)
+                            if node and dep_type == DependencyType.IMPLEMENTS and node.type == ArtifactType.CODE:
+                                code_files.append(Path(node.path).name if node.path else node_id)
+                            elif node and dep_type == DependencyType.TESTS and node.type == ArtifactType.TEST:
+                                test_files.append(Path(node.path).name if node.path else node_id)
+                    except Exception:
+                        pass
+
+                    implementation = ", ".join(code_files) if code_files else "(none)"
+                    tests = ", ".join(test_files) if test_files else "(none)"
+                    status = "Passed" if self.context.test_total > 0 and self.context.test_failed == 0 else "Failed"
+
+                    lines.append(
+                        "| {} {} | {} | {} | {} |".format(req_id, title, implementation, tests, status)
+                    )
+
+                coverage = matrix.get("coverage", {})
+                if coverage:
+                    lines.extend([
+                        "",
+                        "### Coverage Statistics",
+                        "",
+                        "- Requirements with code: {}/{}".format(
+                            coverage.get("requirements_with_code", 0),
+                            coverage.get("total_requirements", 0)
+                        ),
+                        "- Requirements with tests: {}/{}".format(
+                            coverage.get("requirements_with_tests", 0),
+                            coverage.get("total_requirements", 0)
+                        ),
+                        "- Code files with tests: {}/{}".format(
+                            coverage.get("code_with_tests", 0),
+                            coverage.get("total_code", 0)
+                        ),
+                    ])
+
+                return lines
+            except Exception as e:
+                self.log("  [WARN] ArtifactGraph traceability failed: {}".format(e))
+
+         source_files = self._relative_files(["src/*.cpp", "include/*.h"])
+         test_files = self._relative_files(["tests/test_*.cpp"])
+         status = "Passed" if self.context.test_total > 0 and self.context.test_failed == 0 else "Failed"
+
+         implementation = ", ".join(source_files) if source_files else "(none)"
+         tests = ", ".join(test_files) if test_files else "(none)"
+         for requirement in requirements:
             req_id = str(requirement.get("id", "REQ-UNKNOWN"))
             title = str(requirement.get("title", req_id))
             lines.append(
                 "| {} {} | {} | {} | {} |".format(req_id, title, implementation, tests, status)
             )
-        return lines
+         return lines
+
 
     def _relative_files(self, patterns: List[str]) -> List[str]:
         files = []

@@ -358,7 +358,7 @@ class EnhancedOpenSpecScheduler:
         from .phase6_cmake_config import Phase6CMakeConfig
         from .phase7_test_docs import Phase7TestDocs
         from .phase8_readme import Phase8Readme
-        from .phase9_code_review import Phase9CodeReview
+        from .phase9_quality_gate import Phase9QualityGate
         from .phase10_run_tests import Phase10RunTests
         from .phase11_final_report import Phase11FinalReport
         from .logger import OpenSpecLogger
@@ -392,7 +392,7 @@ class EnhancedOpenSpecScheduler:
             Phase6CMakeConfig(context, tool_registry),
             Phase7TestDocs(context, tool_registry),
             Phase8Readme(context, tool_registry),
-            Phase9CodeReview(context, tool_registry),
+            Phase9QualityGate(context, tool_registry),
             Phase10RunTests(context, tool_registry),
             Phase11FinalReport(context),
         ]

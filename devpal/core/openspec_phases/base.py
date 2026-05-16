@@ -65,7 +65,9 @@ class OpenSpecContext:
     requirements_file: Path
     requirements_content: str = ""
     structured_requirements: List[Dict[str, Any]] = field(default_factory=list)
+    requirements_delta: Dict[str, Any] = field(default_factory=dict)
     artifact_graph_data: Dict[str, Any] = field(default_factory=dict)
+    artifact_graph: Any = field(default=None, repr=False)  # ArtifactGraph instance, not serialized
 
     # 项目配置
     project_name: str = ""
@@ -120,6 +122,7 @@ class OpenSpecContext:
             "project_dir": self.project_dir.as_posix(),
             "requirements_content": self.requirements_content,
             "structured_requirements": _json_safe(self.structured_requirements),
+            "requirements_delta": _json_safe(self.requirements_delta),
             "artifact_graph_data": _json_safe(self.artifact_graph_data),
             "project_name": self.project_name,
             "language": self.language,
@@ -155,6 +158,7 @@ class OpenSpecContext:
         self.project_dir = Path(data.get("project_dir", self.project_dir))
         self.requirements_content = data.get("requirements_content", self.requirements_content)
         self.structured_requirements = list(data.get("structured_requirements", self.structured_requirements) or [])
+        self.requirements_delta = dict(data.get("requirements_delta", self.requirements_delta) or {})
         self.artifact_graph_data = dict(data.get("artifact_graph_data", self.artifact_graph_data) or {})
         self.project_name = data.get("project_name", self.project_name)
         self.language = data.get("language", self.language)

@@ -52,7 +52,7 @@ def main() -> int:
     parser.add_argument(
         '--force-regenerate-code',
         action='store_true',
-        help='即使业务代码已存在，也强制调用 AI 重新生成业务代码'
+        help='强制重新生成所有业务代码（默认为增量模式：仅在需求变更时重新生成）'
     )
     parser.add_argument(
         '--resume',

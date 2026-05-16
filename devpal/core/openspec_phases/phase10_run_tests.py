@@ -191,6 +191,9 @@ class Phase10RunTests(PhaseInterface):
         self.context.test_failed = total_failed
         self.context.test_total = total_all
 
+     # 更新 ArtifactGraph 中的测试结果
+        self._update_artifact_graph_test_results(test_results)
+
         # 判断是否有测试运行
         if total_all == 0:
             # 编译失败或没有测试
@@ -560,3 +563,68 @@ class Phase10RunTests(PhaseInterface):
         ctx.llm_input_tokens = client.usage.input_tokens
         ctx.llm_output_tokens = client.usage.output_tokens
         ctx.llm_cache_read_tokens = client.usage.cache_read_tokens
+
+    def _update_artifact_graph_test_results(self, test_results: List[Dict]) -> None:
+        """Update ArtifactGraph with test results metadata."""
+        graph = self.context.artifact_graph
+        if graph is None:
+            return
+        try:
+            from devpal.core.schema.artifact_graph import ArtifactType
+        except ImportError:
+            return
+
+        for result in test_results:
+            test_file_path = Path(result['test_file'])
+            rel_path = test_file_path.relative_to(self.context.project_dir).as_posix()
+            file_node_id = f"file:{rel_path}"
+
+            node = graph.get_node(file_node_id)
+            if node and node.type == ArtifactType.TEST:
+                # Update test result metadata
+                node.metadata['test_passed'] = result['passed']
+                node.metadata['test_total'] = result['total']
+                node.metadata['test_success'] = result['compile_success'] and result['run_success']
+                node.metadata['last_run'] = True
+
+    def _get_affected_tests_from_changes(self) -> List[Path]:
+        """根据代码变更确定需要运行的测试文件
+        
+        使用 ArtifactGraph 分析哪些测试受到影响
+        
+        Returns:
+            受影响的测试文件列表，如果无法确定则返回空列表（表示运行所有测试）
+        """
+        graph = self.context.artifact_graph
+        if graph is None:
+            return []
+        
+        try:
+            from devpal.core.schema.artifact_graph import ArtifactType
+        except ImportError:
+            return []
+        
+        # 获取所有 AI 生成的代码文件（这些是可能变更的文件）
+        changed_files = self.context.ai_generated_files
+        if not changed_files:
+          return []
+        
+        affected_tests = set()
+        
+        for file_path in changed_files:
+            try:
+                rel_path = Path(file_path).relative_to(self.context.project_dir).as_posix()
+                file_node_id = f"file:{rel_path}"
+                
+                # 查找测试该文件的所有测试
+                for node, dep_type in graph.get_dependents(file_node_id):
+                    if node.type == ArtifactType.TEST and node.path:
+                        affected_tests.add(node.path)
+                
+          # 如果这个文件本身就是测试文件，也包含它
+                if rel_path.startswith("tests/") and Path(file_path).exists():
+                    affected_tests.add(Path(file_path))
+            except (ValueError, AttributeError):
+                continue
+        
+            return sorted(list(affected_tests))
