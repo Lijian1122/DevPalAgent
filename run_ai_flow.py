@@ -57,7 +57,17 @@ def main() -> int:
     parser.add_argument(
         '--resume',
         action='store_true',
-        help='从项目 .spec/checkpoint.json 恢复执行（默认从头执行）'
+      help='从项目 .spec/checkpoint.json 恢复执行（默认从头执行）'
+    )
+    parser.add_argument(
+        '--verbose', '-v',
+        action='store_true',
+      help='启用详细输出模式'
+    )
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='启用调试日志（包含所有 DEBUG 级别信息）'
     )
     args = parser.parse_args()
 

@@ -17,6 +17,8 @@ class OpenSpecRunOptions:
     enable_progress: bool = True
     resume: bool = False
     force_regenerate_code: bool = True
+    verbose: bool = False
+    debug: bool = False
 
 
 class OpenSpecWorkflowExecutor:
