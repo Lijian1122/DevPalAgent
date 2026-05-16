@@ -6,6 +6,12 @@ from typing import List, Tuple
 import re
 
 from .base import PhaseInterface, PhaseResult, OpenSpecContext
+try:
+    from ..schema.validation_engine import (
+        ValidationEngine, ValidationLevel, ValidationSeverity, ValidationIssue)
+    _HAS_VALIDATION_ENGINE = True
+except ImportError:
+    _HAS_VALIDATION_ENGINE = False
 
 
 class Phase9QualityGate(PhaseInterface):
@@ -20,6 +26,14 @@ class Phase9QualityGate(PhaseInterface):
 
     def execute(self) -> PhaseResult:
         self.log("Phase 9: Quality Gate - running mandatory checks...")
+
+        # Run four-layer validation via ValidationEngine when available
+        val_result = None
+        if _HAS_VALIDATION_ENGINE:
+            try:
+                val_result = self._run_validation_engine()
+            except Exception as e:
+                self.log("  [WARN] ValidationEngine failed: {}".format(e))
         
         violations = []
         warnings = []
@@ -51,7 +65,7 @@ class Phase9QualityGate(PhaseInterface):
             self.log("  [OK] Tests present (total={})".format(self.context.test_total))
         
         # 生成报告
-        report_path = self._write_report(violations, warnings)
+        report_path = self._write_report(violations, warnings, val_result)
         
         if violations:
             self.log("  [FAIL] Quality Gate: {} violations".format(len(violations)))
@@ -70,6 +84,60 @@ class Phase9QualityGate(PhaseInterface):
             report_path=str(report_path)
         )
     
+    def _run_validation_engine(self):
+        """Run four-layer validation and log per-layer results."""
+        engine = ValidationEngine()
+        ctx = {"project_dir": self.context.project_dir}
+
+        # FORMAT: file existence
+        def _fmt_cmake(content, ctx):
+            if not self._check_cmake_exists():
+                return [ValidationIssue(ValidationLevel.FORMAT, ValidationSeverity.ERROR,
+                                        "CMakeLists.txt not found")]
+            self.log("  [OK] FORMAT: CMakeLists.txt exists")
+            return []
+
+        def _fmt_main(content, ctx):
+            msg = self._check_main_cpp()
+            if msg:
+                return [ValidationIssue(ValidationLevel.FORMAT, ValidationSeverity.ERROR, msg)]
+            self.log("  [OK] FORMAT: src/main.cpp exists with main()")
+            return []
+
+        # SEMANTIC: API contract
+        def _sem_test_base(content, ctx):
+            msg = self._check_test_base()
+            if msg:
+                return [ValidationIssue(ValidationLevel.SEMANTIC, ValidationSeverity.ERROR, msg)]
+            self.log("  [OK] SEMANTIC: test_base.h API is consistent")
+            return []
+
+        # BUSINESS: test count
+        def _biz_test_count(content, ctx):
+            if self.context.test_total == 0:
+                return [ValidationIssue(ValidationLevel.BUSINESS, ValidationSeverity.ERROR,
+                                        "No tests found (test_total=0)")]
+            self.log("  [OK] BUSINESS: Tests present (total={})".format(self.context.test_total))
+            return []
+
+        engine.register_validator(ValidationLevel.FORMAT, _fmt_cmake)
+        engine.register_validator(ValidationLevel.FORMAT, _fmt_main)
+        engine.register_validator(ValidationLevel.SEMANTIC, _sem_test_base)
+        engine.register_validator(ValidationLevel.BUSINESS, _biz_test_count)
+
+        result = engine.validate(None, context=ctx, stop_on_error=False)
+
+        # Log per-layer summary
+        for level in [ValidationLevel.FORMAT, ValidationLevel.SEMANTIC,
+                      ValidationLevel.PARSER, ValidationLevel.BUSINESS]:
+            level_issues = [i for i in result.issues if i.level == level]
+            errors = [i for i in level_issues if i.severity == ValidationSeverity.ERROR]
+            status = "[FAIL]" if errors else "[OK]  "
+            self.log("  {} {} layer: {} issue(s)".format(
+                status, level.value.upper(), len(level_issues)))
+
+        return result
+
     def _check_cmake_exists(self) -> bool:
         return (self.context.project_dir / "CMakeLists.txt").exists()
     
@@ -108,7 +176,7 @@ class Phase9QualityGate(PhaseInterface):
             return "Cannot read test_base.h: {}".format(e)
         return ""
     
-    def _write_report(self, violations: List[str], warnings: List[str]) -> Path:
+    def _write_report(self, violations: List[str], warnings: List[str], val_result=None) -> Path:
         lines = [
             "# Quality Gate Report",
             "",
@@ -118,15 +186,26 @@ class Phase9QualityGate(PhaseInterface):
             "",
             "- Violations: {}".format(len(violations)),
             "- Warnings: {}".format(len(warnings)),
-            ""
+            "",
         ]
-       
+        
+        if val_result and _HAS_VALIDATION_ENGINE:
+            lines += ["## Four-Layer Validation", ""]
+            for level in [ValidationLevel.FORMAT, ValidationLevel.SEMANTIC,
+                          ValidationLevel.PARSER, ValidationLevel.BUSINESS]:
+                level_issues = [i for i in val_result.issues if i.level == level]
+                errors = sum(1 for i in level_issues
+                             if i.severity == ValidationSeverity.ERROR)
+                lines.append("- {} layer: {} error(s), {} warning(s)".format(
+                    level.value.upper(), errors, len(level_issues) - errors))
+            lines.append("")
+        
         if violations:
             lines.append("## Violations")
             lines.append("")
             for i, v in enumerate(violations, 1):
                 lines.append("{}. {}".format(i, v))
-                lines.append("")
+            lines.append("")
         
         report_path = self.context.project_dir / "docs" / "quality_gate_report.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
