@@ -222,7 +222,7 @@ class TestResultUpdaterTool(BaseTool):
             # 解析 Summary 格式
             elif "tests" in line.lower() and ("passed" in line.lower() or "total" in line.lower()):
                 # 如: "14 tests total, 14 passed"
-                m = re.search(r'(\d+)\s+tests?\s*(?:total)?\s*(\d+)\s*passed", line, re.IGNORECASE)
+                m = re.search(r'(\d+)\s+tests?\s*(?:total)?\s*,?\s*(\d+)\s*passed', line, re.IGNORECASE)
                 if m:
                     results["total"] = int(m.group(1))
                     results["passed"] = int(m.group(2))
@@ -289,7 +289,7 @@ class TestResultUpdaterTool(BaseTool):
         section = f"""
 ## 测试执行结果
 
-> **测试时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+> **测试时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 > **执行状态**: {'✅ 全部通过' if test_results.get('failed', 0) == 0 and test_results.get('total', 0) > 0 else '⚠️ 部分通过' if test_results.get('passed', 0) > 0 else '❌ 测试失败'}
 
 ### 结果统计
@@ -316,7 +316,7 @@ class TestResultUpdaterTool(BaseTool):
         # 失败的测试（如果有）
         if test_results.get('failed_names'):
             section += "### 失败的测试\n\n"
-            for name in test_results['failed_names'][:10:
+            for name in test_results['failed_names'][:10]:
                 section += f"- ❌ {name}\n"
             section += "\n"
 

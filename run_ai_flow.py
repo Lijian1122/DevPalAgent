@@ -232,7 +232,7 @@ def main() -> int:
         str(requirements_file),
         OpenSpecRunOptions(
             abort_on_critical_failure=not args.no_abort,
-        enable_timeout=True,
+            enable_timeout=True,
             enable_retry=True,
             enable_checkpoint=True,
             enable_progress=True,

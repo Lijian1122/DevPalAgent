@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Phase 9: Quality Gate - 硬性质量检查"""
+"""Phase 9: Quality Gate - 硬性质量检查 + 代码审查"""
 
 from pathlib import Path
-from typing import List, Tuple
+from typing import Callable, List, Tuple, Dict, Any, Optional
 import re
+import json
 
 from .base import PhaseInterface, PhaseResult, OpenSpecContext
+from ..llm_client import LLMClient, get_llm_client
 try:
     from ..schema.validation_engine import (
         ValidationEngine, ValidationLevel, ValidationSeverity, ValidationIssue)
@@ -15,75 +17,353 @@ except ImportError:
 
 
 class Phase9QualityGate(PhaseInterface):
-    """Phase 9: 质量门禁 - 硬性检查，失败则终止流程"""
+    """Phase 9: 质量门禁 - 硬性检查 + 可选代码审查"""
 
-    def __init__(self, context: OpenSpecContext, tool_registry):
+    def __init__(self, context: OpenSpecContext, tool_registry=None,
+                 llm_client: Optional[LLMClient] = None,
+                 llm_client_factory: Optional[Callable[..., LLMClient]] = None):
         super().__init__(context)
         self.phase_number = 9
         self.phase_name = "Quality Gate"
         self.tool_registry = tool_registry
         self.is_critical = True
 
+        # 配置：从 context 或使用默认值
+        self.config = self._load_config()
+
+        # LLM client for self-healing. Resolve lazily so normal quality gate
+        # checks do not require an Anthropic key.
+        self.llm_client = llm_client
+        self.llm_client_factory = llm_client_factory or LLMClient
+        self.fallback_model = self.config['code_review']['self_heal']['fallback_model']
+        self.model_switched = False
+
+        # 自愈统计
+        self.heal_attempts = 0
+        self.heal_success = 0
+        self.model_switches = 0
+
+    def _load_config(self) -> Dict[str, Any]:
+        """加载配置"""
+        default_config = {
+            'code_review': {
+                'enabled': True,  # 默认启用代码审查
+                'check_types': ['todo', 'debug', 'security', 'performance'],
+                'fail_on_critical': False,  # 默认不因代码审查失败而终止
+                'max_files': 50,
+                'exclude_patterns': [],
+                'self_heal': {
+                    'enabled': True,  # 默认启用自愈
+                    'max_attempts': 3,  # 最大尝试次数
+                    'only_critical': True,  # 只修复 Critical 问题
+                    'switch_model_after': 2,  # 2次失败后切换模型
+                    'fallback_model': "claude-opus-4-7",
+                    'require_approval': False,  # 是否需要用户确认
+                    'create_backup': True,
+                    'max_fixes_per_attempt': 10
+                }
+            }
+        }
+
+        # 尝试从 context 加载配置
+        if hasattr(self.context, 'config') and self.context.config:
+            user_config = self.context.config.get('phase9_quality_gate', {})
+            self._deep_merge_config(default_config, user_config)
+
+        return default_config
+
+    def _deep_merge_config(self, base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge nested config dictionaries without dropping self_heal defaults."""
+        for key, value in (override or {}).items():
+            if isinstance(value, dict) and isinstance(base.get(key), dict):
+                self._deep_merge_config(base[key], value)
+            else:
+                base[key] = value
+        return base
+
     def execute(self) -> PhaseResult:
         self.log("Phase 9: Quality Gate - running mandatory checks...")
 
-        # Run four-layer validation via ValidationEngine when available
+        # ========== Layer 1: 硬性结构检查 (必须通过) ==========
         val_result = None
         if _HAS_VALIDATION_ENGINE:
             try:
                 val_result = self._run_validation_engine()
             except Exception as e:
                 self.log("  [WARN] ValidationEngine failed: {}".format(e))
-        
+
         violations = []
         warnings = []
-        
+
         # 检查 1: CMakeLists.txt
         if not self._check_cmake_exists():
             violations.append("CMakeLists.txt not found")
         else:
             self.log("  [OK] CMakeLists.txt exists")
-        
+
         # 检查 2: src/main.cpp
         main_check = self._check_main_cpp()
         if main_check:
             violations.append(main_check)
         else:
             self.log("  [OK] src/main.cpp exists with main()")
-        
+
         # 检查 3: test_base.h
         test_base_check = self._check_test_base()
         if test_base_check:
             violations.append(test_base_check)
         else:
             self.log("  [OK] test_base.h API is consistent")
-        
-        # 检查 4: 测试数量
-        if self.context.test_total == 0:
-            violations.append("No tests found (test_total=0)")
+
+        # 检查 4: 测试文件存在性
+        test_files_check = self._check_test_files_exist()
+        if test_files_check:
+            violations.append(test_files_check)
         else:
-            self.log("  [OK] Tests present (total={})".format(self.context.test_total))
-        
-        # 生成报告
-        report_path = self._write_report(violations, warnings, val_result)
-        
+            self.log("  [OK] Test files present")
+
+        # 如果硬性检查失败，立即返回（快速失败）
         if violations:
             self.log("  [FAIL] Quality Gate: {} violations".format(len(violations)))
             for v in violations:
                 self.log("    - {}".format(v))
+
+            # 生成报告（只包含硬性检查结果）
+            report_path = self._write_report(violations, warnings, val_result, None)
+
             return PhaseResult.fail(
                 "Quality Gate failed: {} violations".format(len(violations)),
                 errors=violations
             )
-        
+
+        # ========== Layer 2: 代码质量审查 (可选) ==========
+        review_issues = []
+        if self._should_run_code_review():
+            self.log("  [CODE REVIEW] Starting code quality review...")
+            try:
+                review_issues = self._run_code_review()
+                self.log("  [CODE REVIEW] Found {} issues".format(len(review_issues)))
+            except Exception as e:
+                self.log("  [WARN] Code review failed: {}".format(e))
+        else:
+            self.log("  [SKIP] Code review disabled")
+
+        # ========== Layer 2.5: 自愈修复 (可选) ==========
+        critical_issues = [i for i in review_issues if i.get('severity') == 'error']
+
+        if critical_issues and self._should_trigger_self_heal(review_issues):
+            self.log("  [SELF-HEAL] Found {} critical issues, attempting to fix...".format(len(critical_issues)))
+            try:
+                heal_success, new_issues = self._run_self_heal(review_issues)
+                if heal_success:
+                    self.log("  [SELF-HEAL] Successfully fixed issues")
+                    review_issues = new_issues
+                    critical_issues = [i for i in review_issues if i.get('severity') == 'error']
+                else:
+                    self.log("  [SELF-HEAL] Failed to fix all issues")
+            except Exception as e:
+                self.log("  [WARN] Self-heal failed: {}".format(e))
+
+        # ========== Layer 3: 决策逻辑 ==========
+        # 生成完整报告
+        report_path = self._write_report(violations, warnings, val_result, review_issues,
+                                         self.heal_attempts, self.heal_success, self.model_switches)
+
+        # 如果有严重问题且配置为失败
+        if critical_issues and self.config['code_review']['fail_on_critical']:
+            self.log("  [FAIL] Quality Gate: {} critical code review issues".format(len(critical_issues)))
+            for issue in critical_issues[:5]:  # 只显示前 5 个
+                self.log("    - {}:{} {}".format(
+                    Path(issue['file']).name, issue['line'], issue['message']))
+
+            return PhaseResult.fail(
+                "Quality Gate failed: {} critical code review issues".format(len(critical_issues)),
+                errors=[i['message'] for i in critical_issues]
+            )
+
+        # 通过
         self.log("  [OK] Quality Gate passed")
+        if review_issues:
+            self.log("  [INFO] Code review found {} issues (not blocking)".format(len(review_issues)))
+
         return PhaseResult.ok(
             "Quality Gate passed",
             violations=0,
             warnings=len(warnings),
+            review_issues=len(review_issues),
+            critical_issues=len(critical_issues),
             report_path=str(report_path)
         )
-    
+
+    def _should_run_code_review(self) -> bool:
+        """判断是否应该运行代码审查"""
+        return self.config['code_review']['enabled']
+
+    def _run_code_review(self) -> List[Dict[str, Any]]:
+        """运行代码审查"""
+        files_to_review = self._collect_review_targets()
+
+        if not files_to_review:
+            self.log("    [WARN] No files to review")
+            return []
+
+        max_files = self.config['code_review']['max_files']
+        if len(files_to_review) > max_files:
+            self.log("    [INFO] Limiting review to {} files (out of {})".format(
+                max_files, len(files_to_review)))
+            files_to_review = files_to_review[:max_files]
+
+        all_issues = []
+        check_types = self.config['code_review']['check_types']
+
+        for file_path in files_to_review:
+            try:
+                issues = self._review_file(file_path, check_types)
+                all_issues.extend(issues)
+                if issues:
+                    self.log("    [{}] {}: {} issues".format(
+                        '!' if any(i['severity'] == 'error' for i in issues) else 'OK',
+                        file_path.name, len(issues)))
+            except Exception as e:
+                self.log("    [ERROR] Failed to review {}: {}".format(file_path.name, e))
+
+        return all_issues
+
+    def _collect_review_targets(self) -> List[Path]:
+        """收集需要审查的文件（优先 AI 生成的文件）"""
+        # 1. 优先：AI 生成的文件
+        ai_files = []
+        if hasattr(self.context, 'ai_generated_files') and self.context.ai_generated_files:
+            for f in self.context.ai_generated_files:
+                path = Path(f) if isinstance(f, str) else f
+                if path.exists() and path.suffix in ['.cpp', '.h', '.hpp']:
+                    ai_files.append(path)
+
+        if ai_files:
+            self.log("    [INFO] Reviewing {} AI-generated files".format(len(ai_files)))
+            return sorted(set(ai_files))
+
+        # 2. 备选：扫描 src/ 和 include/ 目录
+        self.log("    [INFO] No AI-generated files, scanning src/ and include/")
+        candidates = []
+        for sub in ['src', 'include']:
+            base = self.context.project_dir / sub
+            if not base.exists():
+                continue
+            for ext in ['*.cpp', '*.h', '*.hpp']:
+                candidates.extend(base.glob(ext))
+
+        # 排除测试文件
+        exclude_patterns = list(self.config['code_review']['exclude_patterns'])
+        exclude_patterns.extend(['test_*.cpp', '*_test.cpp', 'test_base.h'])
+
+        filtered = []
+        for f in candidates:
+            if not any(f.match(pattern) for pattern in exclude_patterns):
+                filtered.append(f)
+
+        return sorted(set(filtered))
+
+    def _review_file(self, file_path: Path, check_types: List[str]) -> List[Dict[str, Any]]:
+        """审查单个文件"""
+        try:
+            content = file_path.read_text(encoding='utf-8', errors='ignore')
+        except Exception as e:
+            return [{
+                'file': str(file_path),
+                'line': 0,
+                'severity': 'error',
+                'category': 'review_error',
+                'message': 'Failed to read file: {}'.format(e),
+                'suggestion': ''
+            }]
+
+        lines = content.split('\n')
+        issues = []
+
+        # 根据文件类型选择检查方法
+        if file_path.suffix in ['.cpp', '.h', '.hpp', '.c', '.cc']:
+            issues.extend(self._check_cpp_code(lines, str(file_path), check_types))
+
+        return issues
+
+    def _check_cpp_code(self, lines: List[str], file_path: str, check_types: List[str]) -> List[Dict]:
+        """检查 C/C++ 代码"""
+        issues = []
+
+        for i, line in enumerate(lines, 1):
+            line_before_comment = line.split('//')[0] if '//' in line else line
+            line_stripped = line.strip()
+
+            if not line_stripped:
+                continue
+
+            # TODO/FIXME 检查
+            if 'todo' in check_types:
+                if ('TODO' in line or 'FIXME' in line) and ('//' in line or line_stripped.startswith('/*')):
+                    issues.append({
+                        'file': file_path,
+                        'line': i,
+                        'severity': 'info',
+                        'category': 'todo',
+                        'message': 'TODO/FIXME found: {}'.format(line_stripped[:60]),
+                        'suggestion': 'Consider completing this task before release'
+                    })
+
+            # 调试代码检查
+            if 'debug' in check_types:
+                if 'cout' in line_before_comment or 'printf' in line_before_comment:
+                    # 排除注释中的
+                    if not line_stripped.startswith('//') and not line_stripped.startswith('/*'):
+                        issues.append({
+                            'file': file_path,
+                            'line': i,
+                            'severity': 'warning',
+                            'category': 'debug',
+                            'message': 'Debug code detected: {}'.format(line_stripped[:60]),
+                            'suggestion': 'Remove debug output before release'
+                        })
+
+            # 安全问题检查
+            if 'security' in check_types:
+                # 缓冲区溢出风险
+                if re.search(r'\b(strcpy|strcat|sprintf|gets)\s*\(', line_before_comment):
+                    issues.append({
+                        'file': file_path,
+                        'line': i,
+                        'severity': 'error',
+                        'category': 'security',
+                        'message': 'Unsafe function detected: {}'.format(line_stripped[:60]),
+                        'suggestion': 'Use safe alternatives: strncpy, strncat, snprintf, fgets'
+                    })
+
+                # SQL 注入风险
+                if 'SELECT' in line_before_comment and '+' in line_before_comment:
+                    if 'std::string' in line_before_comment or 'string' in line_before_comment:
+                        issues.append({
+                            'file': file_path,
+                            'line': i,
+                            'severity': 'error',
+                            'category': 'security',
+                            'message': 'Potential SQL injection: {}'.format(line_stripped[:60]),
+                            'suggestion': 'Use parameterized queries'
+                        })
+
+            # 性能问题检查
+            if 'performance' in check_types:
+                # 低效的字符串拼接
+                if re.search(r'for\s*\([^)]*\)\s*\{[^}]*\+\=.*string', line_before_comment):
+                    issues.append({
+                        'file': file_path,
+                        'line': i,
+                        'severity': 'warning',
+                        'category': 'performance',
+                        'message': 'Inefficient string concatenation in loop',
+                        'suggestion': 'Use std::stringstream or reserve() + append()'
+                    })
+
+        return issues
+
     def _run_validation_engine(self):
         """Run four-layer validation and log per-layer results."""
         engine = ValidationEngine()
@@ -112,18 +392,18 @@ class Phase9QualityGate(PhaseInterface):
             self.log("  [OK] SEMANTIC: test_base.h API is consistent")
             return []
 
-        # BUSINESS: test count
-        def _biz_test_count(content, ctx):
-            if self.context.test_total == 0:
-                return [ValidationIssue(ValidationLevel.BUSINESS, ValidationSeverity.ERROR,
-                                        "No tests found (test_total=0)")]
-            self.log("  [OK] BUSINESS: Tests present (total={})".format(self.context.test_total))
+        # BUSINESS: test files exist
+        def _biz_test_files(content, ctx):
+            msg = self._check_test_files_exist()
+            if msg:
+                return [ValidationIssue(ValidationLevel.BUSINESS, ValidationSeverity.ERROR, msg)]
+            self.log("  [OK] BUSINESS: Test files present")
             return []
 
         engine.register_validator(ValidationLevel.FORMAT, _fmt_cmake)
         engine.register_validator(ValidationLevel.FORMAT, _fmt_main)
         engine.register_validator(ValidationLevel.SEMANTIC, _sem_test_base)
-        engine.register_validator(ValidationLevel.BUSINESS, _biz_test_count)
+        engine.register_validator(ValidationLevel.BUSINESS, _biz_test_files)
 
         result = engine.validate(None, context=ctx, stop_on_error=False)
 
@@ -140,7 +420,7 @@ class Phase9QualityGate(PhaseInterface):
 
     def _check_cmake_exists(self) -> bool:
         return (self.context.project_dir / "CMakeLists.txt").exists()
-    
+
     def _check_main_cpp(self) -> str:
         main_path = self.context.project_dir / "src" / "main.cpp"
         if not main_path.exists():
@@ -152,7 +432,7 @@ class Phase9QualityGate(PhaseInterface):
         except Exception as e:
             return "Cannot read src/main.cpp: {}".format(e)
         return ""
-    
+
     def _check_test_base(self) -> str:
         test_base = self.context.project_dir / "tests" / "test_base.h"
         if not test_base.exists():
@@ -160,14 +440,14 @@ class Phase9QualityGate(PhaseInterface):
         try:
             content = test_base.read_text(encoding='utf-8')
             required = [
-                'ASSERT_TRUE', 
-                'ASSERT_EQ', 
-                'RUN_TEST', 
-                'TEST_MAIN_BEGIN', 
+                'ASSERT_TRUE',
+                'ASSERT_EQ',
+                'RUN_TEST',
+                'TEST_MAIN_BEGIN',
                 'TEST_MAIN_END'
             ]
             missing = [
-                m for m in required 
+                m for m in required
                 if '#define {}'.format(m) not in content
             ]
             if missing:
@@ -175,22 +455,43 @@ class Phase9QualityGate(PhaseInterface):
         except Exception as e:
             return "Cannot read test_base.h: {}".format(e)
         return ""
-    
-    def _write_report(self, violations: List[str], warnings: List[str], val_result=None) -> Path:
+
+    def _check_test_files_exist(self) -> str:
+        """检查是否存在测试文件"""
+        tests_dir = self.context.project_dir / "tests"
+        if not tests_dir.exists():
+            return "tests/ directory not found"
+
+        # 查找测试文件
+        test_files = list(tests_dir.glob("test_*.cpp")) + list(tests_dir.glob("*_test.cpp"))
+        test_files = [f for f in test_files if f.name != "test_base.h"]
+
+        if not test_files:
+            return "No test files found in tests/ directory"
+
+        return ""
+
+    def _write_report(self, violations: List[str], warnings: List[str],
+                     val_result=None, review_issues: List[Dict] = None,
+                     heal_attempts: int = 0, heal_success: int = 0, model_switches: int = 0) -> Path:
+        """生成统一的质量报告"""
         lines = [
             "# Quality Gate Report",
             "",
-            "**Status**: {}".format('FAILED' if violations else 'PASSED'),
-            "",
-            "## Summary",
-            "",
-            "- Violations: {}".format(len(violations)),
-            "- Warnings: {}".format(len(warnings)),
+            "**Status**: {}".format('FAILED ❌' if violations else 'PASSED ✅'),
             "",
         ]
-        
+
+        # ========== 1. Mandatory Checks (硬性检查) ==========
+        lines.append("## 1. Mandatory Checks (硬性检查)")
+        lines.append("")
+        lines.append("- Violations: {}".format(len(violations)))
+        lines.append("- Warnings: {}".format(len(warnings)))
+        lines.append("")
+
         if val_result and _HAS_VALIDATION_ENGINE:
-            lines += ["## Four-Layer Validation", ""]
+            lines.append("### Four-Layer Validation")
+            lines.append("")
             for level in [ValidationLevel.FORMAT, ValidationLevel.SEMANTIC,
                           ValidationLevel.PARSER, ValidationLevel.BUSINESS]:
                 level_issues = [i for i in val_result.issues if i.level == level]
@@ -199,16 +500,594 @@ class Phase9QualityGate(PhaseInterface):
                 lines.append("- {} layer: {} error(s), {} warning(s)".format(
                     level.value.upper(), errors, len(level_issues) - errors))
             lines.append("")
-        
+
         if violations:
-            lines.append("## Violations")
+            lines.append("### Violations")
             lines.append("")
             for i, v in enumerate(violations, 1):
                 lines.append("{}. {}".format(i, v))
             lines.append("")
-        
+
+        # ========== 2. Code Review (代码审查) ==========
+        if review_issues is not None:
+            lines.append("## 2. Code Review (代码审查)")
+            lines.append("")
+
+            if not review_issues:
+                lines.append("✅ No issues found")
+                lines.append("")
+            else:
+                # 统计
+                critical = [i for i in review_issues if i['severity'] == 'error']
+                warning = [i for i in review_issues if i['severity'] == 'warning']
+                info = [i for i in review_issues if i['severity'] == 'info']
+
+                lines.append("- Total issues: {}".format(len(review_issues)))
+                lines.append("  - 🔴 Critical: {}".format(len(critical)))
+                lines.append("  - 🟡 Warning: {}".format(len(warning)))
+                lines.append("  - 🔵 Info: {}".format(len(info)))
+                lines.append("")
+
+                # 按类别统计
+                categories = {}
+                for issue in review_issues:
+                    cat = issue.get('category', 'other')
+                    categories[cat] = categories.get(cat, 0) + 1
+
+                lines.append("### Issues by Category")
+                lines.append("")
+                for cat, count in sorted(categories.items()):
+                    lines.append("- {}: {}".format(cat, count))
+                lines.append("")
+
+                # 按文件分组显示详细问题
+                lines.append("### Details")
+                lines.append("")
+
+                issues_by_file = {}
+                for issue in review_issues:
+                    file = issue['file']
+                    if file not in issues_by_file:
+                        issues_by_file[file] = []
+                    issues_by_file[file].append(issue)
+
+                for file, issues in sorted(issues_by_file.items()):
+                    lines.append("#### {}".format(Path(file).name))
+                    lines.append("")
+                    for issue in sorted(issues, key=lambda x: x['line']):
+                        severity_icon = {
+                            'error': '🔴',
+                            'warning': '🟡',
+                            'info': '🔵'
+                        }.get(issue['severity'], '⚪')
+
+                        lines.append("- Line {}: {} [{}] {}".format(
+                            issue['line'],
+                            severity_icon,
+                            issue['category'],
+                            issue['message']
+                        ))
+                        if issue.get('suggestion'):
+                            lines.append("  - 💡 {}".format(issue['suggestion']))
+                    lines.append("")
+
+        # ========== 3. Self-Heal Statistics (if enabled) ==========
+        if heal_attempts > 0:
+            lines.append("## 3. Self-Heal Statistics")
+            lines.append("")
+            lines.append("- Heal attempts: {}".format(heal_attempts))
+            lines.append("- Successful fixes: {}".format(heal_success))
+            lines.append("- Model switches: {}".format(model_switches))
+            lines.append("")
+
+        # ========== 4. Configuration ==========
+        lines.append("## {}. Configuration".format(4 if heal_attempts > 0 else 3))
+        lines.append("")
+        lines.append("```json")
+        lines.append("{")
+        lines.append('  "code_review": {')
+        lines.append('    "enabled": {},'.format(str(self.config['code_review']['enabled']).lower()))
+        lines.append('    "check_types": {},'.format(self.config['code_review']['check_types']))
+        lines.append('    "fail_on_critical": {},'.format(str(self.config['code_review']['fail_on_critical']).lower()))
+        lines.append('    "self_heal": {')
+        lines.append('      "enabled": {},'.format(str(self.config['code_review']['self_heal']['enabled']).lower()))
+        lines.append('      "max_attempts": {},'.format(self.config['code_review']['self_heal']['max_attempts']))
+        lines.append('      "only_critical": {},'.format(str(self.config['code_review']['self_heal']['only_critical']).lower()))
+        lines.append('      "switch_model_after": {},'.format(self.config['code_review']['self_heal']['switch_model_after']))
+        lines.append('      "fallback_model": "{}",'.format(self.config['code_review']['self_heal']['fallback_model']))
+        lines.append('      "create_backup": {},'.format(str(self.config['code_review']['self_heal']['create_backup']).lower()))
+        lines.append('      "max_fixes_per_attempt": {}'.format(self.config['code_review']['self_heal']['max_fixes_per_attempt']))
+        lines.append('    }')
+        lines.append('  }')
+        lines.append("}")
+        lines.append("```")
+        lines.append("")
+
         report_path = self.context.project_dir / "docs" / "quality_gate_report.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text("\n".join(lines), encoding="utf-8")
         self.context.generated_files.append(report_path)
         return report_path
+
+    # ========== Self-Heal Methods ==========
+
+    def _should_trigger_self_heal(self, review_issues: List[Dict]) -> bool:
+        """判断是否应该触发自愈"""
+        if not self.config['code_review']['self_heal']['enabled']:
+            return False
+
+        # 如果只修复 Critical 问题，检查是否有 Critical 问题
+        if self.config['code_review']['self_heal']['only_critical']:
+            critical_issues = [i for i in review_issues if i['severity'] == 'error']
+            return len(critical_issues) > 0
+
+        # 否则，只要有问题就触发
+        return len(review_issues) > 0
+
+    def _run_self_heal(self, review_issues: List[Dict]) -> Tuple[bool, List[Dict]]:
+        """
+        运行自愈流程
+
+        Returns:
+            (success, new_issues)
+        """
+        if not self.config['code_review']['self_heal']['enabled']:
+            return False, review_issues
+
+        # 如果只修复 Critical 问题，过滤出 Critical 问题
+        if self.config['code_review']['self_heal']['only_critical']:
+            critical_issues = [i for i in review_issues if i['severity'] == 'error']
+            if not critical_issues:
+                self.log("    [INFO] No critical issues to heal")
+                return True, review_issues
+            issues_to_fix = critical_issues
+        else:
+            issues_to_fix = review_issues
+
+        self.log("    [INFO] Starting self-heal for {} issues".format(len(issues_to_fix)))
+
+        max_attempts = self.config['code_review']['self_heal']['max_attempts']
+        switch_after = self.config['code_review']['self_heal']['switch_model_after']
+
+        for attempt in range(1, max_attempts + 1):
+            self.log("    [INFO] Self-heal attempt {}/{}".format(attempt, max_attempts))
+            self.heal_attempts = attempt
+            self.context.self_heal_attempts += 1
+
+            # Fallback model is a separate LLMClient instance. LLMClient does
+            # not expose switch_model(), so do not mutate the existing client.
+            use_fallback = switch_after > 0 and attempt >= switch_after
+            if use_fallback and not self.model_switched:
+                self.log("    [INFO] Switching to fallback model: {}".format(self.fallback_model))
+                self.model_switched = True
+                self.model_switches += 1
+
+            # 1. 分析问题
+            analysis = self._analyze_issues(issues_to_fix)
+
+            # 2. 生成修复计划
+            fix_plan = self._generate_fix_plan(analysis, attempt, use_fallback=use_fallback)
+            if not fix_plan:
+                self.log("    [ERROR] Failed to generate fix plan")
+                continue
+
+            # 3. 执行修复
+            if not self._execute_fix_plan(fix_plan):
+                self.log("    [ERROR] Failed to execute fix plan")
+                continue
+
+            # 4. 验证修复
+            new_issues = self._run_code_review()
+            if self._verify_fix(issues_to_fix, new_issues):
+                self.log("    [OK] Self-heal succeeded on attempt {}".format(attempt))
+                self.heal_success += 1
+                return True, new_issues
+            else:
+                self.log("    [WARN] Self-heal attempt {} did not resolve all issues".format(attempt))
+
+        self.log("    [ERROR] Self-heal failed after {} attempts".format(max_attempts))
+        return False, review_issues
+
+    def _analyze_issues(self, issues: List[Dict]) -> Dict:
+        """
+        分析问题，按文件和类别分组
+
+        Returns:
+            {
+                'by_file': {file_path: [issues]},
+                'by_category': {category: [issues]},
+                'summary': {total, critical, warning, info}
+            }
+        """
+        by_file = {}
+        by_category = {}
+
+        for issue in issues:
+            # 按文件分组
+            file = issue['file']
+            if file not in by_file:
+                by_file[file] = []
+            by_file[file].append(issue)
+
+            # 按类别分组
+            category = issue.get('category', 'other')
+            if category not in by_category:
+                by_category[category] = []
+            by_category[category].append(issue)
+
+        # 统计
+        summary = {
+            'total': len(issues),
+            'critical': sum(1 for i in issues if i['severity'] == 'error'),
+            'warning': sum(1 for i in issues if i['severity'] == 'warning'),
+            'info': sum(1 for i in issues if i['severity'] == 'info')
+        }
+
+        return {
+            'by_file': by_file,
+            'by_category': by_category,
+            'summary': summary
+        }
+
+    def _build_self_heal_prompt(self, analysis: Dict, attempt: int) -> str:
+        """构建结构化的自愈提示词"""
+        parts = []
+
+        parts.append("**CRITICAL: CODE REVIEW SELF-HEAL**")
+        parts.append("")
+        parts.append(f"Attempt: {attempt}/{self.config['code_review']['self_heal']['max_attempts']}")
+        parts.append("")
+
+        # 问题摘要
+        parts.append("**ISSUE SUMMARY**")
+        parts.append(f"- Total issues: {analysis['summary']['total']}")
+        parts.append(f"- Critical: {analysis['summary']['critical']}")
+        parts.append(f"- Warning: {analysis['summary']['warning']}")
+        parts.append(f"- Info: {analysis['summary']['info']}")
+        parts.append("")
+
+        # 按类别统计
+        parts.append("**ISSUES BY CATEGORY**")
+        for category, issues in sorted(analysis['by_category'].items()):
+            parts.append(f"- {category}: {len(issues)} issue(s)")
+        parts.append("")
+
+        # 详细问题列表
+        parts.append("**DETAILED ISSUES**")
+        parts.append("")
+        for file, issues in sorted(analysis['by_file'].items()):
+            parts.append(f"File: {file}")
+            for issue in sorted(issues, key=lambda x: x['line']):
+                severity_icon = {'error': '🔴', 'warning': '🟡', 'info': '🔵'}.get(issue['severity'], '⚪')
+                parts.append(f"  Line {issue['line']}: {severity_icon} [{issue['category']}] {issue['message']}")
+                if issue.get('suggestion'):
+                    parts.append(f"    💡 {issue['suggestion']}")
+            parts.append("")
+
+        # 强制分析步骤
+        parts.append("**CRITICAL: STRUCTURED ANALYSIS REQUIRED**")
+        parts.append("Before making ANY changes, you MUST provide:")
+        parts.append("")
+        parts.append("ANALYSIS:")
+        parts.append("1. Root Cause: [Why do these issues exist?]")
+        parts.append("2. Issue Validity: [Are these real problems or false positives?]")
+        parts.append("3. Fix Strategy: [What should be fixed and how?]")
+        parts.append("4. Risk Assessment: [What could go wrong with the fix?]")
+        parts.append("")
+
+        # 修改边界
+        parts.append("**MODIFICATION BOUNDARIES**")
+        parts.append("")
+        parts.append("ALLOWED:")
+        parts.append("- Remove debug code (std::cout, printf, etc.)")
+        parts.append("- Replace unsafe functions with safe alternatives (strcpy → strncpy)")
+        parts.append("- Fix SQL injection by using parameterized queries")
+        parts.append("- Resolve TODO/FIXME by implementing the functionality")
+        parts.append("- Add input validation and bounds checking")
+        parts.append("")
+        parts.append("FORBIDDEN:")
+        parts.append("- Removing security checks or validation logic")
+        parts.append("- Weakening password/authentication requirements")
+        parts.append("- Ignoring errors instead of handling them")
+        parts.append("- Commenting out problematic code without fixing it")
+        parts.append("- Changing business logic to hide the issue")
+        parts.append("")
+
+        # 可疑关键词检测
+        parts.append("**SUSPICIOUS KEYWORDS DETECTION**")
+        parts.append("If your fix contains these keywords, STOP and reconsider:")
+        parts.append("- 'relax', 'reduce', 'weaken', 'disable', 'skip'")
+        parts.append("- 'comment out', 'ignore', 'suppress'")
+        parts.append("- 'TODO', 'FIXME', 'HACK', 'temporary'")
+        parts.append("")
+
+        # 输出格式
+        parts.append("**OUTPUT FORMAT**")
+        parts.append("Provide your response in this JSON format:")
+        parts.append("```json")
+        parts.append("{")
+        parts.append('  "analysis": {')
+        parts.append('    "root_cause": "...",')
+        parts.append('    "issue_validity": "...",')
+        parts.append('    "fix_strategy": "...",')
+        parts.append('    "risk_assessment": "..."')
+        parts.append('  },')
+        parts.append('  "fixes": [')
+        parts.append('    {')
+        parts.append('      "file": "path/to/file.cpp",')
+        parts.append('      "line": 42,')
+        parts.append('      "issue_category": "unsafe_function",')
+        parts.append('      "old_code": "strcpy(buffer, input);",')
+        parts.append('      "new_code": "strncpy(buffer, input, sizeof(buffer) - 1);\\nbuffer[sizeof(buffer) - 1] = \'\\\\0\';",')
+        parts.append('      "reason": "Replace unsafe strcpy with safe strncpy"')
+        parts.append('    }')
+        parts.append('  ]')
+        parts.append('}')
+        parts.append("```")
+        parts.append("")
+
+        return "\n".join(parts)
+
+    def _get_fix_plan_client(self, use_fallback: bool = False) -> LLMClient:
+        """Return the LLM client for a fix-plan attempt."""
+        if use_fallback:
+            try:
+                return self.llm_client_factory(model=self.fallback_model)
+            except TypeError:
+                return self.llm_client_factory()
+
+        if self.llm_client is None:
+            self.llm_client = get_llm_client()
+        return self.llm_client
+
+    def _generate_fix_plan(self, analysis: Dict, attempt: int,
+                           use_fallback: bool = False) -> Optional[Dict]:
+        """
+        使用 LLM 生成修复计划
+
+        Returns:
+            {
+                'analysis': {...},
+                'fixes': [...]
+            }
+        """
+        prompt = self._build_self_heal_prompt(analysis, attempt)
+
+        try:
+            system_message = "You are a code quality expert. Your task is to analyze code review issues and generate a structured fix plan in JSON format."
+            client = self._get_fix_plan_client(use_fallback=use_fallback)
+            response = client.generate(
+                system=system_message,
+                user_message=prompt
+            )
+
+            json_str = self._extract_json_object(response)
+            if not json_str:
+                self.log("    [ERROR] Failed to extract JSON fix plan")
+                return None
+            plan = json.loads(json_str)
+
+            # 验证计划格式
+            if 'analysis' not in plan or 'fixes' not in plan:
+                self.log("    [ERROR] Invalid fix plan format: missing 'analysis' or 'fixes'")
+                return None
+            if not isinstance(plan['analysis'], dict) or not isinstance(plan['fixes'], list):
+                self.log("    [ERROR] Invalid fix plan format: analysis must be object and fixes must be list")
+                return None
+
+            # 检测可疑关键词
+            suspicious_keywords = ['relax', 'reduce', 'weaken', 'disable', 'skip',
+                                   'comment out', 'ignore', 'suppress', 'TODO', 'FIXME', 'HACK']
+            for fix in plan['fixes']:
+                reason_lower = fix.get('reason', '').lower()
+                for keyword in suspicious_keywords:
+                    if keyword in reason_lower:
+                        self.log("    [WARN] Suspicious keyword '{}' detected in fix reason: {}".format(keyword, fix['reason']))
+
+            self.log("    [INFO] Generated fix plan with {} fixes".format(len(plan['fixes'])))
+            return plan
+
+        except Exception as e:
+            self.log("    [ERROR] Failed to generate fix plan: {}".format(e))
+            return None
+
+    def _extract_json_object(self, response: str) -> Optional[str]:
+        """Extract a balanced JSON object from LLM output."""
+        if not response:
+            return None
+
+        fenced = re.search(r'```(?:json)?\s*(.*?)\s*```', response, re.DOTALL)
+        source = fenced.group(1).strip() if fenced else response.strip()
+
+        start = source.find('{')
+        if start == -1:
+            return None
+
+        depth = 0
+        in_string = False
+        escaped = False
+
+        for idx in range(start, len(source)):
+            char = source[idx]
+
+            if escaped:
+                escaped = False
+                continue
+
+            if char == '\\':
+                escaped = True
+                continue
+
+            if char == '"':
+                in_string = not in_string
+                continue
+
+            if in_string:
+                continue
+
+            if char == '{':
+                depth += 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0:
+                    return source[start:idx + 1]
+
+        return None
+
+    def _execute_fix_plan(self, plan: Dict) -> bool:
+        """
+        执行修复计划
+
+        Returns:
+            True if all fixes applied successfully
+        """
+        fixes = plan.get('fixes', [])
+        if not fixes:
+            self.log("    [WARN] No fixes in plan")
+            return False
+
+        max_fixes = self.config['code_review']['self_heal']['max_fixes_per_attempt']
+        if len(fixes) > max_fixes:
+            self.log("    [WARN] Limiting fixes to {} out of {}".format(max_fixes, len(fixes)))
+            fixes = fixes[:max_fixes]
+
+        success_count = 0
+        project_root = self.context.project_dir.resolve()
+
+        for i, fix in enumerate(fixes, 1):
+            try:
+                if not self._is_fix_safe(fix):
+                    self.log("    [ERROR] Fix {} rejected by safety policy".format(i))
+                    continue
+
+                file_path = Path(fix['file'])
+                if not file_path.is_absolute():
+                    file_path = self.context.project_dir / file_path
+                file_path = file_path.resolve()
+
+                try:
+                    file_path.relative_to(project_root)
+                except ValueError:
+                    self.log("    [ERROR] Refusing to modify file outside project: {}".format(file_path))
+                    continue
+
+                if not file_path.exists():
+                    self.log("    [ERROR] File not found: {}".format(file_path))
+                    continue
+
+                # 读取文件
+                content = file_path.read_text(encoding='utf-8')
+
+                # 执行替换
+                old_code = str(fix.get('old_code', ''))
+                new_code = str(fix.get('new_code', ''))
+                if not old_code.strip() or not new_code.strip():
+                    self.log("    [ERROR] Fix {} missing old_code or new_code".format(i))
+                    continue
+
+                if old_code not in content:
+                    self.log("    [WARN] Old code not found in {} at line {}".format(file_path.name, fix['line']))
+                    # 尝试按行替换，但只在该行内容与 old_code 等价时执行。
+                    lines = content.split('\n')
+                    line_idx = int(fix.get('line', 0)) - 1
+                    if 0 <= line_idx < len(lines):
+                        if lines[line_idx].strip() != old_code.strip():
+                            self.log("    [ERROR] Line {} does not match old_code; refusing unsafe replacement".format(fix.get('line')))
+                            continue
+                        replacement_lines = new_code.split('\n')
+                        lines[line_idx:line_idx + 1] = replacement_lines
+                        content = '\n'.join(lines)
+                        self.log("    [INFO] Applied verified line-based fix to {}:{}".format(file_path.name, fix['line']))
+                    else:
+                        self.log("    [ERROR] Invalid line number: {}".format(fix['line']))
+                        continue
+                else:
+                    content = content.replace(old_code, new_code, 1)
+                    self.log("    [INFO] Applied fix {}/{}: {}:{}".format(i, len(fixes), file_path.name, fix['line']))
+
+                # 写回文件
+                if self.config['code_review']['self_heal']['create_backup']:
+                    backup_path = file_path.with_suffix(file_path.suffix + ".phase9.bak")
+                    if not backup_path.exists():
+                        backup_path.write_text(file_path.read_text(encoding='utf-8'), encoding='utf-8')
+                file_path.write_text(content, encoding='utf-8')
+                success_count += 1
+
+            except Exception as e:
+                self.log("    [ERROR] Failed to apply fix {}: {}".format(i, e))
+
+        self.log("    [INFO] Applied {}/{} fixes".format(success_count, len(fixes)))
+        return success_count > 0
+
+    def _is_fix_safe(self, fix: Dict[str, Any]) -> bool:
+        """Reject obviously unsafe or evasive self-heal changes."""
+        required = ['file', 'line', 'old_code', 'new_code']
+        for key in required:
+            if key not in fix:
+                self.log("    [ERROR] Fix missing required field: {}".format(key))
+                return False
+
+        reason_lower = str(fix.get('reason', '')).lower()
+        blocked_reason = [
+            'comment out', 'ignore', 'suppress',
+            'relax validation', 'reduce validation', 'weaken validation',
+            'disable validation', 'skip validation',
+        ]
+        if any(keyword in reason_lower for keyword in blocked_reason):
+            self.log("    [ERROR] Suspicious fix reason: {}".format(fix.get('reason', '')))
+            return False
+
+        new_code = str(fix.get('new_code', ''))
+        blocked_markers = ['TODO', 'FIXME', 'HACK', 'temporary workaround']
+        if any(marker in new_code for marker in blocked_markers):
+            self.log("    [ERROR] Fix introduces unfinished marker")
+            return False
+
+        category = str(fix.get('issue_category', fix.get('category', ''))).lower()
+        if category == 'security':
+            unsafe_functions = [r'\bstrcpy\s*\(', r'\bstrcat\s*\(', r'\bsprintf\s*\(', r'\bgets\s*\(']
+            if any(re.search(pattern, new_code) for pattern in unsafe_functions):
+                self.log("    [ERROR] Security fix still contains unsafe API")
+                return False
+
+        return True
+
+    def _verify_fix(self, old_issues: List[Dict], new_issues: List[Dict]) -> bool:
+        """
+        验证修复效果
+
+        Returns:
+            True if critical issues are resolved
+        """
+        # 只关注 Critical 问题
+        old_critical = [i for i in old_issues if i['severity'] == 'error']
+        new_critical = [i for i in new_issues if i['severity'] == 'error']
+
+        self.log("    [INFO] Critical issues: {} -> {}".format(len(old_critical), len(new_critical)))
+
+        old_signatures = {self._issue_signature(i) for i in old_critical}
+        new_signatures = {self._issue_signature(i) for i in new_critical}
+        remaining = old_signatures & new_signatures
+
+        if len(new_critical) > len(old_critical):
+            self.log("    [ERROR] Critical issues increased by {}".format(len(new_critical) - len(old_critical)))
+            return False
+
+        if remaining:
+            self.log("    [WARN] {} original critical issue(s) still present".format(len(remaining)))
+            return False
+
+        if new_critical:
+            self.log("    [WARN] Original critical issues changed, but new critical issues remain")
+            return False
+
+        self.log("    [OK] All original critical issues resolved")
+        return True
+
+    def _issue_signature(self, issue: Dict[str, Any]) -> Tuple[str, int, str, str]:
+        return (
+            str(issue.get('file', '')),
+            int(issue.get('line', 0) or 0),
+            str(issue.get('category', '')),
+            str(issue.get('message', '')),
+        )

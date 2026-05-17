@@ -18,7 +18,7 @@ def create_architecture_diagram():
     fig, ax = plt.subplots(figsize=(20, 28))
     ax.set_xlim(0, 20)
     ax.set_ylim(0, 28)
-  ax.axis('off')
+    ax.axis('off')
 
     # 颜色方案
     colors = {
@@ -143,7 +143,7 @@ def create_architecture_diagram():
                            facecolor='#F8BBD0',
                       linewidth=1.5)
         ax.add_patch(comp_box)
-      ax.text(x, y_start+2.3, comp, ha='center', va='center',
+        ax.text(x, y_start+2.3, comp, ha='center', va='center',
             fontsize=11, fontweight='bold')
         for i, feat in enumerate(features):
             ax.text(x, y_start+1.8-i*0.25, f'• {feat}', ha='center', va='center', fontsize=8)
@@ -232,7 +232,7 @@ def create_architecture_diagram():
                  facecolor='white',
                      linewidth=1)
         ax.add_patch(comp_box)
-     ax.text(x, y_start+2.8, comp, ha='center', va='center', fontsize=9, fontweight='bold')
+        ax.text(x, y_start+2.8, comp, ha='center', va='center', fontsize=9, fontweight='bold')
 
     # ValidationEngine
     valid_box = FancyBboxPatch((1.5, y_start+0.3), 17, 1.7,

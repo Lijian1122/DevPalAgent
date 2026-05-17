@@ -410,7 +410,9 @@ class Phase4GenerateCode(PhaseInterface):
                 ))
 
         for file_path in ai_files:
-            rel = file_path.relative_to(project_dir).as_posix()
+            # 确保 project_dir 是绝对路径
+            abs_project_dir = project_dir.resolve() if not project_dir.is_absolute() else project_dir
+            rel = file_path.relative_to(abs_project_dir).as_posix()
             is_test = rel.startswith("tests/")
             artifact_type = ArtifactType.TEST if is_test else ArtifactType.CODE
             file_node_id = f"file:{rel}"

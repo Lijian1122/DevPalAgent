@@ -12,6 +12,22 @@ class _DummyRegistry:
     pass
 
 
+class _FakeLLMClient:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def generate(self, system, user_message, **kwargs):
+        self.calls.append({
+            "system": system,
+            "user_message": user_message,
+            "kwargs": kwargs,
+        })
+        if not self.responses:
+            raise AssertionError("No fake LLM response left")
+        return self.responses.pop(0)
+
+
 @pytest.fixture
 def tool_registry():
     """Create a dummy tool registry"""
@@ -72,6 +88,7 @@ int main() {
 
 #endif
 """)
+    (temp_project / "tests" / "test_main.cpp").write_text("int main() { return 0; }")
 
     phase = Phase9QualityGate(context, tool_registry)
     result = phase.execute()
@@ -150,7 +167,7 @@ def test_quality_gate_fails_test_base_missing_macros(context, temp_project, tool
 
 
 def test_quality_gate_fails_zero_tests(context, temp_project, tool_registry):
-    """Test that quality gate fails when test_total is 0"""
+    """Test that quality gate fails when no test files exist"""
     # Create all required files
     (temp_project / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.10)")
     (temp_project / "src" / "main.cpp").write_text("int main() { return 0; }")
@@ -162,14 +179,13 @@ def test_quality_gate_fails_zero_tests(context, temp_project, tool_registry):
 #define TEST_MAIN_END() return 0; }
 """)
 
-    # Set test_total to 0
     context.test_total = 0
 
     phase = Phase9QualityGate(context, tool_registry)
     result = phase.execute()
 
     assert result.success is False
-    assert any("test" in err.lower() and "0" in err for err in result.errors)
+    assert any("No test files" in err for err in result.errors)
 
 
 def test_quality_gate_report_generation(context, temp_project, tool_registry):
@@ -196,3 +212,147 @@ def test_quality_gate_report_generation(context, temp_project, tool_registry):
     report_content = report_path.read_text(encoding='utf-8')
     assert "Quality Gate Report" in report_content
     assert "PASSED" in report_content or "FAILED" in report_content
+
+
+def _write_valid_quality_gate_project(project_dir):
+    (project_dir / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.10)")
+    (project_dir / "src" / "main.cpp").write_text("int main() { return 0; }")
+    (project_dir / "tests" / "test_auth.cpp").write_text("int main() { return 0; }")
+    (project_dir / "tests" / "test_base.h").write_text("""
+#define ASSERT_TRUE(x) x
+#define ASSERT_EQ(a, b) (a) == (b)
+#define RUN_TEST(f) f()
+#define TEST_MAIN_BEGIN() int main() {
+#define TEST_MAIN_END() return 0; }
+""")
+
+
+def test_quality_gate_self_heal_fixes_critical_review_issue(context, temp_project, tool_registry):
+    _write_valid_quality_gate_project(temp_project)
+    unsafe_file = temp_project / "src" / "unsafe.cpp"
+    unsafe_file.write_text("""
+#include <cstring>
+
+void copy_user(char *buffer, const char *input) {
+    strcpy(buffer, input);
+}
+""")
+    context.ai_generated_files = [unsafe_file]
+    context.config = {
+        "phase9_quality_gate": {
+            "code_review": {
+                "fail_on_critical": True,
+                "self_heal": {
+                    "enabled": True,
+                    "max_attempts": 1,
+                    "switch_model_after": 0,
+                    "create_backup": False,
+                },
+            }
+        }
+    }
+
+    response = """
+```json
+{
+  "analysis": {
+    "root_cause": "unsafe strcpy call",
+    "issue_validity": "real security issue",
+    "fix_strategy": "replace with bounded copy",
+    "risk_assessment": "low"
+  },
+  "fixes": [
+    {
+      "file": "src/unsafe.cpp",
+      "line": 5,
+      "issue_category": "security",
+      "old_code": "    strcpy(buffer, input);",
+      "new_code": "    std::strncpy(buffer, input, 255);\\n    buffer[255] = '\\\\0';",
+      "reason": "Replace unsafe strcpy with bounded strncpy"
+    }
+  ]
+}
+```
+"""
+    fake_llm = _FakeLLMClient([response])
+
+    phase = Phase9QualityGate(context, tool_registry, llm_client=fake_llm)
+    result = phase.execute()
+
+    assert result.success is True
+    content = unsafe_file.read_text(encoding='utf-8')
+    assert "std::strncpy" in content
+    assert "strcpy(buffer, input)" not in content
+    assert fake_llm.calls
+    assert phase.heal_attempts == 1
+    assert phase.heal_success == 1
+
+
+def test_quality_gate_self_heal_uses_fallback_client_without_switch_model(context, temp_project, tool_registry):
+    _write_valid_quality_gate_project(temp_project)
+    unsafe_file = temp_project / "src" / "unsafe.cpp"
+    unsafe_file.write_text("""
+#include <cstring>
+
+void copy_user(char *buffer, const char *input) {
+    strcpy(buffer, input);
+}
+""")
+    context.ai_generated_files = [unsafe_file]
+    context.config = {
+        "phase9_quality_gate": {
+            "code_review": {
+                "fail_on_critical": True,
+                "self_heal": {
+                    "enabled": True,
+                    "max_attempts": 2,
+                    "switch_model_after": 2,
+                    "fallback_model": "fallback-test-model",
+                    "create_backup": False,
+                },
+            }
+        }
+    }
+
+    primary_llm = _FakeLLMClient(['{"analysis": {}, "fixes": []}'])
+    fallback_response = """
+{
+  "analysis": {
+    "root_cause": "unsafe strcpy call",
+    "issue_validity": "real security issue",
+    "fix_strategy": "replace with bounded copy",
+    "risk_assessment": "low"
+  },
+  "fixes": [
+    {
+      "file": "src/unsafe.cpp",
+      "line": 5,
+      "issue_category": "security",
+      "old_code": "    strcpy(buffer, input);",
+      "new_code": "    std::strncpy(buffer, input, 255);\\n    buffer[255] = '\\\\0';",
+      "reason": "Replace unsafe strcpy with bounded strncpy"
+    }
+  ]
+}
+"""
+    fallback_llm = _FakeLLMClient([fallback_response])
+    requested_models = []
+
+    def factory(model=None):
+        requested_models.append(model)
+        return fallback_llm
+
+    phase = Phase9QualityGate(
+        context,
+        tool_registry,
+        llm_client=primary_llm,
+        llm_client_factory=factory,
+    )
+    result = phase.execute()
+
+    assert result.success is True
+    assert requested_models == ["fallback-test-model"]
+    assert phase.model_switches == 1
+    assert phase.heal_attempts == 2
+    assert phase.heal_success == 1
+    assert "std::strncpy" in unsafe_file.read_text(encoding='utf-8')

@@ -73,11 +73,39 @@ class Phase10RunTests(PhaseInterface):
         main_cpp = project_dir / "src" / "main.cpp"
         if main_cpp.exists():
             self.log("  [BUILD] Compiling main program...")
-            main_success = self._compile_main_program(project_dir, compiler_cmd, compiler_env)
-            if main_success:
-                self.log("  [OK] Main program compiled successfully")
-            else:
-                self.log("  [WARN] Main program compilation failed")
+
+            # 尝试编译主程序，失败时使用自愈
+            MAX_MAIN_HEAL_ATTEMPTS = 2
+            main_success = False
+
+            for attempt in range(MAX_MAIN_HEAL_ATTEMPTS + 1):
+                attempt_label = f"attempt {attempt + 1}/{MAX_MAIN_HEAL_ATTEMPTS + 1}" if attempt > 0 else "initial"
+                main_success, main_compile_output = self._compile_main_program(project_dir, compiler_cmd, compiler_env)
+
+                if main_success:
+                    self.log(f"  [OK] Main program compiled successfully ({attempt_label})")
+                    break
+                else:
+                    self.log(f"  [FAIL] Main program compilation failed ({attempt_label})")
+                    self._log_compile_error_summary(main_compile_output)
+
+                    # 如果还有尝试机会，使用 AI 修复编译错误
+                    if attempt < MAX_MAIN_HEAL_ATTEMPTS and self.self_healer:
+                        # 第一次尝试使用默认模型，第二次尝试使用 Opus
+                        use_fallback = (attempt > 0)
+                        if self.self_healer.heal_compile_error(main_cpp, main_compile_output, use_fallback=use_fallback):
+                            self.context.self_heal_attempts += 1
+                            continue  # 重新编译
+                        else:
+                            self.log(f"  [HEAL] Failed to fix main.cpp compile error, giving up")
+                            break
+
+            if not main_success:
+                self.log("  [ERROR] Main program compilation failed after all heal attempts")
+                return PhaseResult.fail(
+                    "Main program compilation failed",
+                    errors=["main.cpp compilation failed after self-healing attempts"]
+                )
 
 
         # 编译和运行测试
@@ -151,7 +179,9 @@ class Phase10RunTests(PhaseInterface):
 
                 # 如果还有尝试机会，使用 AI 修复测试失败
                 if attempt < MAX_HEAL_ATTEMPTS and self.self_healer:
-                    if self.self_healer.heal_test_failure(test_file, test_output, passed, total):
+                    # 第一次尝试使用默认模型，第二次尝试使用 Opus
+                    use_fallback = (attempt > 0)
+                    if self.self_healer.heal_test_failure(test_file, test_output, passed, total, use_fallback=use_fallback):
                         self.context.self_heal_attempts += 1
                         continue  # 重新编译和测试
                     else:
@@ -383,7 +413,7 @@ class Phase10RunTests(PhaseInterface):
         """运行测试并解析结果"""
         try:
             result = subprocess.run(
-                [str(exe_path, timeout=300)],
+                [str(exe_path)],
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -407,14 +437,23 @@ class Phase10RunTests(PhaseInterface):
 
     def _parse_test_output(self, output: str) -> Tuple[int, int]:
         """解析测试输出，返回 (passed, total)"""
+        # 首先尝试从 "Results: X/Y passed" 格式解析
+        results_pattern = r'Results:\s*(\d+)/(\d+)\s+passed'
+        match = re.search(results_pattern, output)
+        if match:
+            passed = int(match.group(1))
+            total = int(match.group(2))
+            return passed, total
+
+        # 如果没有找到 Results 行，则统计 [PASS] 和 [FAIL] 标记
         passed = 0
         failed = 0
 
         lines = output.split('\n')
         for line in lines:
-            if '[OK]' in line or 'PASS' in line or '✓' in line:
+            if '[PASS]' in line or '[OK]' in line or '✓' in line:
                 passed += 1
-            elif '[FAIL]' in line or 'FAIL' in line or '✗' in line:
+            elif '[FAIL]' in line or '✗' in line:
                 failed += 1
 
         total = passed + failed
@@ -491,7 +530,7 @@ class Phase10RunTests(PhaseInterface):
         return section
 
     def _compile_main_program(self, project_dir: Path, compiler: str,
-                  compiler_env: Optional[Dict] = None) -> bool:
+                  compiler_env: Optional[Dict] = None) -> Tuple[bool, str]:
         """Compile main program using CMake
 
         Args:
@@ -500,10 +539,12 @@ class Phase10RunTests(PhaseInterface):
             compiler_env: Compiler environment variables
 
         Returns:
-            True if compilation succeeded, False otherwise
+            Tuple of (success: bool, output: str)
         """
         build_dir = project_dir / "build"
         build_dir.mkdir(exist_ok=True)
+
+        output_lines = []
 
         try:
             # Step 1: CMake configure
@@ -531,9 +572,12 @@ class Phase10RunTests(PhaseInterface):
                 env=compiler_env
             )
 
+            output_lines.append("=== CMake Configure ===")
+            output_lines.append(result.stdout)
+            output_lines.append(result.stderr)
+
             if result.returncode != 0:
-                self.log(f"  [FAIL] CMake configure failed: {result.stderr[:200]}")
-                return False
+                return False, "\n".join(output_lines)
 
             # Step 2: CMake build
             target_name = f"{project_dir.name}_app"
@@ -552,15 +596,18 @@ class Phase10RunTests(PhaseInterface):
                 env=compiler_env
             )
 
+            output_lines.append("=== CMake Build ===")
+            output_lines.append(result.stdout)
+            output_lines.append(result.stderr)
+
             if result.returncode == 0:
-                return True
+                return True, "\n".join(output_lines)
             else:
-                self.log(f"  [FAIL] CMake build failed: {result.stderr[:200]}")
-                return False
+                return False, "\n".join(output_lines)
 
         except Exception as e:
-            self.log(f"  [FAIL] Compilation exception: {e}")
-            return False
+            output_lines.append(f"Exception: {str(e)}")
+            return False, "\n".join(output_lines)
 
     def _update_usage_stats(self, client) -> None:
         ctx = self.context

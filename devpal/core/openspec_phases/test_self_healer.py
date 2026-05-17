@@ -75,9 +75,10 @@ class TestSelfHealer:
             self.log(f" [HEAL] Exception during healing: {e}")
             return False
 
-    def heal_test_failure(self, test_file: Path, test_output: str, passed: int, total: int) -> bool:
+    def heal_test_failure(self, test_file: Path, test_output: str, passed: int, total: int, use_fallback: bool = False) -> bool:
         self.heal_attempts += 1
-        self.log(f" [HEAL] Attempting to fix test failures in {test_file.name} ({passed}/{total} passed, attempt #{self.heal_attempts})")
+        model_label = f" (using {self.fallback_model})" if use_fallback else ""
+        self.log(f" [HEAL] Attempting to fix test failures in {test_file.name} ({passed}/{total} passed, attempt #{self.heal_attempts}){model_label}")
         try:
             test_code = test_file.read_text(encoding='utf-8')
             source_files = self._find_related_source_files(test_file)
@@ -97,7 +98,15 @@ class TestSelfHealer:
 
             prompt = self._build_test_failure_fix_prompt(test_file.name, test_code, impl_code, header_code, test_output, passed, total)
             self.log(f" [HEAL] Calling AI to analyze test failures...")
-            response = self.llm_client.generate(
+
+            if use_fallback:
+                client = LLMClient(model=self.fallback_model)
+                self.model_switches += 1
+                self.log(f" [HEAL] Switched to fallback model: {self.fallback_model}")
+            else:
+                client = self.llm_client
+
+            response = client.generate(
                 system="You are a C++ expert helping fix code issues.",
                 user_message=prompt
             )
@@ -185,10 +194,64 @@ class TestSelfHealer:
 
     def _build_test_failure_fix_prompt(self, test_filename: str, test_code: str, impl_code: str, header_code: str, test_output: str, passed: int, total: int) -> str:
         parts = []
-        parts.append("You are a C++ expert. Some tests are failing. Please fix the implementation to make tests pass.")
+        parts.append("You are a C++ expert. Tests are failing and you need to fix them.")
         parts.append("")
+
+        # STEP 1: Mandatory Analysis (方案 3)
+        parts.append("**STEP 1: MANDATORY ANALYSIS**")
+        parts.append("Before fixing, you MUST answer these questions:")
+        parts.append("")
+        parts.append("1. **Root Cause**: Why is this specific test failing? (Be specific)")
+        parts.append("2. **Test Data Validity**: Is the test data valid according to business rules?")
+        parts.append("   - Check: username length (3-20), password length (8-32), password complexity")
+        parts.append("3. **Implementation Correctness**: Does the implementation match requirements?")
+        parts.append("   - Requirements: username 3-20 chars, password 8-32 chars with letters+digits")
+        parts.append("4. **Fix Decision**: Should we fix test code or implementation? Why?")
+        parts.append("")
+
+        # STEP 2: Modification Rules (方案 2)
+        parts.append("**STEP 2: MODIFICATION RULES**")
+        parts.append("Follow these rules when deciding what to fix:")
+        parts.append("")
+        parts.append("ALLOWED:")
+        parts.append("- Fix test data to match requirements (e.g., change 'pass123' to 'pass1234')")
+        parts.append("- Fix implementation bugs (e.g., off-by-one errors, wrong operators)")
+        parts.append("- Fix logic errors (e.g., incorrect hash comparison)")
+        parts.append("- Fix infrastructure issues (e.g., create missing directories)")
+        parts.append("")
+        parts.append("FORBIDDEN:")
+        parts.append("- Relax validation rules (e.g., reduce minimum length from 8 to 7)")
+        parts.append("- Weaken security constraints (e.g., remove password complexity requirements)")
+        parts.append("- Change business logic to make tests pass (e.g., skip password verification)")
+        parts.append("- Replace header files with implementation code")
+        parts.append("")
+        parts.append("**DECISION TREE**:")
+        parts.append("- Test data violates requirements → Fix test data")
+        parts.append("- Implementation violates requirements → Fix implementation")
+        parts.append("- Both are correct but test fails → Check for logic bugs")
+        parts.append("- Infrastructure issue (missing directory/file) → Fix in implementation")
+        parts.append("")
+        parts.append("**INFRASTRUCTURE FIX GUIDE**:")
+        parts.append("If the error is about missing directories or files:")
+        parts.append("1. Add #include <filesystem> to the implementation file")
+        parts.append("2. Before opening files for writing, create parent directories:")
+        parts.append("   ```cpp")
+        parts.append("   std::filesystem::path filePath(dbFilePath_);")
+        parts.append("   std::filesystem::path parentDir = filePath.parent_path();")
+        parts.append("   if (!parentDir.empty() && !std::filesystem::exists(parentDir)) {")
+        parts.append("       std::error_code ec;")
+        parts.append("       std::filesystem::create_directories(parentDir, ec);")
+        parts.append("       if (ec) { /* handle error */ }")
+        parts.append("   }")
+        parts.append("   ```")
+        parts.append("3. Do NOT modify test code to avoid using subdirectories")
+        parts.append("")
+
+        # Context Information
         parts.append("**Test File**: " + test_filename)
         parts.append("**Test Results**: " + str(passed) + "/" + str(total) + " tests passed")
+        if passed == 0 and total == 0:
+            parts.append("**WARNING**: 0/0 means no test output - likely crash or compilation issue")
         parts.append("")
         parts.append("**Test Code**:")
         parts.append("```cpp")
@@ -207,37 +270,59 @@ class TestSelfHealer:
         parts.append("")
         parts.append("**Test Output**:")
         parts.append("```")
-        parts.append(test_output)
+        parts.append(test_output if test_output.strip() else "(empty - no output produced)")
         parts.append("```")
         parts.append("")
-        parts.append("**Task**:")
-        parts.append("1. Analyze why tests are failing")
-        parts.append("2. Fix the implementation (NOT the tests) to make them pass")
-        parts.append("3. Return the fixed implementation and/or header files")
+
+        # Output Format
+        parts.append("**OUTPUT FORMAT**:")
         parts.append("")
-        parts.append("**Output Format**:")
-        parts.append("If you need to fix the header:")
+        parts.append("First, provide your analysis (MANDATORY):")
+        parts.append("```")
+        parts.append("ANALYSIS:")
+        parts.append("1. Root Cause: [explain why test fails]")
+        parts.append("2. Test Data Validity: [valid/invalid and why]")
+        parts.append("3. Implementation Correctness: [correct/incorrect and why]")
+        parts.append("4. Fix Decision: [fix test/fix implementation and why]")
+        parts.append("```")
+        parts.append("")
+        parts.append("Then provide the fixed code:")
         parts.append("```cpp")
         parts.append("// HEADER")
-        parts.append("// Fixed header code here")
+        parts.append("#ifndef HEADER_NAME_H")
+        parts.append("... complete fixed header code ...")
         parts.append("```")
         parts.append("")
-        parts.append("If you need to fix the implementation:")
         parts.append("```cpp")
         parts.append("// IMPLEMENTATION")
-        parts.append("// Fixed implementation code here")
+        parts.append("#include \"header.h\"")
+        parts.append("... complete fixed implementation code ...")
         parts.append("```")
         parts.append("")
-        parts.append("Return only the files that need changes. No explanations.")
-        parts.append("")
         parts.append("**CRITICAL RULES**:")
-        parts.append("1. Return ONLY the fixed C++ code inside ```cpp code blocks")
-        parts.append("2. Do NOT include any explanations, comments, or markdown text")
-        parts.append("3. Do NOT write 'This should be...' or 'The main issue...'")
-        parts.append("4. Return compilable C++ code ONLY")
+        parts.append("1. You MUST provide the ANALYSIS section first")
+        parts.append("2. Return ONLY C++ code inside ```cpp blocks with // HEADER or // IMPLEMENTATION markers")
+        parts.append("3. Each code block must be complete and compilable")
+        parts.append("4. Do NOT relax validation rules unless you can justify it violates requirements")
         return "\n".join(parts)
 
     def _extract_code_from_response(self, response: str, marker: Optional[str] = None) -> Optional[str]:
+        # Extract and log analysis section if present
+        analysis_match = re.search(r'ANALYSIS:\s*\n(.*?)(?=```|$)', response, re.DOTALL)
+        if analysis_match:
+            analysis = analysis_match.group(1).strip()
+            self.log(f" [HEAL] AI Analysis:")
+            for line in analysis.split('\n')[:4]:  # Log first 4 lines
+                if line.strip():
+                    self.log(f"        {line.strip()}")
+
+            # Check for suspicious modifications
+            analysis_lower = analysis.lower()
+            suspicious_keywords = ['relax', 'reduce', 'weaken', 'less strict', 'minimum to', 'from 8 to 7', 'from 8 to']
+            for keyword in suspicious_keywords:
+                if keyword in analysis_lower:
+                    self.log(f" [HEAL] ⚠️  WARNING: Detected potential validation rule relaxation: '{keyword}'")
+
         if marker:
             marker_pos = response.find(marker)
             if marker_pos == -1:
