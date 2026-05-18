@@ -1,2091 +1,675 @@
-# DevPal Agent - 个人开发助手
+# DevPalAgent
 
-> **基于 Agent 技术的智能开发辅助系统**
->
-> **版本：** v2.0
->
-> **作者：** 李建
->
-> **核心特性：** OpenSpec 11阶段工作流 × 规范优先架构 × 26个内置工具 × 测试编排系统 × 自我改进 × 多模态支持
->
-> **状态：** ✅ 生产可用
+> Spec-first Agentic SDLC Runtime：把需求文档转成可验证、可追踪、可自愈的软件项目。
+
+DevPalAgent 不是普通聊天机器人，也不是一次性代码生成脚本。它把 LLM 放进一个确定性的工程流水线中：需求先被解析成结构化规范，然后经过阶段化设计、代码生成、质量门禁、测试执行、报告归档和 checkpoint 恢复，最终形成一个可审查的软件交付包。
+
+当前项目重点方向：**OpenSpec-inspired Spec-Driven Development + Agent Workflow + 自动化验证闭环**。
 
 ---
 
-## 📋 目录
+## 1. 项目定位
 
-- [✨ 核心特性](#-核心特性)
-- [🏗️ 整体架构](#️-整体架构)
-- [🔧 完整工具列表](#-完整工具列表)
-- [🚀 OpenSpec 11阶段工作流](#-openspec-11阶段工作流-v20里程碑)
-- [🎯 核心能力详解](#-核心能力详解)
-- [🏛️ 核心架构模型详解](#-核心架构模型详解)
-- [🚀 快速开始](#-快速开始)
-- [📖 使用示例](#-使用示例)
-- [📁 项目结构](#-项目结构)
-- [🧪 测试编排系统](#-测试编排系统-阶段6里程碑)
-- [🔄 自我改进系统](#-自我改进系统-阶段5里程碑)
-- [🎨 Web 界面](#-web-界面)
-- [🔌 插件系统](#-插件系统)
-- [📊 架构图](#-架构图)
-- [🛠️ 开发指南](#️-开发指南)
-- [📈 更新日志](#-更新日志)
+DevPalAgent 面向 AI Coding / Agentic Engineering 场景，目标是解决 LLM 写代码时常见的几个问题：
 
----
+| 问题 | DevPalAgent 的解决方式 |
+|---|---|
+| LLM 直接写代码不可控 | 使用 11 阶段 OpenSpec workflow 包裹 LLM 输出 |
+| 需求、代码、测试难追踪 | 使用 structured requirements、ArtifactGraph、final report |
+| 生成结果无法验证 | Phase 9 Quality Gate + Phase 10 测试执行 |
+| 长流程失败难恢复 | checkpoint/resume + phase result 持久化 |
+| 多语言上下文错配 | language-aware Phase 2/9/10/11 + Prompt Engine |
+| skipped 与 passed 混淆 | 明确记录 skipped/test_skipped/test_summary |
+| 生成错误需要人工修 | 自愈与 fallback model 机制逐步接入 |
 
-## ✨ 核心特性
+一句话概括：
 
-| 特性 | 状态 | 说明 |
-|-----|------|------|
-| **🚀 OpenSpec 11阶段工作流** | ✅ v2.0 | **需求驱动开发引擎**，自动检测需求文件 → 11阶段完整开发流程（含代码审查+技术文档） |
-| **📐 Spec-First 规范优先架构** | ✅ v2.0 | 需求规范 → 增量变更 → 工件关联 → 状态持久化 |
-| **🔍 四层验证引擎** | ✅ v2.0 | Format格式 → Semantic语义 → Parser解析 → Business业务规则 |
-| **📦 Delta 增量变更** | ✅ v2.0 | 增量写入而非全量覆盖，冲突检测，原子应用，可回滚 |
-| **🗺️ ArtifactGraph 工件依赖图** | ✅ v2.0 | 代码/测试/文档/需求自动关联，影响范围分析 |
-| **📢 EventBus 事件总线** | ✅ v2.0 | 发布订阅架构，优先级队列，7种标准事件，解耦通信 |
-| **🌍 多语言插件系统** | ✅ v2.0 | C++ 完整支持（12+规则），可扩展 Python/Rust/Go |
-| **🔄 渐进式发布引擎** | ✅ v2.0 | 诊断 → 策略 → 灰度 → 发布 → 回滚，统一错误处理 |
-| **🤖 智能工具编排** | ✅ v1.0 | 自动决定调用什么工具、什么顺序 |
-| **🧠 长短时记忆** | ✅ v1.0 | 记住对话历史、用户偏好、犯过的错误 |
-| **📋 任务规划** | ✅ v1.0 | 复杂任务自动拆解成步骤，先规划再执行 |
-| **🔍 自我反思** | ✅ v1.0 | 能发现自己的错误并纠正 |
-| **🖼️ 多模态理解** | ✅ v1.1 | 能理解图片中的代码、编译报错截图 |
-| **🔗 Git 集成** | ✅ v1.1 | Git 操作自动化 |
-| **🧪 测试编排系统** | ✅ v1.6 | **一站式自动化测试（6步流程）** |
-| **🛠️ 自我改进** | ✅ v1.5 | 代码自修复、自检、自优化 |
-| **🔌 插件系统** | ✅ v1.5 | 动态加载第三方插件 |
-| **⚡ MSVC ASAN** | ✅ v1.6 | Windows MSVC 编译 + AddressSanitizer |
-| **📊 代码审查** | ✅ v1.6 | 自动化代码审查 + 修复建议 |
-| **🎯 自动修复** | ✅ v1.6 | 智能修复代码问题 |
-| **📝 测试生成** | ✅ v1.6 | 自动生成测试文档 + 测试代码 |
-| **🌐 Web UI** | ✅ v1.1 | 现代化 Web 界面 |
-
----
-
-## 🏗️ 整体架构
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        交互层 (Interface)                        │
-│   CLI 命令行  /  Web UI 界面  /  IDE 插件                        │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │
-┌──────────────────────────────▼──────────────────────────────────┐
-│                      Agent 核心引擎 (Core)                       │
-│  ┌──────────┐    ┌──────────────┐    ┌─────────────────┐       │
-│  │ Planner  │    │  Executor    │    │   Reflector     │       │
-│  │  规划器   │───►│   执行器     │───►│    反思器       │       │
-│  └──────────┘    └──────────────┘    └─────────────────┘       │
-│                           │                                       │
-│              ┌────────────▼────────────┐                         │
-│              │   ToolRegistry 工具注册表   │                         │
-│              └────────────┬────────────┘                         │
-└───────────────────────────┼──────────────────────────────────────┘
-                            │
-┌───────────────────────────▼──────────────────────────────────────┐
-│                    基础能力层 (Infrastructure)                     │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐        │
-│  │  LLM SDK │  │ Memory   │  │  Tools   │  │ Multimodal│        │
-│  │大模型封装 │  │ 记忆系统  │  │ 26个工具  │  │ 多模态    │        │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘        │
-└──────────────────────────────────────────────────────────────────┘
+```text
+DevPalAgent = Spec-first workflow + Agent tool loop + Quality gate + Test/self-heal + Traceable reports
 ```
 
 ---
 
-## 🔧 完整工具列表
+## 2. 架构总览
 
-### 📁 文件操作 (3个)
+DevPalAgent 不是单一的“问答式 Agent”，而是由两条互补执行链组成：
 
-| 工具 | 功能 |
-|-----|------|
-| **file_reader** | 文件读取，支持大文件分页 |
-| **file_writer** | 文件写入，安全覆盖保护 |
-| **code_search** | 代码搜索，支持正则、文件过滤 |
+1. **经典 Agent 链路**：面向交互式开发任务，采用 `Planner → Executor → Reflector` 的 Plan-Act-Reflect 模式。
+2. **OpenSpec Runtime 链路**：面向从需求到项目交付的端到端生成，采用 `WorkflowExecutor → Scheduler → Context → Phase 1-11` 的确定性流水线。
 
-### 💻 系统与编译 (4个)
+### 2.1 总体分层
 
-| 工具 | 功能 |
-|-----|------|
-| **command_executor** | 命令行执行，白名单安全过滤 |
-| **compiler_analyzer** | 编译错误分析，提取错误位置 |
-| **msvc_asan_compiler** | **MSVC + AddressSanitizer**，内存错误检测 |
-| **static_analyzer** | 代码静态分析 (clang-tidy/cppcheck) |
-
-### 🌿 Git 与代码质量 (4个)
-
-| 工具 | 功能 |
-|-----|------|
-| **git_tool** | Git 操作：status/commit/push/review |
-| **code_review** | **独立代码审查**，多语言支持 |
-| **code_review_report** | 生成详细审查报告 |
-| **auto_fixer** | **智能自动修复**代码问题 |
-
-### 🧪 测试编排系统 (5个)
-
-| 工具 | 功能 |
-|-----|------|
-| **test_orchestrator** | **测试编排核心**，6步一站式流程 |
-| **test_doc_generator** | 测试文档生成，结构化用例 |
-| **test_generator** | 测试代码生成，多语言模板 |
-| **test_runner** | 测试运行器，**MSVC/GCC 双支持** |
-| **code_review_report** | 代码审查报告生成器 |
-
-### 🚀 OpenSpec 规范优先工具 (3个)
-
-| 工具 | 功能 |
-|-----|------|
-| **project_generator** | **项目生成器**，从需求到完整项目结构 |
-| **spec_tool** | **规范工具**，SpecEngine 命令行接口 |
-| **openspec_cli** | **OpenSpec CLI**，9阶段工作流命令行 |
-
-### 🔄 自我改进与扩展 (3个)
-
-| 工具 | 功能 |
-|-----|------|
-| **self_source_reader** | 读取自身源码，AST 结构分析 |
-| **self_improve** | **自我修复**，备份 + 修复 + 自检 |
-| **plugin_system** | **插件系统**，动态加载第三方工具 |
-
-### 🧩 其他工具 (2个)
-
-| 工具 | 功能 |
-|-----|------|
-| **linked_list_tool** | 链表操作演示，验证 FunctionCall 机制 |
-| **hallucination_detector** | **幻觉检测器**，检测 AI 生成内容中的不存在函数/类/文件 |
-
----
-
-## 🚀 OpenSpec 11阶段工作流 (v2.0 里程碑)
-
-> **需求驱动开发引擎 - 从需求文档到可交付项目的一站式自动化**
-
-OpenSpec 是 DevPal Agent v2.0 的核心架构升级，实现"规范优先(Spec-First)"的开发范式。
-
-### 工作流触发方式
-
-```python
-# 方式1: 聊天模式自动触发
-用户输入："完整实现 requirements/my_project.md 中的所有需求"
-→ 自动检测关键词 + .md 文件 → 触发 11阶段工作流
-
-# 方式2: 显式触发
-用户输入："OpenSpec流程启动 requirements/auth_system.md"
-
-# 方式3: CLI 命令行
-python -m devpal.cli.openspec_cli --req-file requirements/auth_system.md
+```text
+┌────────────────────────────────────────────────────────────────────┐
+│                           User / CLI / Web                          │
+│        chat request / requirements.md / explicit command             │
+└───────────────────────────────┬────────────────────────────────────┘
+                                │
+        ┌───────────────────────┴────────────────────────┐
+        │                                                │
+        ▼                                                ▼
+┌──────────────────────┐                         ┌──────────────────────┐
+│ AgentEngine           │                         │ OpenSpecWorkflow      │
+│ interactive agent     │                         │ spec-first runtime    │
+└──────────┬───────────┘                         └──────────┬───────────┘
+           │                                                │
+           ▼                                                ▼
+┌──────────────────────┐                         ┌──────────────────────┐
+│ Planner              │                         │ OpenSpecExecutor      │
+│ task planning        │                         │ workflow facade       │
+└──────────┬───────────┘                         └──────────┬───────────┘
+           │                                                │
+           ▼                                                ▼
+┌──────────────────────┐                         ┌──────────────────────┐
+│ Executor             │                         │ EnhancedScheduler     │
+│ tool execution       │                         │ retry/checkpoint      │
+└──────────┬───────────┘                         └──────────┬───────────┘
+           │                                                │
+           ▼                                                ▼
+┌──────────────────────┐                         ┌──────────────────────┐
+│ ToolRegistry         │                         │ OpenSpecContext       │
+│ file/git/test/etc.   │                         │ shared phase state    │
+└──────────┬───────────┘                         └──────────┬───────────┘
+           │                                                │
+           ▼                                                ▼
+┌──────────────────────┐                         ┌──────────────────────┐
+│ Reflector            │                         │ Phase 1-11            │
+│ verify & improve     │                         │ spec→code→test→report│
+└──────────┬───────────┘                         └──────────┬───────────┘
+           │                                                │
+           └───────────────────────┬────────────────────────┘
+                                   ▼
+┌────────────────────────────────────────────────────────────────────┐
+│ Core engines: ValidationEngine / DeltaSpec / ArtifactGraph / EventBus│
+│ LLM client / PromptEngine / Templates / Language plugins / Memory    │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-### 11阶段完整流程（先设计后实现）
+### 2.2 Plan-Act-Reflect 架构模式
 
-> **v2.1 改进**: 技术设计文档移到代码生成之前，遵循"先设计后实现"的真实开发流程
+经典 Agent 链路用于普通代码任务、测试编排、自我改进、代码审查等交互场景。它的核心不是一次性调用工具，而是把任务拆成“规划、执行、反思”的闭环。
 
-| 阶段 | 名称 | 核心动作 | 输出 |
-|-----|------|----------|------|
-| **Phase 1** | 🔍 需求文档解析 | 读取 Markdown + YAML Frontmatter，提取验收标准，识别语言类型 | 结构化需求对象 |
-| **Phase 2** | 📁 创建项目结构 | 自动生成 include/src/tests/docs/config/data 目录，初始化 .spec 状态目录 | 完整项目骨架 |
-| **Phase 3** | ✏️ **生成技术设计文档** | **【v2.1 新位置】** 先设计后编码，包含架构设计、数据结构、核心算法、线程安全、技术决策理由 | technical_implementation.md (13K) |
-| **Phase 4** | 💻 生成核心实现代码 | 根据技术设计文档生成代码，从 `auth_templates/` 读取验证过的 C++ 模板 | auth.h, auth.cpp, main.cpp |
-| **Phase 5** | 🧪 生成测试代码 | 依据需求的验收标准生成测试用例，覆盖所有功能点 | test_auth.cpp (280+ 行) |
-| **Phase 6** | 🔧 生成 CMakeLists.txt | CMake 构建配置，支持 MSVC/GCC/Clang 多编译器 | CMakeLists.txt |
-| **Phase 7** | 📝 生成测试文档 | 结构化测试用例设计，覆盖功能/边界/异常/性能测试 | test_documentation.md |
-| **Phase 8** | 📚 生成项目文档 | 项目介绍、编译指令、使用示例、架构说明 | README.md |
-| **Phase 9** | 🔍 代码质量审查 | 多语言静态分析，安全/性能/风格三维评级，问题分级 | code_review_report.md |
-| **Phase 10** | 🧪 编译并运行测试 | **CMake + VS 环境智能检测**，自动查找 MSVC 编译器，运行所有测试 | test_execution_report.md |
-| **Phase 11** | ✅ 生成最终验证报告 | 汇总所有阶段结果，验收标准检查，生成完整验证报告 | openspec_verification_report.md |
-
-### OpenSpec 核心架构 (7层)
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  交互层 (User / CLI / Web)                                   │
-├─────────────────────────────────────────────────────────────┤
-│  工作流执行层 (OpenSpecWorkflowExecutor / 11阶段调度)         │
-├─────────────────────────────────────────────────────────────┤
-│  Schema 核心层 (ValidationEngine / DeltaSpec / ArtifactGraph)│
-├─────────────────────────────────────────────────────────────┤
-│  事件总线层 (EventBus / Priority Queue / 7种事件类型)        │
-├─────────────────────────────────────────────────────────────┤
-│  深化体验层 (DiagnosticEngine / RolloutEngine / ConfigPolicy)│
-├─────────────────────────────────────────────────────────────┤
-│  多语言支持层 (LanguagePlugin / C++ 插件 / Compilation DB)   │
-├─────────────────────────────────────────────────────────────┤
-│  工具执行层 (26个工具 / ToolRegistry)                       │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 触发关键词
-
-| 强触发（直接启动） | 弱触发（需.md文件） |
-|---------------------|---------------------|
-| `完整实现` + .md | `开发需求` + .md |
-| `需求实现` + .md | `生成项目` + .md |
-| `OpenSpec流程启动` | `实现` + .md |
-| `requirements 实现` | |
-
-### 支持的需求文档格式
-
-```markdown
----
-title: 用户认证系统
-version: 1.0
-author: 李建
-created: 2026-05-08
----
-
-## REQ-001: 用户注册功能
-
-**描述**: 用户可以通过用户名和密码注册账号
-
-**验收标准**:
-- [ ] 用户名长度 4-20 字符
-- [ ] 密码强度符合要求（8位+字母+数字）
-- [ ] 密码使用盐值哈希存储
-
-**优先级**: 1
-**标签**: security, authentication
-```
-
-### 🔧 规范化编译器检测 (Phase 9 核心改进)
-
-**问题**: 之前每次运行都找不到 MSVC 编译器，导致编译失败
-
-**解决方案**: 实现标准化的 Visual Studio 编译器检测流程
-
-#### 检测流程
-
-```python
-def find_visual_studio_compiler() -> Tuple[bool, str, Dict[str, str]]:
-    """规范化查找 Visual Studio MSVC 编译器
-    
-    步骤:
-    1. 使用 vswhere.exe 查找 VS 安装路径
-    2. 定位 vcvarsall.bat 脚本
-    3. 执行 vcvarsall.bat 并捕获环境变量
-    4. 验证 cl.exe 是否在 PATH 中
-    5. 返回完整的编译器环境变量字典
-    """
-```
-
-#### Windows 编译器优先级
-
-1. **MSVC (Visual Studio)** - 优先使用
-   - 通过 vswhere.exe 自动检测
-   - 支持 AddressSanitizer (/fsanitize=address)
-   - 完整的 C++17/20 支持
-
-2. **MinGW-w64 (g++)** - 备选方案
-   - 当 MSVC 不可用时使用
-   - 检查 `g++ --version` 是否可用
-
-#### 编译器环境变量传递
-
-```python
-# Phase 9: 编译测试代码
-if msvc_found:
-    result = subprocess.run(
-        ["cl", "/std:c++17", "/EHsc", ...],
-        env=msvc_env,  # 传递 vcvarsall.bat 提取的环境变量
-        ...
-    )
-
-# 运行测试时也传递环境变量
-test_result = subprocess.run(
-    [test_exe],
-    env=msvc_env if is_windows and msvc_env else None,
-    ...
-)
-```
-
-#### 检测结果示例
-
-```
-[1/3] 查找 Visual Studio (MSVC)...
-✅ MSVC 编译器已就绪 (VS Community, x64)
-   路径: C:\Program Files\Microsoft Visual Studio\2022\Community
-   版本: 19.xx.xxxxx
-   架构: x64
-
-[2/3] 使用 MSVC 编译...
-编译命令: cl /std:c++17 /EHsc /I"include" test_auth.cpp /Fe:test_auth.exe
-编译成功 ✅
-[3/3] 运行测试...
-测试通过: 5/5 ✅
-```
-
-
----
-
-## 🎯 核心能力详解
-
-### Plan-Act-Reflect 执行循环
-
-```
-用户输入
-    ↓
-[Planner 规划器]
-    ↓ 生成执行计划
-    ├─ 评估计划可行性
-    ├─ 检测任务类型（测试/开发/自改进）
-    └─ 拆解成步骤
-        ↓
-[Executor 执行器] ←────────────────┐
-    ↓                               │
-    ├─ 是否测试任务？→ 直接调用 TestOrchestrator │
-    ├─ 是否需要调用工具？→ 调用 ToolRegistry │
-    ├─ 执行工具 → 拿到结果          │
-    └─ 判断任务完成了吗？            │
-           ↓ 否                      │
-[Reflector 反思器]                  │
-    ↓ 反思刚才的执行               │
-    ├─ 刚才做的对吗？               │
-    ├─ 哪里错了？                   │
-    ├─ 需要调整计划吗？             │
-    └─ 把经验存入记忆 ──────────────┘
-           ↓ 是
-[结果输出 + 经验总结]
-```
-
-### 记忆系统三层架构
-
-| 层级 | 类型 | 功能 |
-|-----|------|------|
-| **L1** | 短期记忆 | 对话上下文，滑动窗口管理 |
-| **L2** | 长期记忆 | 用户偏好、任务经验、历史模式 |
-| **L3** | 错误记忆 | 错误模式、修正方法、避免重复犯错 |
-
----
-
-## 🏛️ 核心架构模型详解
-
-DevPal Agent v2.0 的核心架构包含以下四大核心模型，共同构建了完整的代码质量保障体系。
-
-| 架构模型 | 核心文件 | 主要功能 |
-|---------|---------|---------|
-| **🔍 四层验证引擎** | `validation_engine.py` | 渐进式代码质量验证 |
-| **📦 Delta 增量变更引擎** | `delta_spec.py` | 原子性代码修改 |
-| **🗺️ 工件依赖图** | `artifact_graph.py` | 依赖关系追踪与影响分析 |
-| **📢 事件总线架构** | `event_bus.py` | 发布-订阅模式组件通信 |
-
-> 📖 **详细文档**: 👉 [Core_Architecture_Models.md](./docs/Core_Architecture_Models.md)
-
-### 🔍 四层验证引擎 (ValidationEngine)
-
-四层验证引擎提供渐进式代码质量保障，从 **格式验证 → 语义验证 → 解析验证 → 业务规则验证**。每一层验证通过后才进入下一层，确保代码质量。
-
-| 层级 | 验证内容 | 风险等级 |
-|-----|---------|---------|
-| **L1 格式** | 语法检查、缩进规范、编码格式 | 🟢 低 |
-| **L2 语义** | 逻辑矛盾、依赖完整性、死代码 | 🟡 中 |
-| **L3 解析** | 函数签名兼容性、方法存在性 | 🟡 中 |
-| **L4 业务规则** | 命名规范、SQL注入检测、敏感信息 | 🔴 高 |
-
-### 📦 Delta 增量变更引擎 (DeltaEngine)
-
-Delta 引擎实现增量变更而非全量覆盖，支持冲突检测、原子应用、自动回滚。
-
-**关键特性：**
-- ✅ **逆序应用** - 从文件末尾开始应用 Delta，避免行号偏移问题
-- ✅ **冲突检测** - 并发修改前检查上下文匹配
-- ✅ **原子操作** - 失败时自动回滚所有已应用变更
-- ✅ **增量更新** - 只修改需要变更的部分
-
-### 🗺️ 工件依赖图 (ArtifactGraph)
-
-使用 NetworkX 构建代码、测试、文档、需求之间的依赖关系。支持影响范围分析，修改代码前预测影响文件。
-
-**四层依赖架构：**
-1. **需求文档** → 定义功能需求
-2. **代码实现** → 实现需求功能
-3. **测试代码** → 覆盖代码逻辑
-4. **配置/文档** → 描述和配置
-
-### 📢 事件总线架构 (EventBus)
-
-实现发布-订阅模式，解耦各组件通信。
-
-**7种标准事件类型：**
-| 事件类型 | 触发时机 |
-|---------|---------|
-| `TOOL_EXECUTED` | 工具执行完成 |
-| `VALIDATION_COMPLETED` | 四层验证通过 |
-| `DELTA_APPLIED` | 增量变更应用完成 |
-| `ARTIFACT_CHANGED` | 工件内容变更 |
-| `SNAPSHOT_CREATED` | 状态快照创建 |
-| `CONFLICT_DETECTED` | 冲突检测触发 |
-| `WORKFLOW_PHASE_COMPLETED` | 工作流阶段完成 |
-
-### 组件协同工作
-
-四大核心模型协同工作，形成完整的从需求到部署的自动化开发流程，每个步骤都有质量保障和可追溯性。
-
-```
-用户请求 → Planner → DeltaEngine → ValidationEngine → EventBus → ArtifactGraph → StateManager → Reflector → 完成
-```
-
-> 💡 **查看完整的架构图、流程图、代码示例和详细说明，请参考**：  
-> 👉 [Core_Architecture_Models.md](./docs/Core_Architecture_Models.md)
-
----
-
-## 🔄 执行流程与时序详解
-
-### Agent 主流程时序图
-
-```
-用户输入
+```text
+User request
    │
    ▼
-┌─────────────────────────────────────────────────────────┐
-│                   AgentEngine 主引擎                      │
-│  ┌──────────────┐                                        │
-│  │  Planner     │  规划阶段                               │
-│  │  规划器       │  → 任务分类                           │
-│  │              │  → 可行性评估                          │
-│  │              │  → 步骤拆解                            │
-│  └──────┬───────┘                                        │
-│         │                                                │
-│  ┌──────▼───────┐                                        │
-│  │  Executor    │  执行阶段                               │
-│  │   执行器      │  → 检测任务类型                        │
-│  │              │  → 测试任务 → [TestOrchestrator]       │
-│  │              │  → 普通任务 → [ToolRegistry]           │
-│  │              │  → 工具执行 + 结果收集                  │
-│  └──────┬───────┘                                        │
-│         │                                                │
-│  ┌──────▼───────┐                                        │
-│  │  Reflector   │  反思阶段                               │
-│  │   反思器      │  → 结果验证                           │
-│  │              │  → 错误检测                            │
-│  │              │  → 经验存入 Memory                      │
-│  └──────┬───────┘                                        │
-│         │                                                │
-│  ┌──────▼───────┐                                        │
-│  │  Output      │  结果格式化输出                          │
-│  └──────────────┘                                        │
-└─────────────────────────────────────────────────────────┘
-```
-
-### Planner 规划器详细流程
-
-**输入处理 → 任务分类 → 计划生成 → 可行性验证**
-
-```
-1. 接收用户查询
+Planner
    ├─ 解析用户意图
-   ├─ 提取关键实体（文件路径、项目名等）
-   └─ 查询记忆系统获取历史上下文
-
-2. 任务分类检测
-   ├─ 🧪 测试任务 → 标记为测试编排流程
-   │   └─ 检测关键词：测试、test、单元测试、覆盖率...
-   ├─ 🔄 自改进任务 → 标记为自我改进流程
-   │   └─ 检测关键词：修复自己、改进代码、自我优化...
-   ├─ 📝 代码审查任务 → 标记为审查流程
-   └─ 🛠️ 普通开发任务 → 标准工具调用流程
-
-3. 执行计划生成
-   ├─ 列出需要执行的步骤序列
-   ├─ 为每个步骤分配对应工具
-   ├─ 定义步骤间的数据依赖关系
-   └─ 估算复杂度和预计用时
-
-4. 可行性检查
-   ├─ 文件是否存在？
-   ├─ 工具是否可用？
-   ├─ 参数是否完整？
-   └─ ✓ / ✗ 调整计划
+   ├─ 判断任务类型：开发 / 测试 / 审查 / 自改进 / OpenSpec
+   ├─ 拆解步骤和工具依赖
+   └─ 输出执行计划
+   │
+   ▼
+Executor
+   ├─ 路由到 ToolRegistry 或 TestOrchestrator
+   ├─ 准备工具参数
+   ├─ 执行文件、命令、Git、测试、编译、审查等工具
+   └─ 收集结构化结果
+   │
+   ▼
+Reflector
+   ├─ 判断结果是否满足目标
+   ├─ 识别失败原因和下一步动作
+   ├─ 必要时触发重新规划或修复
+   └─ 写入经验/错误记忆
 ```
 
-**时序：** `平均 0.5~2 秒`，取决于任务复杂度
+三个核心角色的职责：
+
+| 角色 | 位置 | 职责 |
+|---|---|---|
+| Planner | `devpal/core/planner.py` | 任务分类、步骤拆解、可行性检查、工具选择建议 |
+| Executor | `devpal/core/agent_engine.py` | 执行计划、调用工具、汇总结果、处理异常 |
+| Reflector | `devpal/core/reflector.py` | 验证执行结果、分析失败、给出修复或重试建议 |
+| ToolRegistry | `devpal/tools/registry.py` | 注册并分发所有工具能力 |
+| Memory | `devpal/memory/` | 保存短期上下文、长期偏好、错误模式 |
+
+### 2.3 OpenSpec Runtime 架构模式
+
+OpenSpec 链路用于“需求文档 → 软件项目”的完整交付。它把 LLM 生成放进可恢复、可验证、可追踪的工程流程，而不是让模型直接写一堆文件。
+
+```text
+requirements.md
+   │
+   ▼
+OpenSpecWorkflowExecutor
+   │  创建运行上下文和调度器
+   ▼
+EnhancedOpenSpecScheduler
+   │  timeout / retry / checkpoint / resume / progress / success policy
+   ▼
+OpenSpecContext
+   │  requirements / structured_requirements / language / project_type
+   │  phase_results / generated_files / artifact_graph / test counters
+   ▼
+Phase 1-11
+   │  parse → structure → design → code → tests → build → docs
+   │  → quality gate → run tests → final report
+   ▼
+Deliverables
+   │  source files / tests / README / quality report / final report / CLAUDE.md
+```
+
+运行时分层：
+
+| 层级 | 代表模块 | 作用 |
+|---|---|---|
+| Workflow Facade | `openspec_executor.py`、`openspec_workflow.py` | 对外提供统一的 OpenSpec 执行入口 |
+| Scheduler | `enhanced_scheduler.py`、`scheduler.py` | 阶段调度、重试、超时、checkpoint、恢复 |
+| Shared State | `base.py`、`openspec_context.py` | `OpenSpecContext`、`PhaseResult`、成功策略、阶段产物 |
+| Phase Layer | `openspec_phases/phase*.py` | 11 阶段需求解析、生成、验证、测试、报告 |
+| Intelligence Layer | `llm_client.py`、`prompt_engine.py`、`templates/` | LLM 调用、动态 Prompt、语言/项目模板 |
+| Verification Layer | `validation_engine.py`、`phase9_quality_gate.py`、`phase10_run_tests.py` | 四层质量门禁、测试执行、编译/pytest/shell 检查 |
+| Traceability Layer | `artifact_graph.py`、`delta_spec.py`、`requirements.py` | 需求、代码、测试、报告之间的关系追踪 |
+| Reporting Layer | `phase11_final_report.py` | final report、ArtifactGraph、CLAUDE.md、测试摘要 |
+
+### 2.4 核心数据流
+
+```text
+输入需求
+  │
+  ├─ Phase 1: requirements_content / structured_requirements / delta.json
+  │
+  ├─ Phase 2: project structure / .spec/requirements.json
+  │
+  ├─ Phase 3-8: design / code / tests / build config / docs / README
+  │
+  ├─ Phase 9: quality_gate_report + validation issues
+  │
+  ├─ Phase 10: test_result / test_summary / passed-failed-skipped counters
+  │
+  └─ Phase 11: final_report / artifact_graph / CLAUDE.md
+```
+
+这条数据流里，`OpenSpecContext` 是所有阶段的状态总线，`ArtifactGraph` 负责记录工件关系，`ValidationEngine` 负责质量判断，`PhaseResult` 负责把每个阶段的成功、失败、跳过原因持久化。
+
+更详细的架构说明见：
+
+- [doc3.0/agent_architecture.md](doc3.0/agent_architecture.md)
+- [doc3.0/e2e_demo.md](doc3.0/e2e_demo.md)
+- [doc3.0/interview_pitch.md](doc3.0/interview_pitch.md)
 
 ---
 
-### Executor 执行器详细流程
+## 3. 核心模块
 
-**路由分发 → 工具选择 → 执行监控 → 结果收集**
+### 3.1 Agent 主引擎与 Plan-Act-Reflect
 
+| 文件 | 说明 |
+|---|---|
+| `devpal/core/agent_engine.py` | 交互式 Agent 主引擎，负责接收用户任务、组织 Planner/Executor/Reflector 链路 |
+| `devpal/core/planner.py` | 规划器：解析意图、识别任务类型、拆分步骤、选择候选工具 |
+| `devpal/core/reflector.py` | 反思器：检查执行结果、分析错误、判断是否需要重试或调整计划 |
+| `devpal/memory/memory_manager.py` | 记忆管理入口，协调短期记忆、长期记忆、错误记忆 |
+| `devpal/memory/short_term.py` | 对话级上下文和近期任务状态 |
+| `devpal/memory/long_term.py` | 用户偏好、历史经验、稳定知识 |
+| `devpal/memory/error_memory.py` | 错误模式和修正经验，服务 Reflector 的复盘过程 |
+
+### 3.2 OpenSpec Workflow / Scheduler / Context
+
+| 文件 | 说明 |
+|---|---|
+| `devpal/core/openspec_executor.py` | OpenSpec workflow facade，对外提供统一执行入口 |
+| `devpal/core/openspec_workflow.py` | OpenSpec 工作流封装，连接 Agent 与 11 阶段流水线 |
+| `devpal/core/openspec_phases/enhanced_scheduler.py` | 增强调度器，负责 checkpoint、resume、retry、timeout、progress |
+| `devpal/core/openspec_phases/scheduler.py` | 基础调度器实现 |
+| `devpal/core/openspec_phases/base.py` | `OpenSpecContext`、`PhaseResult`、阶段基类、success policy |
+| `devpal/core/openspec_context.py` | 旧版/兼容 OpenSpec 上下文管理能力 |
+| `devpal/core/openspec_phases/phase_skip_rules.py` | 按语言和项目类型判断阶段是否应该跳过 |
+| `devpal/core/openspec_phases/logger.py` | 工作流日志输出和阶段状态记录 |
+
+### 3.3 OpenSpec 11 阶段实现
+
+| Phase | 文件 | 核心职责 |
+|---:|---|---|
+| 1 | `phase1_parse_requirements.py` | 解析需求文本，提取 structured requirements、project_type、language、features，输出 `.spec/delta.json` |
+| 2 | `phase2_create_structure.py` | 创建语言感知目录结构，写入 `.spec/requirements.json` |
+| 3 | `phase3_technical_design.py` | 生成技术设计，可根据 installer/tooling 等项目类型跳过 |
+| 4 | `phase4_generate_code.py` | 通过 Prompt Engine、模板和 AI tool loop 生成核心代码 |
+| 5 | `phase5_generate_tests.py` | 生成测试代码或测试说明，可按项目类型跳过 |
+| 6 | `phase6_cmake_config.py` | 生成 CMake/build 配置，非 C++ 项目可跳过 |
+| 7 | `phase7_test_docs.py` | 生成或补充测试文档 |
+| 8 | `phase8_readme.py` | 生成目标项目 README |
+| 9 | `phase9_quality_gate.py` | 执行语言感知四层质量门禁，输出 quality gate report |
+| 9b | `phase9_code_review.py` | 代码审查型质量检查扩展 |
+| 10 | `phase10_run_tests.py` | 执行 C++/Python/Shell 测试，维护 canonical test counters 和 skipped 语义 |
+| 11 | `phase11_final_report.py` | 生成 final report、ArtifactGraph、CLAUDE.md 和最终交付摘要 |
+
+### 3.4 Spec、验证与可追踪核心模型
+
+| 模块 | 文件 | 说明 |
+|---|---|---|
+| ValidationEngine | `devpal/core/schema/validation_engine.py` | 四层验证：格式、语义、解析、业务规则；Phase 9 的核心质量模型 |
+| DeltaSpec | `devpal/core/schema/delta_spec.py` | 增量变更模型，负责描述变更、冲突检测、原子应用能力基础 |
+| ArtifactGraph | `devpal/core/schema/artifact_graph.py` | 工件依赖图，追踪 requirements、source、tests、docs、reports 的关系 |
+| EventBus | `devpal/core/schema/event_bus.py` | 发布-订阅事件总线，用于解耦工具、验证、工件变化和工作流事件 |
+| Requirements | `devpal/core/schema/requirements.py` | 需求结构模型和需求文档管理能力 |
+| Workflow Schema | `devpal/core/schema/workflow.py` | 声明式 workflow/schema 能力 |
+| Spec Engine | `devpal/core/schema/spec.py` | Spec 核心抽象，支撑规范优先开发模型 |
+| DiagnosticEngine | `devpal/core/schema/diagnostic_engine.py` | 诊断引擎，用于结构化分析错误和运行状态 |
+| RolloutEngine | `devpal/core/schema/rollout_engine.py` | 渐进式发布/策略执行能力基础 |
+| ErrorManager | `devpal/core/schema/error_manager.py` | 错误分类、错误上下文和错误管理 |
+| ConfigPolicy | `devpal/core/schema/config_policy.py` | 配置策略和规则管理 |
+| CompileDB | `devpal/core/schema/compile_db.py`、`devpal/core/compiledb/` | 编译数据库解析与编译上下文支持 |
+
+四层验证模型：
+
+| 层级 | 关注点 | 示例 |
+|---|---|---|
+| L1 Format | 基础格式和语法 | Python AST、Shell 语法、C++ 文件结构 |
+| L2 Semantic | 语义一致性 | 依赖完整性、明显逻辑矛盾、死代码 |
+| L3 Parser | 可解析与接口匹配 | 函数签名、导入、调用关系 |
+| L4 Business | 业务和安全规则 | 命名约束、敏感信息、注入风险、项目特定规则 |
+
+### 3.5 Tool 系统
+
+Tool 系统是 Executor 的执行层，也是 OpenSpec Phase 4/9/10 能调用底层能力的基础。
+
+| 类别 | 文件 | 说明 |
+|---|---|---|
+| Tool 基础 | `devpal/tools/base.py` | 工具基类、输入输出约定、执行结果结构 |
+| Function Call 抽象 | `devpal/tools/function_call_base.py` | 面向 LLM function/tool calling 的抽象层 |
+| 工具注册 | `devpal/tools/registry.py` | 注册、查询、分发工具 |
+| 文件工具 | `file_reader.py`、`file_writer.py`、`code_search.py` | 读取、写入、搜索代码 |
+| 命令工具 | `command_executor.py` | 执行 shell/系统命令 |
+| Git 工具 | `git_tool.py` | Git 状态、diff、提交相关操作能力 |
+| 编译/静态分析 | `compiler_analyzer.py`、`static_analyzer.py`、`msvc_asan_compiler.py`、`cmake_build_tool.py` | 编译诊断、静态分析、MSVC/ASAN、CMake build |
+| 代码审查 | `code_review.py`、`code_review_report.py` | 审查代码并生成审查报告 |
+| 自动修复 | `auto_fixer.py`、`code_normalizer.py` | 自动修复和代码规范化 |
+| 测试编排 | `test_orchestrator.py`、`test_doc_generator.py`、`test_generator.py`、`test_runner.py`、`test_result_updater.py` | 从审查到测试文档、测试代码、测试执行、结果回填的闭环 |
+| 自我改进 | `self_source_reader.py`、`self_improve.py`、`compilation_reflector.py` | 读取自身源码、分析问题、反思编译结果并改进 |
+| OpenSpec 工具 | `project_generator.py`、`spec_tool.py` | 项目生成和 Spec CLI 能力 |
+| 插件/安全辅助 | `plugin_system.py`、`hallucination_detector.py` | 动态插件和幻觉检测 |
+
+测试编排链路：
+
+```text
+TestOrchestrator
+   ├─ CodeReview → issues
+   ├─ CodeReviewReport → code_review.md
+   ├─ AutoFixer → fixed source + backup
+   ├─ TestDocGenerator → test documentation
+   ├─ TestGenerator → test code
+   └─ TestRunner → test result + pass/fail/skipped summary
 ```
-工具调用流程：
 
-  Planner输出（执行计划）
-         │
-         ▼
-  ┌──────────────────┐
-  │  任务路由检测     │
-  └─────────┬────────┘
-            │
-     ┌──────┴──────┐
-     │             │
-     ▼             ▼
-[测试任务]     [普通任务]
-     │             │
-     ▼             ▼
-TestOrchestrator ToolRegistry
-     │             │
-     └──────┬──────┘
-            │
-            ▼
-    ┌──────────────────┐
-    │  工具参数准备      │
-    │  - 参数验证       │
-    │  - 默认值填充     │
-    │  - 类型转换       │
-    └─────────┬────────┘
-              │
-              ▼
-    ┌──────────────────┐
-    │  BaseTool 执行    │
-    │  - retry 重试机制  │
-    │  - 超时保护       │
-    │  - 异常捕获       │
-    └─────────┬────────┘
-              │
-              ▼
-    ┌──────────────────┐
-    │  结果处理         │
-    │  - 成功/失败标记  │
-    │  - 元数据提取     │
-    │  - 错误信息格式化 │
-    └──────────────────┘
-```
+### 3.6 LLM、Prompt、模板与多语言
 
-**关键特性：**
-- ⏱️ **超时保护**：每个工具都有独立超时设置（默认 60s）
-- 🔄 **自动重试**：`@retry` 装饰器支持 transient 错误重试
-- 🛡️ **安全过滤**：`ToolSecurity` 白名单机制保护命令执行
+| 文件 | 说明 |
+|---|---|
+| `devpal/core/llm_client.py` | LLM 调用封装，供代码生成、审查、设计等模块使用 |
+| `devpal/core/prompts/prompt_engine.py` | 动态 Prompt Template Engine，根据语言、项目类型和 Phase 生成提示词 |
+| `devpal/core/templates/base.py` | 模板基类 |
+| `devpal/core/templates/registry.py` | 模板注册表 |
+| `devpal/core/templates/cpp_templates.py` | C++ 项目模板 |
+| `devpal/core/templates/python_templates.py` | Python skeleton、README、测试模板 |
+| `devpal/core/templates/install_script_generator.py` | Claude CLI installer 脚本生成器 |
+| `devpal/core/templates/requirements_parser.py` | 需求解析模板和辅助逻辑 |
+| `devpal/core/schema/languages/language_config.py` | C++ / Python / Shell 的语言特征配置 |
+| `devpal/core/schema/languages/base.py` | 语言插件基类 |
+| `devpal/core/schema/languages/cpp_plugin.py`、`cpp_rules.py` | C++ 插件与规则 |
+| `devpal/core/schema/languages/python_plugin.py` | Python 插件雏形 |
+| `devpal/core/schema/languages/shell_plugin.py` | Shell 插件雏形 |
+
+### 3.7 编译、测试与运行结果解析
+
+| 文件 | 说明 |
+|---|---|
+| `devpal/core/compiler_detector.py` | 编译器检测，尤其是 Windows/MSVC 环境识别 |
+| `devpal/core/test_result_parser.py` | 测试结果解析，统一 passed/failed/skipped 语义 |
+| `devpal/core/compiledb/core.py` | compile database 核心处理 |
+| `devpal/core/compiledb/parsers.py` | compile commands 等编译数据库解析器 |
 
 ---
 
-### ToolRegistry 工具注册表流程
+## 4. 当前能力状态
 
-**工具注册 → 查询 → 执行 → 返回结果**
+### 4.1 已完成能力
 
-```
-启动时注册流程（__init__）：
-  ├─ 加载所有 BaseTool 子类
-  ├─ 验证每个工具的完整性
-  │   ├─ name 属性存在？
-  │   ├─ description 属性存在？
-  │   ├─ Parameters 类定义正确？
-  │   └─ _execute 方法实现？
-  └─ 存入 _tools 字典
+| 能力 | 状态 | 说明 |
+|---|---:|---|
+| OpenSpec 11 阶段流水线 | ✅ | Phase 1-11 已实现 |
+| Enhanced Scheduler | ✅ | timeout / retry / checkpoint / progress |
+| Structured Requirements | ✅ | 解析 id/title/description/acceptance/scenarios/priority/status |
+| Delta JSON | ✅ | Phase 1 输出 `.spec/delta.json` |
+| ArtifactGraph | ✅ | 需求、代码、测试、报告关系追踪 |
+| Prompt Engine | ✅ | 按语言动态生成 Phase 3/4 prompt |
+| 多语言基础能力 | ✅ | C++ / Python / Shell 配置与插件雏形 |
+| Phase Skip Rules | ✅ | installer/tooling 跳过不适用阶段 |
+| Phase 9 Quality Gate | ✅ | 四层验证，按语言选择检查器 |
+| Phase 10 Test Runner | ✅ | C++ 测试、Python pytest、skipped 语义 |
+| Phase 11 Final Report | ✅ | 生成 final_report、artifact_graph、CLAUDE.md |
+| CLAUDE.md 输出 | ✅ | 当前已语言感知 |
+| Installer flow smoke/e2e | ✅ | 覆盖 skipped phase、report、quality gate |
+| Checkpoint 路径修正 | ✅ | 不再误生成 `cpp_*` checkpoint 目录 |
 
-运行时查询流程：
-  registry.execute_tool(name, params)
-         │
-         ▼
-  ┌──────────────────┐
-  │  工具存在检查     │
-  │  不存在 → 报错    │
-  └─────────┬────────┘
-            │
-            ▼
-  ┌──────────────────┐
-  │  参数验证         │  ← Pydantic 模型校验
-  │  - 必填参数检查   │
-  │  - 类型转换       │
-  │  - 范围验证       │
-  └─────────┬────────┘
-            │
-            ▼
-  ┌──────────────────┐
-  │  tool.execute()  │
-  │  调用具体工具     │
-  └─────────┬────────┘
-            │
-            ▼
-       ToolResult
-       ├─ success: bool
-       ├─ content: str
-       └─ metadata: dict
-```
+### 4.2 当前阶段
 
-**时序：** `工具查询 < 1ms`，`参数验证 1~5ms`，实际执行时间取决于工具本身
+项目已完成 `M1：语言感知闭环稳定版`：
+
+- Phase 2 目录结构语言感知。
+- Phase 9 Python/installer 不再跑 C++ 检查。
+- Phase 10 Python pytest 写入 canonical test counts。
+- Phase 11 / CLAUDE.md 语言感知。
+- installer 项目不再显示 `0/0 passed`。
+- installer e2e 验证通过。
 
 ---
 
-## 🧪 各工具详细流程
+## 5. OpenSpec 11 阶段工作流
 
-### 1. CodeReview 代码审查工具
+DevPalAgent 的核心执行流：
 
-**代码解析 → 模式匹配 → 问题分级 → 结果汇总**
-
-```
-输入：文件路径 / 目录 / 文件列表
-     │
-     ▼
-┌─────────────────────────────────┐
-│  阶段 1：文件收集                │
-│  ├─ 单个文件 → 直接读取          │
-│  ├─ 目录 → 递归扫描支持的扩展名   │
-│  │   └─ .py / .cpp / .h / .js   │
-│  └─ 文件列表 → 批量处理          │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  阶段 2：语言检测与逐行扫描      │
-│  ├─ Python 检查器               │
-│  │   ├─ TODO/FIXME 标记         │
-│  │   ├─ print 调试代码          │
-│  │   ├─ eval/exec 安全风险      │
-│  │   └─ 硬编码密钥检测          │
-│  ├─ C/C++ 检查器                │
-│  │   ├─ 内存泄漏模式            │
-│  │   ├─ strcpy 不安全函数       │
-│  │   ├─ 原始指针裸操作          │
-│  │   ├─ 异常安全检查            │
-│  │   └─ 魔法数字检测            │
-│  └─ JavaScript 检查器           │
-│      ├─ console.log 调试代码    │
-│      ├─ innerHTML XSS 风险      │
-│      └─ eval 注入风险           │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  阶段 3：问题分级                │
-│  🔴 ERROR 严重安全问题           │
-│  🟡 WARNING 潜在风险             │
-│  🔵 INFO 代码风格建议            │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  阶段 4：输出                    │
-│  ├─ 格式化文本摘要              │
-│  └─ metadata.issues 结构化数据  │
-│     ├─ file                    │
-│     ├─ line                    │
-│     ├─ severity                │
-│     ├─ category                │
-│     ├─ message                 │
-│     └─ suggestion              │
-└─────────────────────────────────┘
+```text
+Phase 1  Parse Requirements
+Phase 2  Create Project Structure
+Phase 3  Generate Technical Design
+Phase 4  Generate Core Code
+Phase 5  Generate Tests / Test Docs
+Phase 6  Configure Build System
+Phase 7  Generate Test Documentation
+Phase 8  Generate README
+Phase 9  Quality Gate
+Phase 10 Run Tests / Compile / Update Docs
+Phase 11 Final Report
 ```
 
-**时序：** `~10ms / 文件`，支持最多 50 个文件批量审查
+### 5.1 阶段职责
 
----
+| Phase | 名称 | 主要输出 |
+|---:|---|---|
+| 1 | Parse Requirements | `requirements_content`、`structured_requirements`、`requirements_delta`、`.spec/delta.json` |
+| 2 | Create Structure | 项目目录、`.spec/requirements.json` |
+| 3 | Technical Design | `tech_design_content`，可按项目类型跳过 |
+| 4 | Code Generation | infra templates + AI business code |
+| 5 | Test Generation | 测试文档/测试代码，可按项目类型跳过 |
+| 6 | Build Config | CMake 等构建配置，可按语言跳过 |
+| 7 | Test Docs | 测试文档补充，可跳过 |
+| 8 | README | 项目 README |
+| 9 | Quality Gate | 四层验证 + 代码审查 + 自愈入口 |
+| 10 | Run Tests | C++/Python/Shell 测试执行或 skipped |
+| 11 | Final Report | final report、ArtifactGraph、CLAUDE.md |
 
-### 2. CodeReviewReport 审查报告工具
+### 5.2 Installer 项目跳过规则
 
-**问题接收 → 统计分析 → 文档生成 → 保存输出**
+Installer/tooling 项目不需要 C++ 技术设计、CMake、编译测试，因此会跳过：
 
-```
-输入：文件路径 + [issues 可选]
-     │
-     ▼
-┌─────────────────────────────────┐
-│  步骤 1：获取问题列表            │
-│  ├─ 如果提供 issues → 直接使用   │
-│  └─ 否则 → 调用 code_review     │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  步骤 2：统计分析                │
-│  ├─ 按严重程度统计              │
-│  │   ├─ ERROR 数量             │
-│  │   ├─ WARNING 数量           │
-│  │   └─ INFO 数量              │
-│  ├─ 按类别统计                  │
-│  │   ├─ security               │
-│  │   ├─ performance            │
-│  │   ├─ style                  │
-│  │   └─ debug                  │
-│  └─ 按文件分布统计              │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  步骤 3：Markdown 文档生成       │
-│  ├─ 报告标题 + 时间戳           │
-│  ├─ 汇总统计仪表板              │
-│  ├─ 问题分类详情                │
-│  ├─ 逐文件问题列表              │
-│  └─ 修复建议汇总                │
-└───────────────┬─────────────────┘
-                │
-                ▼
-        输出：code_review.md
+```text
+Phase 3  skipped: 安装脚本项目不需要 AI 技术设计
+Phase 5  skipped: 安装脚本项目不需要生成测试代码
+Phase 6  skipped: 安装脚本项目不需要 CMake 配置
+Phase 7  skipped: 安装脚本项目不需要测试文档
+Phase 10 skipped: 安装脚本项目不需要编译和运行测试
 ```
 
----
+skipped 不会被当成 passed，也不会显示为 `0/0 passed`，而是记录：
 
-### 3. AutoFixer 自动修复工具
-
-**备份保护 → 问题检测 → 修复应用 → 结果验证**
-
-```
-⚠️ 安全第一：所有修改必须用户授权确认！
-
-输入：文件路径
-     │
-     ▼
-┌─────────────────────────────────┐
-│  步骤 1：安全备份                │
-│  ├─ 生成时间戳备份名            │
-│  │   └─ backup_20240515_143022.cpp
-│  ├─ 复制到 .devpal_backups/     │
-│  └─ 记录备份元数据              │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  步骤 2：问题检测                │
-│  └─ 调用 code_review 工具       │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  步骤 3：修复策略                │
-│  🟢 可自动修复的问题             │
-│  ├─ 移除 print/console.log      │
-│  ├─ 替换 TODO 为 FIXME + 说明   │
-│  ├─ 为魔法数字添加常量注释       │
-│  └─ 修复简单语法错误            │
-│  🟡 需要人工确认的问题           │
-│  └─ 内存泄漏、安全问题、架构问题  │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  步骤 4：应用修复                │
-│  ├─ 显示变更预览                │
-│  ├─ 等待用户授权                │
-│  └─ 用户确认后写入文件           │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  步骤 5：报告输出                │
-│  ├─ 已修复问题列表              │
-│  ├─ 未修复问题列表              │
-│  ├─ 修复率统计                  │
-│  └─ 回滚方式说明                │
-└─────────────────────────────────┘
-```
-
-**安全保证：**
-- ✅ 强制备份：修改前 100% 创建备份
-- ✅ 用户授权：必须显式确认才能修改
-- ✅ 可回滚：随时可从 .devpal_backups/ 恢复
-
----
-
-### 4. MsvcAsanCompiler 编译器工具
-
-**环境检测 → 路径配置 → 编译执行 → ASAN 检测**
-
-```
-输入：源文件 + 编译选项
-     │
-     ▼
-┌─────────────────────────────────┐
-│  阶段 1：MSVC 环境检测           │
-│  ├─ 方法 1：vswhere.exe 探测    │
-│  │   └─ "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
-│  ├─ 方法 2：已知路径搜索         │
-│  │   ├─ 2022 Community/Pro/Enterprise
-│  │   └─ 2019 Community/Pro/Enterprise
-│  └─ 方法 3：环境变量 VSINSTALLDIR
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  阶段 2：环境配置                │
-│  ├─ 设置 INCLUDE 路径           │
-│  │   └─ VC\Tools\MSVC\xx.x\include
-│  ├─ 设置 LIB 路径               │
-│  │   └─ VC\Tools\MSVC\xx.x\lib\x64
-│  ├─ 设置 PATH                   │
-│  │   └─ VC\Tools\MSVC\xx.x\bin\Hostx64\x64
-│  └─ 调用 vcvars64.bat           │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  阶段 3：编译标志构建            │
-│  ├─ 标准编译标志                │
-│  │   ├─ /EHsc 异常处理          │
-│  │   ├─ /Zi 调试信息            │
-│  │   └─ /Od 无优化（调试）      │
-│  └─ ASAN 标志（如果启用）        │
-│      ├─ /fsanitize=address      │
-│      └─ /MDd 动态调试运行时     │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  阶段 4：执行编译                │
-│  ├─ 构建 cl.exe 命令行          │
-│  ├─ subprocess 执行             │
-│  ├─ 捕获 stdout/stderr          │
-│  └─ 超时保护（默认 60s）        │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  阶段 5：错误解析                │
-│  └─ 调用 compiler_analyzer      │
-│     ├─ 提取错误位置             │
-│     ├─ 错误代码分类             │
-│     └─ 修复建议                 │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  阶段 6：可选运行                │
-│  └─ run_after_build=True        │
-│     ├─ 运行生成的 exe           │
-│     ├─ ASAN 输出捕获            │
-│     └─ 内存错误检测             │
-└─────────────────────────────────┘
-```
-
-**AddressSanitizer 可检测：**
-- 🧠 堆缓冲区溢出（Heap overflow）
-- 💾 栈缓冲区溢出（Stack overflow）
-- 🔗 Use-after-free（释放后使用）
-- ❌ Use-after-return（返回后使用）
-- 🚫 Memory leaks（内存泄漏）
-- ⚠️ Double-free（重复释放）
-
----
-
-### 5. TestDocGenerator 测试文档工具
-
-**代码分析 → 用例设计 → 覆盖分析 → 文档输出**
-
-```
-输入：源文件路径
-     │
-     ▼
-┌─────────────────────────────────┐
-│  步骤 1：代码结构分析            │
-│  ├─ 提取所有函数定义            │
-│  │   ├─ 函数名                  │
-│  │   ├─ 参数列表                │
-│  │   └─ 返回值类型              │
-│  ├─ 识别类与方法                │
-│  ├─ 分析控制流                  │
-│  └─ 检测关键算法逻辑            │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  步骤 2：测试用例设计            │
-│  ├─ 🟢 正常流测试用例           │
-│  │   └─ 标准输入、预期输出      │
-│  ├─ 🟡 边界条件测试             │
-│  │   ├─ 空输入                 │
-│  │   ├─ 最大值/最小值          │
-│  │   ├─ 零值                   │
-│  │   └─ 重复值                 │
-│  ├─ 🔴 异常流测试用例           │
-│  │   ├─ 非法输入               │
-│  │   ├─ 错误参数               │
-│  │   └─ 资源耗尽场景           │
-│  └─ 🟣 性能测试点               │
-│      ├─ 大数据量               │
-│      └─ 并发/重复调用          │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  步骤 3：覆盖分析                │
-│  ├─ 函数覆盖率预估              │
-│  ├─ 分支覆盖率预估              │
-│  └─ 识别未覆盖的代码路径        │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  步骤 4：生成 Markdown 文档      │
-│  ├─ 测试概述 + 覆盖率统计       │
-│  ├─ 测试环境说明                │
-│  ├─ 每个函数的测试用例表格      │
-│  │   ├─ 用例ID                 │
-│  │   ├─ 测试场景               │
-│  │   ├─ 输入                   │
-│  │   ├─ 预期输出               │
-│  │   └─ 优先级                 │
-│  └─ 测试执行指南                │
-└─────────────────────────────────┘
-```
-
-**输出文件格式：** `test_documentation_{项目名}.md`
-
----
-
-### 6. TestGenerator 测试代码工具
-
-**模板选择 → 用例转代码 → 依赖处理 → 代码输出**
-
-```
-输入：源文件 + 语言 + 测试框架
-     │
-     ▼
-┌─────────────────────────────────┐
-│  步骤 1：语言检测与模板选择      │
-│  ├─ C/C++ → Google Test / 原生  │
-│  │   ├─ TEST() 宏               │
-│  │   ├─ ASSERT_* / EXPECT_*    │
-│  │   └─ main() 包含处理         │
-│  ├─ Python → unittest / pytest  │
-│  │   ├─ unittest.TestCase       │
-│  │   └─ assert* 方法            │
-│  └─ JavaScript → Jest / Mocha   │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  步骤 2：测试代码生成            │
-│  ├─ Include / Import 头         │
-│  ├─ Test Fixture 设置           │
-│  ├─ 对每个函数生成测试函数       │
-│  │   ├─ 正常流测试              │
-│  │   ├─ 边界条件测试            │
-│  │   └─ 异常处理测试            │
-│  ├─ 断言语句插入                │
-│  └─ main() 入口处理             │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  步骤 3：源码整合处理            │
-│  ├─ 解决 main() 冲突            │
-│  │   └─ #define main source_main
-│  ├─ 避免符号重定义              │
-│  └─ 包含源文件到测试文件         │
-└───────────────┬─────────────────┘
-                │
-                ▼
-        输出：test_{项目名}.cpp
-```
-
-**特殊处理：**
-- C/C++ 通过宏重命名 `main()` 避免冲突
-- 自动包含源文件实现
-- 支持 include 路径配置
-
----
-
-### 7. TestRunner 测试运行器工具
-
-**编译器选择 → 编译执行 → 结果收集 → 统计输出**
-
-```
-输入：测试文件 + 源文件 + 编译器选项
-     │
-     ▼
-┌─────────────────────────────────┐
-│  步骤 1：编译器检测              │
-│  ├─ Windows → MSVC (cl.exe)     │
-│  │   └─ 同 MsvcAsanCompiler 流程 │
-│  ├─ Linux → GCC / Clang         │
-│  └─ 根据 availability 选择      │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  步骤 2：编译测试                │
-│  ├─ 构建编译命令                │
-│  ├─ 包含路径设置                │
-│  ├─ 库路径设置                  │
-│  └─ 执行编译 → 生成 test.exe    │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  步骤 3：运行测试                │
-│  ├─ subprocess 执行             │
-│  ├─ 捕获 stdout/stderr          │
-│  ├─ 超时保护                    │
-│  └─ 捕获崩溃/异常退出           │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  步骤 4：结果解析                │
-│  ├─ Google Test 输出解析        │
-│  │   ├─ [  PASSED  ] 计数      │
-│  │   ├─ [  FAILED  ] 计数      │
-│  │   └─ 提取失败详情            │
-│  ├─ unittest 输出解析           │
-│  └─ 通用文本解析                │
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  步骤 5：统计汇总                │
-│  ├─ 通过 / 总数 / 通过率 %      │
-│  ├─ 失败用例列表                │
-│  ├─ 错误信息摘录                │
-│  └─ 执行时间统计                │
-└─────────────────────────────────┘
+```json
+{
+  "skipped": true,
+  "test_skipped": true,
+  "test_status": "skipped",
+  "test_summary": "skipped (...)"
+}
 ```
 
 ---
 
-### 8. TestOrchestrator 测试编排器工具
+## 6. 快速开始
 
-**一站式流程：代码审查 → 报告 → 修复 → 测试文档 → 测试代码 → 测试运行**
+### 6.1 环境要求
 
-```
-╔═══════════════════════════════════════════════════════════════╗
-║                    TestOrchestrator 6 步流程                   ║
-╚═══════════════════════════════════════════════════════════════╝
+- Python 3.10+
+- pytest
+- 可选：C++ 编译器 / MSVC / CMake
+- 可选：Anthropic API key，用于真实 AI 代码生成
 
-输入：file_path + 各步骤开关配置
-     │
-     ▼
-╔═══════════════════════════════════════════════════════════════╗
-║  STEP 1: 代码审查  CodeReview                              [1]║
-╠═══════════════════════════════════════════════════════════════╣
-║  • 调用 code_review 工具                                       ║
-║  • 收集所有 issues（结构化数据）                               ║
-║  • 按严重程度排序                                              ║
-╚═══════════════════════════════╤═══════════════════════════════╝
-                                │
-                                ▼
-╔═══════════════════════════════════════════════════════════════╗
-║  STEP 2: 生成审查报告  CodeReviewReport                    [2]║
-╠═══════════════════════════════════════════════════════════════╣
-║  • 将上一步的 issues 传入报告工具                              ║
-║  • 生成 {project}/code_review.md                              ║
-║  • 包含问题统计、分类汇总、详细列表                            ║
-╚═══════════════════════════════╤═══════════════════════════════╝
-                                │
-                                ▼
-╔═══════════════════════════════════════════════════════════════╗
-║  STEP 3: 自动修复  AutoFixer                               [3]║
-╠═══════════════════════════════════════════════════════════════╣
-║  • 创建备份 backup_{filename}                                 ║
-║  • 检测可自动修复的问题                                        ║
-║  • 用户授权确认后应用修复                                      ║
-║  • 输出：修复率统计                                           ║
-╚═══════════════════════════════╤═══════════════════════════════╝
-                                │
-                                ▼
-╔═══════════════════════════════════════════════════════════════╗
-║  STEP 4: 测试文档生成  TestDocGenerator                     [4]║
-╠═══════════════════════════════════════════════════════════════╣
-║  • 分析（修复后的）源代码结构                                  ║
-║  • 设计测试用例（正常流 / 边界 / 异常）                        ║
-║  • 生成 {project}/test_documentation.md                       ║
-╚═══════════════════════════════╤═══════════════════════════════╝
-                                │
-                                ▼
-╔═══════════════════════════════════════════════════════════════╗
-║  STEP 5: 测试代码生成  TestGenerator                        [5]║
-╠═══════════════════════════════════════════════════════════════╣
-║  • 根据文档中的用例生成测试代码                                ║
-║  • 选择语言对应的测试框架模板                                  ║
-║  • 处理 main() 冲突等整合问题                                 ║
-║  • 生成 {project}/test_{project}.cpp                          ║
-╚═══════════════════════════════╤═══════════════════════════════╝
-                                │
-                                ▼
-╔═══════════════════════════════════════════════════════════════╗
-║  STEP 6: 运行测试  TestRunner                               [6]║
-╠═══════════════════════════════════════════════════════════════╣
-║  • 编译测试代码（自动选择 MSVC/GCC）                           ║
-║  • 运行测试程序                                               ║
-║  • 解析测试结果                                               ║
-║  • 统计：通过数 / 总数 / 通过率 %                             ║
-║  • 更新测试文档，回填执行结果                                  ║
-╚═══════════════════════════════╤═══════════════════════════════╝
-                                │
-                                ▼
-╔═══════════════════════════════════════════════════════════════╗
-║                          最终输出                              ║
-╠═══════════════════════════════════════════════════════════════╣
-║  {project}/                                                    ║
-║    ├─ backup_{filename}       ← 原始文件备份                  ║
-║    ├─ code_review.md          ← 审查报告                      ║
-║    ├─ fix_report.md           ← 修复报告                      ║
-║    ├─ test_documentation.md   ← 测试文档                      ║
-║    └─ test_{project}.cpp      ← 测试代码                      ║
-╚═══════════════════════════════════════════════════════════════╝
-```
-
-**数据流转：**
-- 步骤 1 → 2：`issues` 数据直接传递，避免重复审查
-- 步骤 3 → 4/5：修复后的源码用于后续测试生成
-- 步骤 6 → 4：测试结果回填到测试文档
-
-**时序（典型 C++ 文件，约 500 行）：**
-- Step 1 CodeReview: ~10ms
-- Step 2 Report: ~5ms
-- Step 3 AutoFix: ~50ms（含用户确认）
-- Step 4 TestDoc: ~100ms
-- Step 5 TestCode: ~100ms
-- Step 6 RunTest: ~2000ms（编译+运行）
-- **Total: ~2.5 秒**
-
----
-
-## 📊 数据流架构
-
-### 完整数据流图
-
-```
-用户查询字符串
-     │
-     │ [输入层]
-     ▼
-┌─────────────────────────────────────────────────────────┐
-│                    Planner 规划器                         │
-│  ├─ 查询解析                                             │
-│  ├─ 任务分类（测试/开发/自改进）                          │
-│  ├─ 可行性评估                                           │
-│  └─ 步骤拆解                                             │
-└───────────────┬─────────────────────────────────────────┘
-                │
-     ┌──────────┴──────────┐
-     │  执行计划对象        │
-     │  - step_list         │
-     │  - overall_goal      │
-     │  - complexity        │
-     │  - feasibility_score │
-     └──────────┬──────────┘
-                │
-                ▼
-┌─────────────────────────────────────────────────────────┐
-│                    Executor 执行器                        │
-│  ├─ 任务路由检测                                         │
-│  ├─ 工具参数准备                                         │
-│  ├─ 调用 ToolRegistry                                    │
-│  └─ 结果收集与合并                                       │
-└───────────────┬─────────────────────────────────────────┘
-                │
-                ▼
-┌─────────────────────────────────────────────────────────┐
-│                 ToolRegistry 工具注册表                   │
-└───────────────┬─────────────────────────────────────────┘
-                │
-    ┌───────────┼───────────┐
-    │           │           │
-    ▼           ▼           ▼
-[普通工具]  [自改进工具]  [测试编排工具]
-                           │
-                           ▼
-              ┌─────────────────────────────┐
-              │   TestOrchestrator 数据流    │
-              │  ┌─────────────────────┐    │
-              │  │  CodeReview         │    │
-              │  │  → issues 数据      │    │
-              │  └──────────┬──────────┘    │
-              │             │               │
-              │             ▼               │
-              │  ┌─────────────────────┐    │
-              │  │  CodeReviewReport   │    │
-              │  │  → code_review.md   │    │
-              │  └──────────┬──────────┘    │
-              │             │               │
-              │             ▼               │
-              │  ┌─────────────────────┐    │
-              │  │  AutoFixer          │    │
-              │  │  → 修复后的源码      │    │
-              │  │  → backup 文件       │    │
-              │  └──────────┬──────────┘    │
-              │             │               │
-              │             ▼               │
-              │  ┌─────────────────────┐    │
-              │  │  TestDocGenerator   │    │
-              │  │  → test_doc.md       │    │
-              │  │  → 测试用例结构      │    │
-              │  └──────────┬──────────┘    │
-              │             │               │
-              │             ▼               │
-              │  ┌─────────────────────┐    │
-              │  │  TestGenerator      │    │
-              │  │  → test_code.cpp     │    │
-              │  └──────────┬──────────┘    │
-              │             │               │
-              │             ▼               │
-              │  ┌─────────────────────┐    │
-              │  │  TestRunner         │    │
-              │  │  → 测试结果          │    │
-              │  │  → 通过率统计        │    │
-              │  │  → 回填到 test_doc   │    │
-              │  └─────────────────────┘    │
-              └─────────────────────────────┘
-                           │
-                           ▼
-              ┌─────────────────────────────┐
-              │  Reflector 反思器            │
-              │  ├─ 结果验证                 │
-              │  ├─ 错误检测                 │
-              │  ├─ 存入 Memory              │
-              │  └─ 生成执行总结             │
-              └───────────────┬─────────────┘
-                              │
-                              ▼
-                    [格式化输出给用户]
-```
-
----
-
-## 🚀 快速开始
-
-### 环境要求
-
-- Python 3.8+
-- (Windows) Visual Studio 2019/2022 (MSVC 编译器支持)
-- (Linux) GCC/Clang
-
-### 安装依赖
+### 6.2 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 命令行使用
-
-```python
-# 最简启动
-from devpal import AgentEngine
-
-agent = AgentEngine()
-response = agent.chat("帮我 review 这个代码并生成测试用例")
-print(response)
-```
-
-### 快速测试编排
+如果仓库没有统一 requirements，可至少安装测试依赖：
 
 ```bash
-# 测试编排一站式流程
-python -c "
-from devpal.tools import registry
-
-result = registry.execute_tool('test_orchestrator', {
-    'file_path': 'your_code.cpp',
-    'project_name': 'MyProject',
-    'run_code_review': True,
-    'run_auto_fix': True,
-    'generate_test_doc': True,
-    'generate_test_code': True,
-    'run_tests': True
-})
-print(result.content)
-"
+pip install pytest
 ```
 
----
-
-## 📖 使用示例
-
-### 示例 1：完整测试流程
-
-```python
-from devpal.tools import registry
-
-# 1. 代码审查
-review_result = registry.execute_tool('code_review', {
-    'file_path': 'src/buggy_code.cpp'
-})
-
-# 2. 自动修复
-fix_result = registry.execute_tool('auto_fixer', {
-    'file_path': 'src/buggy_code.cpp',
-    'create_backup': True
-})
-
-# 3. 生成测试文档
-doc_result = registry.execute_tool('test_doc_generator', {
-    'source_file': 'src/buggy_code.cpp',
-    'output_file': 'docs/test_plan.md'
-})
-
-# 4. 生成测试代码
-code_result = registry.execute_tool('test_generator', {
-    'source_file': 'src/buggy_code.cpp',
-    'output_file': 'tests/test_buggy.cpp',
-    'language': 'cpp'
-})
-
-# 5. 运行测试
-test_result = registry.execute_tool('test_runner', {
-    'test_file': 'tests/test_buggy.cpp',
-    'source_file': 'src/buggy_code.cpp'
-})
-```
-
-### 示例 2：使用 TestOrchestrator 一键完成
-
-```python
-from devpal.tools import registry
-
-result = registry.execute_tool('test_orchestrator', {
-    'file_path': 'src/buggy_code.cpp',
-    'project_name': 'MyProject',
-    'run_code_review': True,
-    'run_auto_fix': True,
-    'generate_test_doc': True,
-    'generate_test_code': True,
-    'run_tests': True
-})
-
-# 输出目录: MyProject/
-#   ├── backup_buggy_code.cpp      # 源文件备份
-#   ├── code_review.md             # 审查报告
-#   ├── test_documentation.md      # 测试文档
-#   └── test_buggy_code.cpp        # 测试代码
-```
-
-### 示例 3：自我改进
-
-```python
-from devpal.tools import registry
-
-# 自我代码审查
-result = registry.execute_tool('self_improve', {
-    'action': 'self_review',
-    'create_backup': True
-})
-
-# 自动修复发现的问题
-result = registry.execute_tool('self_improve', {
-    'action': 'apply_fixes',
-    'backup_name': 'backup_20240501_120000'
-})
-```
-
----
-
-## 📁 项目结构
-
-```
-DevPalAgent/
-├── devpal/                          # 主包
-│   ├── __init__.py                 # 版本和导出
-│   ├── main.py                     # 入口文件
-│   ├── cli.py                      # 命令行界面
-│   ├── config.py                   # 配置管理
-│   │
-│   ├── core/             # 核心引擎层
-│   │   ├── __init__.py
-│   │   ├── agent_engine.py         # Agent 主引擎 (130K, 11阶段工作流)
-│   │   ├── planner.py              # 规划器
-│   │   ├── reflector.py            # 反思器
-│   │   ├── openspec_workflow.py    # OpenSpec 工作流执行器
-│   ├── openspec_context.py     # OpenSpec 上下文管理
-│   │   │
-│   │   └── schema/          # OpenSpec v2.0 核心架构 ⭐
-│   │       ├── __init__.py
-│   │       ├── validation_engine.py    # 四层验证引擎 (27K)
-│   │       ├── delta_spec.py           # Delta 增量变更 (22K)
-│   │       ├── artifact_graph.py       # 工件依赖图 (42K)
-│   │       ├── workflow.py        # 声明式工作流 (27K)
-│   │       ├── requirements.py         # 需求文档管理 (14K)
-│   │       ├── event_bus.py        # 事件总线 (22K)
-│   │   ├── diagnostic_engine.py    # 诊断引擎 (26K)
-│   │       ├── rollout_engine.py       # 渐进式发布 (18K)
-│   │       ├── error_manager.py        # 错误管理器 (16K)
-│   │     ├── config_policy.py        # 配置策略 (17K)
-│   │       ├── compile_db.py           # 编译数据库 (12K)
-│   │       ├── spec.py                 # Spec 核心引擎 (59K)
-│   │       └── languages/              # 多语言插件
-│   │           ├── base.py
-│   │           ├── cpp_plugin.py       # C++ 语言插件
-│   │           └── cpp_rules.py        # C++ 规则引擎
-│   │
-│   ├── memory/                     # 记忆系统层
-│   │   ├── __init__.py
-│   │   ├── base.py                 # 记忆基类
-│   │   ├── memory_manager.py       # 记忆管理器
-│   │   ├── message_history.py      # 消息历史
-│   │   ├── short_term.py           # 短期记忆
-│   │   ├── long_term.py            # 长期记忆
-│   │   └── error_memory.py         # 错误记忆
-│   │
-│   ├── tools/                 # 工具系统层 (26个工具)
-│   │   ├── __init__.py
-│   │   ├── base.py                 # Tool 基类
-│   │   ├── function_call_base.py   # FunctionCall 抽象层
-│   │   ├── registry.py             # 工具注册表
-│   │   │
-│   │   ├── file_reader.py          # 📁 文件读取
-│   │   ├── file_writer.py          # 📁 文件写入
-│   │   ├── code_search.py          # 🔍 代码搜索
-│   │   ├── command_executor.py     # 💻 命令执行
-│   │   ├── compiler_analyzer.py    # 🔧 编译分析
-│   │   ├── file_reader.py    # 📁 文件读取
-│   │   ├── file_writer.py          # 📁 文件写入 (Delta 模式支持)
-│   │   ├── code_search.py        # 🔍 代码搜索
-│   │   ├── command_executor.py     # 💻 命令执行
-│   │   ├── compiler_analyzer.py    # 🔧 编译分析
-│   │   ├── static_analyzer.py      # 📊 静态分析
-│   │   ├── msvc_asan_compiler.py   # ⚡ MSVC ASAN
-│   │   ├── git_tool.py           # 🌿 Git 操作
-│   │   ├── code_review.py          # 👀 代码审查
-│   │   ├── code_review_report.py   # 📋 审查报告
-│   │   ├── auto_fixer.py           # 🔧 自动修复
-│   │   ├── test_orchestrator.py    # 🧪 测试编排核心 ⭐
-│   │   ├── test_doc_generator.py   # 📄 测试文档生成
-│   │   ├── test_generator.py       # ✏️ 测试代码生成
-│   │   ├── test_runner.py          # 🚀 测试运行器
-│   │   ├── project_generator.py    # 🏗️ 项目生成器 (OpenSpec)
-│   │   ├── spec_tool.py            # 📐 规范工具 (SpecEngine CLI)
-│   │   ├── self_source_reader.py   # 🔍 自源码读取
-│   │   ├── self_improve.py         # 🔄 自我改进
-│   │   ├── plugin_system.py        # 🔌 插件系统
-│   │   ├── hallucination_detector.py # 🎯 幻觉检测器
-│   │   └── linked_list.py          # 🧩 链表演示
-│   │
-│   └── web/                        # Web 界面
-│       ├── __init__.py
-│       └── app.py                  # 🌐 Flask/FastAPI
-│
-├── docs/                           # 文档与架构图
-│   ├── *.png                       # 架构图文件
-│   └── generate_architecture_diagrams.py
-│
-├── plugins/                        # 第三方插件目录
-│   └── example_plugin.py
-│
-├── .devpal_backups/                # 自动备份目录
-│   └── backup_timestamp/
-│
-├── config/                         # 配置文件
-│   └── config.yaml
-│
-├── requirements.txt                # 核心依赖
-├── requirements-web.txt            # Web 依赖
-│
-└── README.md                       # 本文件
-```
-
----
-
-## 🧪 测试编排系统 (阶段6里程碑)
-
-### 6步一站式流程
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Step 1: 代码审查  CodeReview   │  检测问题、严重程度分级  │
-├──────────────────────────────────┼────────────────────────────┤
-│  Step 2: 生成审查报告           │  Markdown 详细报告         │
-├──────────────────────────────────┼────────────────────────────┤
-│  Step 3: 自动修复 AutoFixer     │  智能修复、备份保护       │
-├──────────────────────────────────┼────────────────────────────┤
-│  Step 4: 测试文档生成           │  结构化用例、边界分析      │
-├──────────────────────────────────┼────────────────────────────┤
-│  Step 5: 测试代码生成           │  多语言模板、断言覆盖      │
-├──────────────────────────────────┼────────────────────────────┤
-│  Step 6: 运行测试 + 更新文档     │  MSVC/GCC、结果回填       │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### MSVC 编译器支持特性
-
-- ✅ Visual Studio 2019/2022 自动检测
-- ✅ vswhere.exe 路径探测
-- ✅ INCLUDE/LIB 环境变量自动配置
-- ✅ AddressSanitizer 内存错误检测
-- ✅ 编译错误自动解析
-- ✅ 测试结果自动统计
-
----
-
-## 🔄 自我改进系统 (阶段5里程碑)
-
-### 闭环进化流程
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│  1. SelfSourceReader → 读取自身源码，分析 AST 结构            │
-├──────────────────────────────────────────────────────────────┤
-│  2. 问题检测 → TODO/FIXME/print 调试代码/潜在 bug            │
-├──────────────────────────────────────────────────────────────┤
-│  3. 自动备份 → 备份 + 时间戳命名                               │
-├──────────────────────────────────────────────────────────────┤
-│  4. 应用修复 → LLM 建议 + 自动修改代码                        │
-├──────────────────────────────────────────────────────────────┤
-│  5. 自我验证 → 导入测试、注册测试、功能完整性检查              │
-└──────────────────────────────────────────────────────────────┘
-```
-
-### 安全特性
-
-- ✅ **修改前自动备份**：每次修改前自动创建备份
-- ✅ **可回滚**：随时可以恢复到历史版本
-- ✅ **沙箱验证**：先验证修改再应用
-- ✅ **变更追踪**：所有修改都有记录可查
-
-### SelfImprove 自我改进详细流程
-
-**源码读取 → 问题检测 → 备份 → 修复 → 自检验证**
-
-```
-输入：action (self_review / apply_fixes / rollback)
-     │
-     ▼
-┌───────────────────────────────────────────────────┐
-│  模式 1: self_review 自我审查模式                  │
-├───────────────────────────────────────────────────┤
-│  1. 调用 self_source_reader 读取自身源码           │
-│     ├─ devpal/tools/*.py                         │
-│     ├─ devpal/core/*.py                          │
-│     └─ 分析 AST 结构                              │
-│  2. 执行代码审查检测                              │
-│     ├─ TODO/FIXME 标记                           │
-│     ├─ print 调试代码                             │
-│     ├─ 未处理的异常                              │
-│     └─ 潜在的逻辑问题                            │
-│  3. 生成审查报告                                 │
-│  4. 创建备份（可选）                              │
-└───────────────────────────────────────────────────┘
-
-┌───────────────────────────────────────────────────┐
-│  模式 2: apply_fixes 应用修复模式                  │
-├───────────────────────────────────────────────────┤
-│  1. 定位到指定的备份目录                          │
-│  2. 读取备份中的修复建议                          │
-│  3. 显示变更预览 diff                             │
-│  4. 等待用户授权确认 ⚠️                           │
-│  5. 应用修复到源码文件                            │
-│  6. 执行自我验证                                  │
-│     ├─ 导入测试（是否能 import）                  │
-│     ├─ 工具注册测试                              │
-│     └─ 基本功能完整性检查                        │
-└───────────────────────────────────────────────────┘
-
-┌───────────────────────────────────────────────────┐
-│  模式 3: rollback 回滚模式                        │
-├───────────────────────────────────────────────────┤
-│  1. 列出可用的备份快照                            │
-│  2. 用户选择要回滚的版本                          │
-│  3. 确认回滚操作                                  │
-│  4. 从 .devpal_backups/ 恢复文件                  │
-│  5. 验证回滚后代码完整性                          │
-└───────────────────────────────────────────────────┘
-```
-
-**备份目录结构：**
-```
-.devpal_backups/
-└── self_improve_20240515_143022/
-    ├── manifest.json       ← 备份元数据
-    ├── diff.patch          ← 变更内容
-    ├── tools/              ← 工具文件备份
-    └── core/               ← 核心文件备份
-```
-
----
-
-### SelfSourceReader 自源码读取工具详细流程
-
-**递归扫描 → AST 解析 → 依赖分析 → 结构化输出**
-
-```
-输入：扫描路径（默认 devpal/）
-     │
-     ▼
-┌───────────────────────────────────────────────────┐
-│  步骤 1：源码文件扫描                              │
-│  ├─ 递归遍历目录                                  │
-│  ├─ 过滤 .py 文件                                │
-│  ├─ 排除 __pycache__、.git 等                    │
-│  └─ 收集文件列表                                 │
-└───────────────┬───────────────────────────────────┘
-                │
-                ▼
-┌───────────────────────────────────────────────────┐
-│  步骤 2：AST 抽象语法树解析                        │
-│  ├─ 使用 ast 模块解析每个文件                     │
-│  ├─ 提取类定义 → 基类 → 方法                      │
-│  ├─ 提取函数定义 → 参数 → 返回值                  │
-│  ├─ 提取导入依赖关系                             │
-│  └─ 提取顶层常量定义                             │
-└───────────────┬───────────────────────────────────┘
-                │
-                ▼
-┌───────────────────────────────────────────────────┐
-│  步骤 3：工具类识别                               │
-│  ├─ 检测 BaseTool 子类                            │
-│  ├─ 提取 name、description 属性                   │
-│  ├─ 提取 Parameters 类定义                       │
-│  └─ 分析 _execute 方法签名                        │
-└───────────────┬───────────────────────────────────┘
-                │
-                ▼
-┌───────────────────────────────────────────────────┐
-│  步骤 4：结构化输出                               │
-│  ├─ modules: 模块清单                             │
-│  ├─ tools: 工具清单                               │
-│  ├─ classes: 所有类定义                           │
-│  ├─ functions: 所有函数                           │
-│  └─ dependencies: 依赖关系图                      │
-└───────────────────────────────────────────────────┘
-```
-
----
-
-### PluginSystem 插件系统详细流程
-
-**动态加载 → 安全验证 → 注册集成 → 管理**
-
-```
-╔═══════════════════════════════════════════════════╗
-║           插件生命周期管理流程                      ║
-╚═══════════════════════════════════════════════════╝
-
-┌───────────────────────────────────────────────────┐
-│  操作 1: load_plugin 加载插件                      │
-├───────────────────────────────────────────────────┤
-│  1. 验证插件文件存在性                            │
-│  2. 读取插件源码                                 │
-│  3. 安全检查 ⚠️                                   │
-│     ├─ 检测危险代码：eval/exec/os.system          │
-│     ├─ 检查是否导入敏感模块                       │
-│     └─ 签名验证（可选）                           │
-│  4. 使用 importlib 动态加载模块                   │
-│  5. 查找所有 BaseTool 子类                       │
-│  6. 注册到 ToolRegistry                          │
-│  7. 返回加载成功信息                             │
-└───────────────────────────────────────────────────┘
-
-┌───────────────────────────────────────────────────┐
-│  操作 2: list_plugins 列出插件                    │
-├───────────────────────────────────────────────────┤
-│  • 返回已加载的插件列表                           │
-│  • 每个插件包含：名称、描述、加载时间、状态       │
-└───────────────────────────────────────────────────┘
-
-┌───────────────────────────────────────────────────┐
-│  操作 3: unload_plugin 卸载插件                    │
-├───────────────────────────────────────────────────┤
-│  1. 从 ToolRegistry 注销工具                      │
-│  2. 清理 Python 模块缓存                          │
-│  3. 返回卸载确认                                 │
-└───────────────────────────────────────────────────┘
-
-┌───────────────────────────────────────────────────┐
-│  操作 4: reload_plugin 重载插件                    │
-├───────────────────────────────────────────────────┤
-│  1. 先 unload                                    │
-│  2. 再 load                                      │
-│  3. 支持热更新调试                               │
-└───────────────────────────────────────────────────┘
-```
-
-**插件开发规范：**
-```python
-# plugins/example_my_tool.py
-from devpal.tools.base import BaseTool, ToolResult
-from pydantic import BaseModel, Field
-
-class ExampleMyTool(BaseTool):
-    """每个插件文件可以定义一个或多个工具类"""
-    
-    name = "example_my_tool"
-    description = "示例插件工具 - 描述功能"
-    
-    class Parameters(BaseModel):
-        required_param: str = Field(description="必填参数说明")
-        optional_param: int = Field(default=42, description="可选参数")
-        
-    def _execute(self, params: Parameters) -> ToolResult:
-        # 实现逻辑
-        result = do_something(params.required_param)
-        return ToolResult.ok(
-            content=f"处理完成: {result}",
-            metadata={"result": result}
-        )
-```
-
-**安全机制：**
-- 🛡️ **沙箱加载**：插件在受限环境中加载
-- 🔍 **代码扫描**：自动检测危险函数调用
-- 📝 **来源追踪**：所有插件调用都有审计日志
-- ⏹️ **可卸载**：随时可以禁用或移除
-
----
-
-## 🔧 其他核心工具流程
-
-### GitTool Git 操作工具
-
-**统一入口 → Action 分发 → 结果封装**
-
-```
-输入：action + 对应参数
-     │
-     ▼
-┌───────────────────────────────────────────────────┐
-│  Action: status 仓库状态                          │
-│  → git status --porcelain                        │
-│  → 解析变更文件列表                               │
-│  → 分类：新增 / 修改 / 删除 / 未跟踪              │
-└───────────────────────────────────────────────────┘
-
-┌───────────────────────────────────────────────────┐
-│  Action: commit 提交代码                           │
-│  → 验证 git 用户名/邮箱配置                       │
-│  → git add <files>                               │
-│  → git commit -m <message>                       │
-│  → 返回 commit hash                              │
-└───────────────────────────────────────────────────┘
-
-┌───────────────────────────────────────────────────┐
-│  Action: diff 查看差异                            │
-│  → git diff [--cached] [file]                    │
-│  → 格式化输出变更内容                             │
-│  → 统计变更行数                                  │
-└───────────────────────────────────────────────────┘
-
-┌───────────────────────────────────────────────────┐
-│  Action: review 代码审查                          │
-│  → 获取变更文件列表                               │
-│  → 委托给 CodeReview 工具                        │
-│  → 只审查变更的文件（节省时间）                   │
-│  → 输出审查报告                                  │
-└───────────────────────────────────────────────────┘
-```
-
----
-
-### StaticAnalyzer 静态分析工具
-
-**多引擎支持 → 并行执行 → 结果聚合**
-
-```
-输入：文件路径 + 启用的检查器
-     │
-     ▼
-┌───────────────────────────────────────────────────┐
-│  检查器 1: Clang-Tidy                             │
-│  ├─ clang-tidy <file> --checks=*                 │
-│  ├─ 支持 C/C++ 代码质量检查                       │
-│  ├─ 检测：内存泄漏、空指针解引用、未初始化变量   │
-│  └─ 现代 C++ 规范建议                             │
-└───────────────────────────────────────────────────┘
-
-┌───────────────────────────────────────────────────┐
-│  检查器 2: CppCheck                               │
-│  ├─ cppcheck --enable=all <file>                 │
-│  ├─ 轻量级静态分析                               │
-│  ├─ 检测：越界访问、未使用变量、重复赋值          │
-│  └─ 性能问题建议                                 │
-└───────────────────────────────────────────────────┘
-
-┌───────────────────────────────────────────────────┐
-│  结果聚合器                                       │
-│  ├─ 合并多个检查器的输出                         │
-│  ├─ 去重相同问题                                 │
-│  ├─ 按严重程度排序                               │
-│  └─ 生成汇总统计                                 │
-└───────────────────────────────────────────────────┘
-```
-
----
-
-### CompilerAnalyzer 编译错误分析工具
-
-**输出解析 → 错误定位 → 修复建议**
-
-```
-输入：编译器 stdout/stderr 原始输出
-     │
-     ▼
-┌───────────────────────────────────────────────────┐
-│  步骤 1：错误行解析                               │
-│  MSVC 格式:                                       │
-│    file.cpp(42): error C2065: 'x': undeclared...  │
-│                                                   │
-│  GCC 格式:                                        │
-│    file.cpp:42:10: error: 'x' was not declared... │
-│                                                   │
-│  → 正则表达式捕获：文件、行号、列号、错误码、消息  │
-└───────────────┬───────────────────────────────────┘
-                │
-                ▼
-┌───────────────────────────────────────────────────┐
-│  步骤 2：错误分类                                 │
-│  🔴 语法错误 → 必须修复才能编译                   │
-│  🟡 警告 → 可编译但建议修复                       │
-│  🔵 信息 → 提示性消息                             │
-└───────────────┬───────────────────────────────────┘
-                │
-                ▼
-┌───────────────────────────────────────────────────┐
-│  步骤 3：修复建议生成                             │
-│  ├─ 基于错误码匹配知识库                         │
-│  ├─ C2065 未声明 → 建议添加 #include 或声明       │
-│  ├─ C2679 运算符不匹配 → 建议类型转换             │
-│  ├─ C1083 无法打开 → 检查 include 路径            │
-│  └─ LNK2019 链接错误 → 检查库依赖                │
-└───────────────┬───────────────────────────────────┘
-                │
-                ▼
-┌───────────────────────────────────────────────────┐
-│  输出：结构化结果                                 │
-│  {                                                │
-│    "errors": [...],                               │
-│    "warnings": [...],                             │
-│    "total_errors": N,                             │
-│    "total_warnings": M,                           │
-│    "fix_suggestions": [...]                       │
-│  }                                                │
-└───────────────────────────────────────────────────┘
-```
-
----
-
-## 🎨 Web 界面
-
-### 功能
-
-- 📊 实时执行状态面板
-- 🧰 多标签页工具面板
-- 📁 文件浏览器集成
-- 📋 代码审查报告可视化
-- 📈 测试执行结果展示
-
-### 启动方式
+### 6.3 运行 installer smoke flow
 
 ```bash
-# 安装 Web 依赖
-pip install -r requirements-web.txt
-
-# 启动 Web 服务
-python -m devpal.web.app
+python test_simple.py
 ```
 
----
+预期：
 
-## 🔌 插件系统
+- 项目目录：`test_phase_skip/`
+- Phase 3/5/6/7/10 skipped
+- Phase 9 四层 0 issue
+- Phase 11 显示 `tests: skipped (...)`
+- 不生成 `cpp_test_phase_skip/`
 
-### 快速创建插件
+运行后可查看：
 
-```python
-# plugins/my_custom_tool.py
-from devpal.tools.base import BaseTool, ToolResult
-
-class MyCustomTool(BaseTool):
-    name = "my_custom_tool"
-    description = "我的自定义工具"
-    
-    class Parameters:
-        param1: str = "参数1"
-    
-    def _execute(self, params):
-        # 自定义逻辑
-        return ToolResult.ok("执行成功")
+```text
+test_phase_skip/docs/final_report.md
+test_phase_skip/docs/quality_gate_report.md
+test_phase_skip/CLAUDE.md
 ```
 
-### 动态加载
-
-```python
-from devpal.tools import registry
-
-registry.execute_tool('plugin_system', {
-    'action': 'load_plugin',
-    'plugin_path': 'plugins/my_custom_tool.py'
-})
-```
-
----
-
-## 📊 架构图
-
-### v2.0 OpenSpec 架构图 (最新)
-
-所有 OpenSpec v2.0 架构图位于 `doc2.0/` 目录，包含 9 张高清 300 DPI PNG 图片：
-
-| 架构图 | 版本 | 内容详解 |
-|--------|------|----------|
-| **01_OpenSpec_Architecture_Overview.png** | v2.0 | **7层完整架构概览**<br/>交互层 → 工作流执行层 → Schema核心层 → 事件总线层 → 深化体验层 → 多语言支持层 → 工具执行层 → 持久化层 |
-| **02_OpenSpec_9_Phase_Workflow.png** | v2.0 | **9阶段工作流全图**<br/>需求解析 → 项目结构 → 代码生成 → 代码审查 → 自动修复 → 测试文档 → 测试代码 → 运行测试 → 最终报告 |
-| **03_Schema_Architecture_Layer.png** | v2.0 | **Schema 架构层详解**<br/>ValidationEngine + DeltaSpec + ArtifactGraph + WorkflowEngine + RequirementsManager + EventBus 关系图 |
-| **04_Validation_Engine_Four_Layer.png** | v2.0 | **四层验证引擎**<br/>Format格式验证 → Semantic语义验证 → Parser解析验证 → Business业务规则验证 |
-| **05_ArtifactGraph_Dependency.png** | v2.0 | **工件依赖图**<br/>需求文档 → 代码实现 → 测试代码 → 文档 → 配置 的完整依赖链 |
-| **06_DeltaSpec_Change_Flow.png** | v2.0 | **Delta 变更流程图**<br/>原始文件 → Delta操作 → 冲突检测 → 验证 → 增量应用 → 结果输出 |
-| **07_EventBus_Architecture.png** | v2.0 | **事件总线架构**<br/>发布者 → 优先级队列 → 过滤器 → 适配器 → 订阅者 的完整发布订阅流程 |
-| **08_Multilingual_Plugin_System.png** | v2.0 | **多语言插件系统**<br/>LanguagePlugin 接口 → C++ 插件 → 编译数据库（CMake/Make/MSVC）|
-| **09_Complete_Data_Flow.png** | v2.0 | **端到端完整数据流**<br/>7阶段数据流转：用户输入 → 检测解析 → Schema 处理 → 工作流执行 → Delta 变更 → 工具执行 → 输出交付 |
-
-### v1.6 经典架构图 (历史版本)
-
-位于 `docs/` 目录，包含测试编排系统架构：
-
-| 架构图 | 版本 | 内容详解 |
-|--------|------|----------|
-| **Complete_Data_Flow_v1.6.png** | v1.6 | 测试编排 6步数据流图 |
-| **Test_Orchestrator_System_Architecture_v1.6.png** | v1.6 | 测试编排系统详情 |
-| **Tool_System_Architecture_v1.6.png** | v1.6 | 工具系统架构 |
-
-### 架构图生成脚本
+### 6.4 运行 M1 目标测试
 
 ```bash
-# 重新生成 OpenSpec v2.0 架构图 (推荐)
-python doc2.0/generate_openspec_v2_architecture.py
-
-# 重新生成 v1.6 架构图 (历史)
-python docs/generate_architecture_diagrams_v1.6_final.py
+python -m pytest tests/openspec/test_spec_first_artifacts.py tests/openspec/test_phase10_run_tests.py tests/openspec/test_phase9_quality_gate.py tests/e2e/test_installer_flow.py
 ```
 
-**依赖要求：**
+最近验证结果：
+
+```text
+22 passed, 2 warnings
+```
+
+### 6.5 运行更多测试
+
 ```bash
-pip install graphviz
-```
-
-> 💡 Graphviz 绘图引擎需要单独安装：
-> - Windows: `choco install graphviz` 或从官网下载
-> - macOS: `brew install graphviz`
-> - Linux: `sudo apt-get install graphviz`
-
----
-
-## 🛠️ 开发指南
-
-### 添加新工具
-
-```python
-# 1. 继承 BaseTool
-from devpal.tools.base import BaseTool, ToolResult
-
-class MyNewTool(BaseTool):
-    name = "my_new_tool"
-    description = "新工具的描述"
-    
-    class Parameters:
-        required_param: str
-        optional_param: int = 42
-    
-    def _execute(self, params):
-        # 你的实现逻辑
-        return ToolResult.ok("执行成功", data=result)
-
-# 2. 在 tools/registry.py 中注册
-# from .my_new_tool import MyNewTool
-# self.register(MyNewTool())
-```
-
-### 调试
-
-```python
-# 启用调试模式
-from devpal.config import set_config
-set_config('DEBUG', True)
+python -m pytest tests/openspec
+python -m pytest tests/test_install_script_generator.py
 ```
 
 ---
 
-## 📈 更新日志
+## 7. E2E Demo
 
-### v2.0 (2026-05-08) ✅ 最新 🔥
+### 7.1 输入需求
 
-> **OpenSpec 规范优先架构大版本 - 完整的需求驱动开发引擎**
+示例文件：
 
-#### ✨ 核心架构升级
+```text
+requirements/test_phase_skip.md
+```
 
-- ✨ **OpenSpec 9阶段工作流引擎** - 从需求文档到可交付项目的一站式自动化
-- ✨ 需求自动检测机制 - 关键词识别 + .md 需求文件自动检测
-- ✨ **SpecEngine 规范引擎** - Spec-First 架构核心，需求规范 → 工件关联 → 状态持久化
-- ✨ **ValidationEngine 四层验证引擎** - Format格式 → Semantic语义 → Parser解析 → Business业务规则
-- ✨ **DeltaSpec 增量变更机制** - 原子 Delta 应用，冲突检测，自动回滚，安全写入
-- ✨ **ArtifactGraph 工件依赖图** - 需求/代码/测试/文档 自动关联，影响范围分析
-- ✨ **EventBus 事件总线** - 发布订阅架构，优先级队列，7种标准事件，解耦通信
-- ✨ **OpenSpecContext 统一上下文** - 7大模块统一入口，状态管理，快照/回滚
+内容描述一个安装脚本项目：
 
-#### ✨ 深化体验层 (Phase 5)
+```markdown
+# 安装脚本生成器测试
 
-- ✨ **DiagnosticEngine 智能诊断** - 健康评分，问题定位，根因分析
-- ✨ **RolloutEngine 渐进式发布** - 灰度发布 → 全量 → 回滚机制
-- ✨ **ConfigPolicy 配置策略** - 质量门禁，发布策略，规则引擎
-- ✨ **ErrorManager 统一错误处理** - 错误分类，恢复策略，重试机制
+这是一个安装脚本项目，用于生成 Claude Code CLI 的安装脚本。
+本项目是安装脚本类型，不需要 C++ 编译、CMake 配置和测试。
+```
 
-#### ✨ 多语言支持层 (Phase 6)
+### 7.2 执行命令
 
-- ✨ **LanguagePlugin 插件系统** - 可扩展语言支持架构
-- ✨ **C++ 完整插件支持** - AST解析，12+代码质量规则，编译数据库集成
-- ✨ **CompilationDatabase 编译数据库** - CMake / Makefile / MSVC 自动检测
-- ✨ 预留 Python / Rust / Go 插件扩展接口
+```bash
+python test_simple.py
+```
 
-#### ✨ 新增工具
+### 7.3 关键输出
 
-- ✨ **project_generator** - 从需求到项目生成器
-- ✨ **spec_tool** - SpecEngine 命令行工具
-- ✨ **openspec_cli** - OpenSpec 工作流命令行入口
+```text
+[SKIP] Phase 3 ... 安装脚本项目不需要 AI 技术设计
+[SKIP] Phase 5 ... 安装脚本项目不需要生成测试代码
+[SKIP] Phase 6 ... 安装脚本项目不需要 CMake 配置
+[SKIP] Phase 7 ... 安装脚本项目不需要测试文档
+[SKIP] Phase 10 ... 安装脚本项目不需要编译和运行测试
 
-#### 📊 文档与架构
+Phase 9:
+FORMAT layer: 0 issue(s)
+SEMANTIC layer: 0 issue(s)
+PARSER layer: 0 issue(s)
+BUSINESS layer: 0 issue(s)
 
-- ✅ 9 张全新 OpenSpec v2.0 架构图（300 DPI 高清）
-- ✅ doc2.0/ 完整架构文档目录
-- ✅ OpenSpec 9阶段工作流指南 (`docs/OPENSPEC_WORKFLOW_GUIDE.md`)
-- ✅ 快速开始指南 (`QUICKSTART.md`)
+Phase 11:
+tests: skipped (...)
+```
 
----
+更多说明见：
 
-### v1.6 (2026-05-05)
-
-- ✨ **新增测试编排系统**（TestOrchestrator）- 6步一站式流程
-- ✨ 新增 CodeReview 独立代码审查工具
-- ✨ 新增 AutoFixer 智能自动修复工具
-- ✨ 新增 TestDocGenerator 测试文档生成器
-- ✨ 新增 TestGenerator 测试代码生成器
-- ✨ 新增 TestRunner 测试运行器，**MSVC/GCC 双支持**
-- ✨ 完善 MSVC ASAN 编译器支持，自动环境配置
-- ✨ Planner 增加测试任务自动识别
-- ✨ AgentEngine 增加 TestOrchestrator 快捷执行路径
-- 📊 新增 v1.6 全套架构图
-
-### v1.5 (2024-05-04)
-
-- ✨ 新增自我改进系统（Self-Source-Reader + Self-Improve）
-- ✨ 新增插件系统（PluginSystem）
-- ✨ 完善记忆管理器架构
-- 📊 新增 v1.5 架构图
-
-### v1.1 (2024-05-02)
-
-- ✨ 多模态支持（ImageAnalyzer）
-- ✨ Git 工具集成
-- ✨ Web 界面初版
-- ✨ 静态分析工具
-
-### v1.0 (2024-05-01)
-
-- 🎉 初始版本发布
-- ✅ Plan-Act-Reflect 核心引擎
-- ✅ 8 个基础工具
-- ✅ 记忆系统三层架构
+- [doc3.0/e2e_demo.md](doc3.0/e2e_demo.md)
 
 ---
 
-## 📝 许可证
+## 8. 面试 / 项目讲解亮点
 
-MIT License
+如果用这个项目面试 Agent 工程岗位，推荐这样定位：
 
----
+> DevPalAgent 是一个 Spec-first Agentic SDLC Runtime。它把 LLM 代码生成放进确定性的工程流水线，通过需求解析、阶段化调度、工具调用、质量门禁、测试执行、checkpoint 恢复和 final report，解决 AI 代码生成不可控、不可验证、不可追踪的问题。
 
-## 🤝 贡献
+重点亮点：
 
-欢迎提交 Issue 和 Pull Request！
+1. **Agent workflow orchestration**：不是单 prompt，而是 11 阶段状态机。
+2. **Tool use**：Phase 4 通过 tool loop 写文件。
+3. **State management**：OpenSpecContext + checkpoint/resume。
+4. **Reliability**：success policy、skipped 语义、quality gate。
+5. **Evaluation**：Phase 9/10/11 把生成结果变成可验证报告。
+6. **Multi-language awareness**：C++/Python/installer 分支已稳定。
+7. **Traceability**：ArtifactGraph 追踪需求到代码/测试/文档。
+8. **Roadmap**：OpenSpec changes/archive/traceability 是下一阶段。
 
----
+详细面试讲法见：
 
-## ⭐ 里程碑
-
-- ✅ v1.0 - 基础 Agent 框架（阶段1）
-- ✅ v1.1 - 多模态 + 工具链扩展（阶段4）
-- ✅ v1.5 - 自我改进系统（阶段5）
-- ✅ v1.6 - 测试编排系统（阶段6）
-- ✅ **v2.0 - OpenSpec 规范优先架构大版本 ← 当前最新**
-  - ✅ 9阶段需求驱动开发工作流
-  - ✅ SpecEngine 规范引擎 + DeltaSpec 增量变更
-  - ✅ 四层验证引擎 + 工件依赖图
-  - ✅ 事件总线架构 + 多语言插件系统
-  - ✅ 渐进式发布 + 统一错误处理
-- 🚧 下一阶段：Web UI 2.0 + 协作开发支持
+- [doc3.0/interview_pitch.md](doc3.0/interview_pitch.md)
 
 ---
 
-*本项目采用 DevPal Agent 自我改进系统维护，代码质量持续优化中...*
+## 9. 当前限制
+
+当前仍不是完整 OpenSpec 复刻版，主要差距包括：
+
+1. **缺少 OpenSpec changes 目录模型**
+   - 尚未生成 `openspec/changes/<change-id>/proposal.md/spec.md/tasks.md`。
+
+2. **Delta 仍偏执行产物**
+   - `.spec/delta.json` 已有，但还不是 OpenSpec 风格 Markdown delta spec。
+
+3. **Archive 机制未完成**
+   - 尚不能把 delta 合并到 `openspec/specs/main.md`。
+
+4. **Traceability 仍缺变更历史**
+   - ArtifactGraph 可追踪需求到文件，但还不能回答“哪个 change 引入了这个需求”。
+
+5. **LanguagePlugin 未完全主流程化**
+   - Phase 2/4/9/10/11 已语言感知，但统一插件接口还未完全贯通。
+
+6. **EventBus 未接入主流程**
+   - 事件总线存在，但还没有成为默认 runtime event log。
+
+---
+
+## 10. Roadmap
+
+### M1：语言感知闭环稳定版
+
+状态：✅ 已完成
+
+- Phase 2 语言感知目录结构
+- Phase 9 语言感知质量门禁
+- Phase 10 Python pytest canonical result
+- Phase 11 / CLAUDE.md 语言感知
+- installer e2e 覆盖
+
+### M2：OpenSpec Change MVP
+
+目标：补齐 OpenSpec 核心 changes/proposal/spec/tasks 模型。
+
+计划输出：
+
+```text
+openspec/
+├── project.md
+├── specs/main.md
+└── changes/<change-id>/
+    ├── proposal.md
+    ├── specs/spec.md
+    ├── tasks.md
+    ├── design.md
+    └── metadata.json
+```
+
+### M3：Archive + Traceability
+
+目标：需求生命周期闭环。
+
+- `archive_change(change_id)`
+- spec delta 合并到 main spec
+- ArtifactGraph 增加 introduced_by / modified_by / archived_at
+- final report 输出 requirement coverage matrix
+
+### M4：AI-agnostic 协作模式
+
+目标：DevPalAgent 不仅自己调用 LLM，也能服务 Claude Code / Cursor / Cline。
+
+- 完整 CLAUDE.md
+- changes 目录
+- propose-only / apply-only 模式
+- AI 助手可直接读取的规范上下文
+
+---
+
+## 11. 仓库文件说明
+
+```text
+devpal/
+├── main.py                    # 应用入口
+├── cli.py                     # CLI 命令
+├── config.py                  # 配置管理
+├── core/
+│   ├── agent_engine.py        # Agent 主引擎，组织 Planner/Executor/Reflector
+│   ├── planner.py             # Planner 规划器
+│   ├── reflector.py           # Reflector 反思器
+│   ├── openspec_executor.py   # OpenSpec workflow facade
+│   ├── openspec_workflow.py   # OpenSpec 工作流封装
+│   ├── openspec_phases/       # Phase 1-11 workflow
+│   ├── schema/                # ArtifactGraph / ValidationEngine / Delta / EventBus
+│   ├── prompts/               # Dynamic prompt engine
+│   ├── templates/             # C++/Python/installer templates
+│   ├── compiledb/             # 编译数据库解析
+│   └── i18n/                  # 多语言文案
+├── memory/                    # short-term / long-term / error memory
+├── tools/                     # ToolRegistry 下的文件、命令、Git、审查、测试、自改进工具
+├── workflows/                 # 声明式 workflow 配置
+└── multimodal/                # 多模态能力
+
+tests/
+├── openspec/                  # OpenSpec phase/unit tests
+├── e2e/                       # End-to-end smoke flows
+└── golden/                    # Golden cases
+
+doc3.0/
+├── agent_architecture.md      # Agent 架构说明
+├── interview_pitch.md         # 面试讲法
+└── e2e_demo.md                # E2E demo 命令说明
+
+README_old.md                 # 旧版 README 备份
+README.md                     # 当前新版 README
+```
+
+---
+
+## 12. 维护约定
+
+- 运行产物不要提交：`.spec/`、`test_phase_skip/`、`cpp_test_phase_skip/`、`__pycache__/`。
+- skipped 不等于 passed，报告中必须保留 skipped reason。
+- 新增语言时不要只改 prompt，必须同步 Phase 2/4/9/10/11。
+- 新增能力优先加 targeted tests，再加 e2e smoke。
+- OpenSpec 对标方向优先补 changes/archive/traceability，不建议重写现有 11 阶段流水线。
