@@ -21,6 +21,7 @@ class TestSelfHealer:
         self.heal_attempts = 0
         self.heal_success = 0
         self.model_switches = 0  # 模型切换次数
+        self.model_switched = False  # 模型切换状态标志
 
     def log(self, message: str):
         if self.logger:
@@ -41,13 +42,16 @@ class TestSelfHealer:
 
             prompt = self._build_compile_error_fix_prompt(test_file.name, test_code, source_code_context, error_output)
             self.log(f" [HEAL] Calling AI to analyze and fix...")
-            if use_fallback:
+            if use_fallback and not self.model_switched:
                 client = LLMClient(model=self.fallback_model)
+                self.model_switched = True
                 self.model_switches += 1
                 self.log(f" [HEAL] Switched to fallback model: {self.fallback_model}")
+            elif use_fallback:
+                client = LLMClient(model=self.fallback_model)
             else:
                 client = self.llm_client
-            response = client.generate(
+                response = client.generate(
                 system="You are a C++ expert helping fix code issues.",
                 user_message=prompt
             )
@@ -99,14 +103,16 @@ class TestSelfHealer:
             prompt = self._build_test_failure_fix_prompt(test_file.name, test_code, impl_code, header_code, test_output, passed, total)
             self.log(f" [HEAL] Calling AI to analyze test failures...")
 
-            if use_fallback:
+            if use_fallback and not self.model_switched:
                 client = LLMClient(model=self.fallback_model)
+                self.model_switched = True
                 self.model_switches += 1
                 self.log(f" [HEAL] Switched to fallback model: {self.fallback_model}")
+            elif use_fallback:
+                client = LLMClient(model=self.fallback_model)
             else:
                 client = self.llm_client
-
-            response = client.generate(
+                response = client.generate(
                 system="You are a C++ expert helping fix code issues.",
                 user_message=prompt
             )

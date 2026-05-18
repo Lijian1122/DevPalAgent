@@ -6,6 +6,8 @@ from typing import Callable, List, Tuple, Dict, Any, Optional
 import re
 import json
 
+from devpal.tools import base
+
 from .base import PhaseInterface, PhaseResult, OpenSpecContext
 from ..llm_client import LLMClient, get_llm_client
 try:
@@ -69,6 +71,9 @@ class Phase9QualityGate(PhaseInterface):
         if hasattr(self.context, 'config') and self.context.config:
             user_config = self.context.config.get('phase9_quality_gate', {})
             self._deep_merge_config(default_config, user_config)
+        # 验证配置
+        self._validate_config(default_config)
+
 
         return default_config
 
@@ -80,6 +85,44 @@ class Phase9QualityGate(PhaseInterface):
             else:
                 base[key] = value
         return base
+
+    def _validate_config(self, config: Dict[str, Any]) -> None:
+        """验证配置项的合法性"""
+        code_review = config.get('code_review', {})
+
+        # 验证 max_files
+        max_files = code_review.get('max_files', 50)
+        if not isinstance(max_files, int) or max_files <= 0:
+            raise ValueError(f"Invalid max_files: {max_files}. Must be a positive integer.")
+
+        # 验证 check_types
+        check_types = code_review.get('check_types', [])
+        valid_types = ['todo', 'debug', 'security', 'performance']
+        for check_type in check_types:
+            if check_type not in valid_types:
+               raise ValueError(f"Invalid check_type: {check_type}. Must be one of {valid_types}")
+
+        # 验证 self_heal 配置
+        self_heal = code_review.get('self_heal', {})
+
+        max_attempts = self_heal.get('max_attempts', 3)
+        if not isinstance(max_attempts, int) or max_attempts <= 0 or max_attempts > 10:
+            raise ValueError(f"Invalid max_attempts: {max_attempts}. Must be between 1 and 10.")
+
+        switch_model_after = self_heal.get('switch_model_after', 2)
+        if not isinstance(switch_model_after, int) or switch_model_after < 0:
+              raise ValueError(f"Invalid switch_model_after: {switch_model_after}. Must be non-negative.")
+
+        if switch_model_after > max_attempts:
+          raise ValueError(f"switch_model_after ({switch_model_after}) cannot be greater than max_attempts ({max_attempts})")
+
+        max_fixes_per_attempt = self_heal.get('max_fixes_per_attempt', 10)
+        if not isinstance(max_fixes_per_attempt, int) or max_fixes_per_attempt <= 0 or max_fixes_per_attempt > 50:
+            raise ValueError(f"Invalid max_fixes_per_attempt: {max_fixes_per_attempt}. Must be between 1 and 50.")
+
+        fallback_model = self_heal.get('fallback_model', '')
+        if not isinstance(fallback_model, str) or not fallback_model:
+            raise ValueError(f"Invalid fallback_model: {fallback_model}. Must be a non-empty string.")
 
     def execute(self) -> PhaseResult:
         self.log("Phase 9: Quality Gate - running mandatory checks...")
