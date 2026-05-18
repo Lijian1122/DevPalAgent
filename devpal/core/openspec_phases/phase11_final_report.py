@@ -205,8 +205,8 @@ class Phase11FinalReport(PhaseInterface):
 
     def _build_artifact_graph_data(self) -> Dict[str, object]:
         requirements = self.context.structured_requirements or []
-        source_files = self._relative_files(["src/*.cpp", "include/*.h"])
-        test_files = self._relative_files(["tests/test_*.cpp"])
+        source_files = self._relative_files(self._source_file_patterns())
+        test_files = self._relative_files(self._test_file_patterns())
 
         nodes: List[Dict[str, object]] = []
         edges: List[Dict[str, str]] = []
@@ -345,8 +345,8 @@ class Phase11FinalReport(PhaseInterface):
             except Exception as e:
                 self.log("  [WARN] ArtifactGraph traceability failed: {}".format(e))
 
-         source_files = self._relative_files(["src/*.cpp", "include/*.h"])
-         test_files = self._relative_files(["tests/test_*.cpp"])
+         source_files = self._relative_files(self._source_file_patterns())
+         test_files = self._relative_files(self._test_file_patterns())
          status = self._acceptance_status()
 
          implementation = ", ".join(source_files) if source_files else "(none)"
@@ -359,6 +359,66 @@ class Phase11FinalReport(PhaseInterface):
             )
          return lines
 
+
+    def _source_file_patterns(self) -> List[str]:
+        language = getattr(self.context, "language", "cpp")
+        project_type = getattr(self.context, "project_type", "")
+        if language == "cpp" or self.context.is_cpp:
+            return ["src/*.cpp", "src/*.cc", "src/*.cxx", "include/*.h", "include/*.hpp"]
+        if language == "python":
+            return ["src/*.py"]
+        if language == "shell" or project_type in {"installer", "tooling", "cli_tool"}:
+            return ["scripts/*.sh", "src/*.py", "src/*.sh"]
+        return ["src/*"]
+
+    def _test_file_patterns(self) -> List[str]:
+        language = getattr(self.context, "language", "cpp")
+        if language == "cpp" or self.context.is_cpp:
+            return ["tests/test_*.cpp", "tests/*_test.cpp"]
+        if language == "python":
+            return ["tests/test_*.py"]
+        if language == "shell":
+            return ["tests/test_*.sh"]
+        return ["tests/test_*"]
+
+    def _language_features(self):
+        try:
+            from devpal.core.schema.languages.language_config import get_language_features
+            return get_language_features(getattr(self.context, "language", "cpp"))
+        except Exception:
+            return None
+
+    def _file_structure_lines(self) -> List[str]:
+        features = self._language_features()
+        project_type = getattr(self.context, "project_type", "")
+        if project_type in {"installer", "tooling", "cli_tool"}:
+            return [
+                "src/        # Installer/tooling implementation files",
+                "tests/      # Python test files (test_*.py)",
+                "docs/       # Generated documentation",
+                ".spec/      # OpenSpec artifacts",
+            ]
+        if features:
+            return ["{:<11} # {}".format(name + "/", desc) for name, desc in features.project_structure.items()]
+        return [
+            "src/        # Source files",
+            "tests/      # Test files",
+            "docs/       # Generated documentation",
+            ".spec/      # OpenSpec artifacts",
+        ]
+
+    def _coding_convention_lines(self, namespace: str) -> List[str]:
+        features = self._language_features()
+        if not features:
+            return ["- Namespace: {}".format(namespace)]
+        lines = []
+        for element, convention in features.naming_conventions.items():
+            lines.append("- {} names: {}".format(element.capitalize(), convention))
+        lines.append("- Test framework: {}".format(features.test_framework))
+        lines.append("- Build system: {}".format(features.build_system))
+        if getattr(self.context, "project_type", "") in {"installer", "tooling", "cli_tool"}:
+            lines.append("- Project type: installer/tooling; native build phases are not applicable")
+        return lines
 
     def _relative_files(self, patterns: List[str]) -> List[str]:
         files = []
@@ -373,7 +433,8 @@ class Phase11FinalReport(PhaseInterface):
         try:
             reqs = self.context.structured_requirements or []
             project_name = self.context.project_name or self.context.project_dir.name
-            lang = "C++" if self.context.is_cpp else "Python"
+            features = self._language_features()
+            lang = features.language_name if features else ("C++" if self.context.is_cpp else "Python")
             ns = project_name.lower().replace("-", "_").replace(" ", "_")
 
             lines = [
@@ -416,20 +477,16 @@ class Phase11FinalReport(PhaseInterface):
                 "## File Structure",
                 "",
                 "```",
-                "src/        # Implementation files (.cpp)",
-                "include/    # Header files (.h)",
-                "tests/      # Test files (test_*.cpp)",
-                "docs/       # Generated documentation",
-                ".spec/     # OpenSpec artifacts",
+            ]
+            lines.extend(self._file_structure_lines())
+            lines += [
                 "```",
                 "",
                 "## Coding Conventions",
                 "",
-                "- File names: snake_case",
-                "- Class names: PascalCase",
-                "- Namespace: {}".format(ns),
-                "- Test framework: custom test_base.h (ASSERT_TRUE, ASSERT_EQ, RUN_TEST)",
-                "- Build system: CMake",
+            ]
+            lines.extend(self._coding_convention_lines(ns))
+            lines += [
                 "",
                 "## Test Results",
                 "",

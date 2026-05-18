@@ -103,14 +103,25 @@ class Phase10RunTests(PhaseInterface):
                 env=env
             )
 
+            output = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
+            self.context.test_output = output
+            test_total = len(test_files)
+
             if result.returncode == 0:
+                self.context.test_passed = test_total
+                self.context.test_failed = 0
+                self.context.test_total = test_total
                 self.log("  [OK] All Python tests passed")
                 return PhaseResult.ok(
                     "Python tests passed",
-                    test_count=len(test_files),
-                    passed=True
+                    test_passed=test_total,
+                    test_failed=0,
+                    test_total=test_total,
                 )
             else:
+                self.context.test_passed = 0
+                self.context.test_failed = test_total
+                self.context.test_total = test_total
                 self.log("  [FAIL] Some Python tests failed")
                 self.log(f"  [OUTPUT] {result.stdout}")
                 self.log(f"  [ERROR] {result.stderr}")

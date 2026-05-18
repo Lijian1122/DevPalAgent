@@ -35,8 +35,8 @@ class Phase2CreateStructure(PhaseInterface):
         self.log(f"[OK] 项目名称: {project_name}")
         self.log(f"[OK] 项目目录: {project_dir.absolute()}")
 
-        # 创建标准子目录
-        for subdir in ['src', 'tests', 'include', 'docs', 'data', '.spec']:
+        subdirs = self._get_project_subdirs()
+        for subdir in subdirs:
             (project_dir / subdir).mkdir(exist_ok=True)
             self.log(f"  [OK] 创建子目录: {subdir}/")
 
@@ -56,8 +56,27 @@ class Phase2CreateStructure(PhaseInterface):
             "项目结构创建成功",
             project_dir=str(project_dir),
             project_name=project_name,
-            subdirs=['src', 'tests', 'include', 'docs', 'data', '.spec']
+            subdirs=subdirs
         )
+
+    def _get_project_subdirs(self) -> list:
+        project_type = getattr(self.context, 'project_type', '')
+        language = getattr(self.context, 'language', 'cpp')
+
+        if project_type in {'installer', 'tooling', 'cli_tool'}:
+            return ['src', 'tests', 'docs', '.spec']
+
+        try:
+            from devpal.core.schema.languages.language_config import get_language_features
+            subdirs = list(get_language_features(language).project_structure.keys())
+        except Exception:
+            subdirs = ['src', 'tests', 'include', 'docs'] if self.context.is_cpp else ['src', 'tests', 'docs', 'data']
+
+        if '.spec' not in subdirs:
+            subdirs.append('.spec')
+        if not self.context.is_cpp:
+            subdirs = [subdir for subdir in subdirs if subdir != 'include']
+        return subdirs
 
     def _infer_project_name(self) -> str:
         """从需求文件路径推断项目名称（和 Phase4 模板系统一致）"""

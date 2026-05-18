@@ -60,6 +60,50 @@ def test_phase1_extracts_structured_requirements(tmp_path):
     assert req["status"] == "PROPOSED"
 
 
+def test_phase2_creates_cpp_structure(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = OpenSpecContext(project_dir=Path("."), requirements_file=Path("simple_login.md"))
+    context.is_cpp = True
+    context.language = "cpp"
+
+    result = Phase2CreateStructure(context, _DummyRegistry()).execute()
+
+    assert result.success
+    assert context.project_name == "cpp_simple_login"
+    assert (context.project_dir / "include").exists()
+    assert ".spec" in result.data["subdirs"]
+
+
+def test_phase2_creates_python_structure_without_include(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = OpenSpecContext(project_dir=Path("."), requirements_file=Path("python_app.md"))
+    context.is_cpp = False
+    context.language = "python"
+
+    result = Phase2CreateStructure(context, _DummyRegistry()).execute()
+
+    assert result.success
+    assert context.project_name == "python_app"
+    assert "include" not in result.data["subdirs"]
+    assert not (context.project_dir / "include").exists()
+    assert (context.project_dir / "data").exists()
+
+
+def test_phase2_creates_installer_structure_without_cpp_prefix_or_include(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = OpenSpecContext(project_dir=Path("."), requirements_file=Path("test_phase_skip.md"))
+    context.is_cpp = False
+    context.language = "python"
+    context.project_type = "installer"
+
+    result = Phase2CreateStructure(context, _DummyRegistry()).execute()
+
+    assert result.success
+    assert context.project_name == "test_phase_skip"
+    assert "include" not in result.data["subdirs"]
+    assert not (tmp_path / "cpp_test_phase_skip").exists()
+
+
 def test_phase2_writes_requirements_json(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = OpenSpecContext(project_dir=Path("."), requirements_file=Path("simple_login.md"))
@@ -106,12 +150,48 @@ def test_phase11_writes_artifact_graph_and_acceptance_matrix(tmp_path):
     assert "Passed" in report
 
 
+def test_phase11_python_claude_md_uses_python_conventions(tmp_path):
+    project_dir = tmp_path / "python_app"
+    for folder in ["src", "tests", "docs", ".spec"]:
+        (project_dir / folder).mkdir(parents=True, exist_ok=True)
+    (project_dir / "src" / "main.py").write_text("def main():\n    return 0\n", encoding="utf-8")
+    (project_dir / "tests" / "test_main.py").write_text("def test_main():\n    assert True\n", encoding="utf-8")
+
+    context = OpenSpecContext(project_dir=project_dir, requirements_file=tmp_path / "requirements.md")
+    context.is_cpp = False
+    context.language = "python"
+    context.project_name = "python_app"
+    context.structured_requirements = [
+        {"id": "REQ-001", "title": "Python app", "description": "", "acceptance_criteria": []}
+    ]
+    context.test_passed = 1
+    context.test_total = 1
+    context.test_failed = 0
+
+    result = Phase11FinalReport(context).execute()
+
+    assert result.success
+    report = (project_dir / "docs" / "final_report.md").read_text(encoding="utf-8")
+    assert "src/main.py" in report
+    assert "tests/test_main.py" in report
+    claude_md = (project_dir / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "Language: Python" in claude_md
+    assert "pytest" in claude_md
+    assert "Source code (.py files)" in claude_md
+    assert ".cpp" not in claude_md
+    assert "test_base.h" not in claude_md
+    assert "CMake" not in claude_md
+
+
 def test_phase11_reports_skipped_phase10_without_zero_of_zero_passed(tmp_path):
     project_dir = tmp_path / "installer_project"
     for folder in ["src", "tests", "docs", ".spec"]:
         (project_dir / folder).mkdir(parents=True, exist_ok=True)
 
     context = OpenSpecContext(project_dir=project_dir, requirements_file=tmp_path / "requirements.md")
+    context.is_cpp = False
+    context.language = "python"
+    context.project_type = "installer"
     context.structured_requirements = [
         {"id": "REQ-001", "title": "生成安装脚本", "description": "", "acceptance_criteria": []}
     ]
@@ -135,3 +215,9 @@ def test_phase11_reports_skipped_phase10_without_zero_of_zero_passed(tmp_path):
     assert "0/0 passed" not in report
     assert "- Summary: skipped (installer project)" in report
     assert "| 10 | Compile and run tests | skipped |" in report
+    claude_md = (project_dir / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "Summary: skipped (installer project)" in claude_md
+    coding_section = claude_md.split("## Coding Conventions", 1)[1]
+    assert ".cpp" not in coding_section
+    assert "test_base.h" not in coding_section
+    assert "CMake" not in coding_section
