@@ -13,62 +13,9 @@ from .base import PhaseInterface, PhaseResult, OpenSpecContext
 from ..compiledb import CompileDB
 from ..llm_client import get_llm_client
 from ..templates import registry, TemplateContext
+from ..prompts import get_prompt_engine
 
 
-_AI_SYSTEM_PROMPT = (
-    "You are a senior C++ developer. Given a software requirements document "
-    "and a technical design document, write concrete, compilable C++17 code.\n\n"
-    "CRITICAL RULES:\n"
-    "- You MUST use the write_file tool for EVERY file. Do NOT write code in prose.\n"
-    "- Call write_file once per file immediately. No planning, no discussion first.\n"
-    "- Start with your first write_file call right away.\n\n"
-    "REQUIRED FILES (you MUST generate ALL of these):\n"
-    "1. For each class: include/<name>.h AND src/<name>.cpp (both header and implementation)\n"
-    "2. src/main.cpp - a working main program that demonstrates the core functionality\n"
-    "3. At least one tests/test_<class>.cpp for each non-trivial class\n"
-    "Output rules:\n"
-    "- path is relative to project root (include/user.h, src/user.cpp, "
-    "src/main.cpp, tests/test_user.cpp).\n"
-    "- Each class lives in its own pair of include/<name>.h plus src/<name>.cpp "
-    "(snake_case file, PascalCase class).\n"
-    "- Include guards use the uppercase filename (e.g. #ifndef USER_H).\n"
-    "- All code goes inside namespace {namespace}.\n"
-    "- Use only C++17 STL unless the design mandates otherwise.\n"
-    "- src/main.cpp must include a working main() function that exercises the primary workflow.\n"
-    "- For every non-trivial class, emit at least one tests/test_<class>.cpp "
-    "that includes \"test_base.h\" and uses ASSERT_TRUE / ASSERT_EQ macros.\n"
-    "- Do NOT regenerate CMakeLists.txt, README.md, include/<project>.h, "
-    "or tests/test_base.h - they already exist.\n"
-    "- After all files are written, respond with a one-line summary and stop.\n\n"
-    "C++ BEST PRACTICES (CRITICAL):\n"
-    "- ALWAYS provide a default constructor for classes that will be stored in STL containers "
-    "(std::vector, std::map, std::unordered_map, etc.).\n"
-    "- If a class has member variables, provide BOTH a default constructor AND a parameterized constructor.\n"
-    "- Example: class User should have User() and User(params...).\n"
-    "- Initialize all member variables in the constructor initializer list.\n"
-    "- Use const references for string parameters to avoid unnecessary copies.\n\n"
-    "C++ INCLUDE REQUIREMENTS (CRITICAL):\n"
-    "- Include the actual standard header that defines each STL type or function you use.\n"
-    "- std::mutex, std::lock_guard, std::unique_lock require #include <mutex>. Never include <lock_guard>.\n"
-    "- std::vector requires #include <vector>; std::string requires #include <string>.\n"
-    "- std::map requires #include <map>; std::unordered_map requires #include <unordered_map>.\n"
-    "- std::chrono types require #include <chrono>; streams require #include <iostream> or <sstream>.\n"
-    "- std::hash requires #include <functional>; algorithms require #include <algorithm>.\n"
-    "- Do NOT invent non-existent standard headers such as <lock_guard>, <hash>, or <time_point>.\n\n"
-    "TEST FRAMEWORK REQUIREMENTS (CRITICAL):\n"
-    "- Each test file MUST include test_base.h and use exactly these provided macros: ASSERT_TRUE, ASSERT_EQ, RUN_TEST, TEST_MAIN_BEGIN, TEST_MAIN_END.\n"
-    "- Each test file MUST define int main() with TEST_MAIN_BEGIN as the first statement and TEST_MAIN_END as the last statement.\n"
-    "- Example test structure:\n"
-    "  int main() {{\n"
-    "      TEST_MAIN_BEGIN\n"
-    "      RUN_TEST(testFunction1);\n"
-    "      RUN_TEST(testFunction2);\n"
-    "      TEST_MAIN_END\n"
-    "  }}\n"
-    "- Do NOT define custom pass/fail counters, custom try-catch wrappers, or custom assertion macros.\n"
-    "- Do NOT call throw directly in generated test files; ASSERT_TRUE/ASSERT_EQ already signal failures.\n"
-    "- Ensure test data is valid and matches the requirements (e.g., passwords must have both letters and digits).\n"
-)
 
 
 _WRITE_FILE_TOOL: Dict[str, Any] = {
@@ -144,8 +91,8 @@ class Phase4GenerateCode(PhaseInterface):
         affected_requirements = []
         if delta_changed and not force_regenerate:
             affected_requirements = (
-        requirements_delta.get("added", []) +
-          requirements_delta.get("modified", [])
+            requirements_delta.get("added", []) +
+            requirements_delta.get("modified", [])
             )
             if affected_requirements:
                 self.log("  [SELECTIVE] Requirements changed: {}".format(
@@ -191,11 +138,9 @@ class Phase4GenerateCode(PhaseInterface):
                 skipped_ai_generation=True,
             )
 
-        if not self.context.tech_design_content:
-            return PhaseResult.fail(
-                "tech_design_content is empty - did Phase 3 succeed?",
-                errors=["missing tech_design_content"],
-            )
+        # Note: tech_design_content may be empty if Phase 3 was skipped
+        # (e.g., for installer projects), but we still call AI to generate code
+        # based on requirements alone
 
         try:
             client = get_llm_client()
@@ -246,22 +191,51 @@ class Phase4GenerateCode(PhaseInterface):
         namespace = (
             project_name.lower().replace("-", "_").replace(" ", "_")
         )
-        system_prompt = _AI_SYSTEM_PROMPT.format(namespace=namespace)
+        # Use Prompt engine to generate dynamic System Prompt based on language
+        prompt_engine = get_prompt_engine()
+        system_prompt = prompt_engine.generate_code_gen_prompt(
+            language=self.context.language,
+            features=getattr(self.context, 'features', None),
+        )
+        # Build user message based on language and whether tech design exists
+        language = self.context.language
+        if language == 'cpp':
+            file_instruction = "Use write_file for each .h/.cpp."
+            infra_files_list = "CMakeLists.txt, README.md, tests/test_base.h, include/<project>.h"
+            test_framework_note = "Do not invent test framework APIs; test_base.h provides ASSERT_TRUE, ASSERT_EQ, RUN_TEST, TEST_MAIN_BEGIN, TEST_MAIN_END.\n"
+        elif language == 'python':
+            file_instruction = "Use write_file for each .py file."
+            infra_files_list = "README.md, requirements.txt, .gitignore, src/__init__.py, tests/__init__.py"
+            test_framework_note = ""
+        elif language == 'shell':
+            file_instruction = "Use write_file for each shell script."
+            infra_files_list = "README.md"
+            test_framework_note = ""
+        else:
+            file_instruction = "Use write_file for each source file."
+            infra_files_list = "README.md"
+            test_framework_note = ""
+
+        if self.context.tech_design_content:
+            design_instruction = "- You MUST generate ALL business code files based on the technical design.\n"
+        else:
+            design_instruction = "- You MUST generate ALL business code files based on the requirements document.\n"
+
         user_message = (
-            "Produce all business code now. Use write_file for each .h/.cpp.\n\n"
+            f"Produce all business code now. {file_instruction}\n\n"
             "IMPORTANT INSTRUCTIONS:\n"
-            "- You MUST generate ALL business code files based on the technical design.\n"
+            f"{design_instruction}"
             "- This run was explicitly configured to regenerate business files; overwrite existing business files when needed.\n"
-            "- ONLY skip infrastructure files: CMakeLists.txt, README.md, tests/test_base.h, include/<project>.h.\n"
-            "- Do not invent test framework APIs; test_base.h provides ASSERT_TRUE, ASSERT_EQ, RUN_TEST, TEST_MAIN_BEGIN, TEST_MAIN_END.\n"
+            f"- ONLY skip infrastructure files: {infra_files_list}.\n"
+            f"{test_framework_note}"
             "=== EXISTING FILES (regenerate business, skip infrastructure) ===\n"
             f"Current Time: 2026-05-15 10:00:00 (Beijing, China)\n\n"
             + existing_overview
         )
-        cached_context = [
-            self.context.requirements_content,
-            self.context.tech_design_content,
-        ]
+        # Build cached context: always include requirements, optionally include tech design
+        cached_context = [self.context.requirements_content]
+        if self.context.tech_design_content:
+            cached_context.append(self.context.tech_design_content)
 
         try:
             result = client.generate_with_tool_loop(
@@ -292,18 +266,18 @@ class Phase4GenerateCode(PhaseInterface):
                 ],
             )
 
-            self.context.ai_generated_files.extend(ai_files)
-            # P2.3: mark all requirements as IN_PROGRESS
+        self.context.ai_generated_files.extend(ai_files)
+        # P2.3: mark all requirements as IN_PROGRESS
         for req in (self.context.structured_requirements or []):
-                self.context.update_requirement_status(
-                    req.get("id", ""), "IN_PROGRESS")
-                self.context.generated_files.extend(infra_files + ai_files)
+            self.context.update_requirement_status(
+                req.get("id", ""), "IN_PROGRESS")
+        self.context.generated_files.extend(infra_files + ai_files)
 
-                self._update_artifact_graph(project_dir, ai_files)
+        self._update_artifact_graph(project_dir, ai_files)
 
-                self.compiledb.index_project(project_dir, use_cache=False)
-                self.compiledb.save_cache(project_dir)
-                self.log(
+        self.compiledb.index_project(project_dir, use_cache=False)
+        self.compiledb.save_cache(project_dir)
+        self.log(
             "  [OK] re-indexed {} files".format(len(self.compiledb.get_all_files()))
         )
 
@@ -459,32 +433,32 @@ class Phase4GenerateCode(PhaseInterface):
 
     def _get_affected_files_from_graph(self, changed_req_ids: List[str]) -> List[str]:
         """使用 ArtifactGraph 确定受需求变更影响的文件列表
-        
+
         Args:
             changed_req_ids: 变更的需求 ID 列表（added + modified）
-            
+
         Returns:
             受影响的文件路径列表（相对于项目根目录）
         """
         graph = self.context.artifact_graph
         if graph is None:
             return []
-        
+
         try:
             from devpal.core.schema.artifact_graph import ArtifactType
         except ImportError:
             return []
-        
+
         affected_files = set()
-        
+
         for req_id in changed_req_ids:
             req_node_id = f"req:{req_id}"
-          
+
             # 获取实现该需求的代码文件
             for node, dep_type in graph.get_dependents(req_node_id):
                 if node.type in (ArtifactType.CODE, ArtifactType.TEST):
                     if node.path:
                       rel_path = node.path.relative_to(self.context.project_dir).as_posix()
                       affected_files.add(rel_path)
-        
+
         return sorted(list(affected_files))
