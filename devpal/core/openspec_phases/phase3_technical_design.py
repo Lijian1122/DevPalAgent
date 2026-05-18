@@ -7,31 +7,7 @@
 
 from .base import PhaseInterface, PhaseResult, OpenSpecContext
 from ..llm_client import get_llm_client
-
-
-_SYSTEM_PROMPT = (
-    "You are a senior C++ architect. Given a software requirements document, "
-    "produce a structured technical design in Markdown.\n\n"
-    "CRITICAL RULES:\n"
-    "1. Your FIRST character must be '#' (the start of the Markdown heading)\n"
-    "2. DO NOT output ANY thinking process, analysis, or preamble\n"
-    "3. DO NOT use <thinking> tags or any XML tags\n"
-    "4. Start DIRECTLY with: # 技术设计文档\n\n"
-    "The design MUST include the following sections in this order:\n"
-    "1. 系统架构概览 (modules, layering, dataflow)\n"
-    "2. 核心类清单 (one bullet per class: name, responsibility, key members/methods)\n"
-    "3. 关键 API 定义 (signatures with parameter/return semantics)\n"
-    "4. 数据结构与持久化\n"
-    "5. 安全与并发设计\n"
-    "6. 文件组织 (which .h/.cpp files map to which classes)\n"
-    "7. 测试策略\n\n"
-    "Constraints:\n"
-    "- C++17 STL only, no third-party deps unless requirement mandates.\n"
-    "- Each class lives in its own pair of include/<name>.h and src/<name>.cpp.\n"
-    "- File names use snake_case; class names use PascalCase.\n"
-    "- Be concrete: name actual classes, methods, file paths. No placeholders.\n"
-    "- Keep total length under 3000 words.\n"
-)
+from ..prompts import get_prompt_engine
 
 
 class Phase3TechnicalDesign(PhaseInterface):
@@ -41,6 +17,11 @@ class Phase3TechnicalDesign(PhaseInterface):
         super().__init__(context)
         self.phase_number = 3
         self.phase_name = "生成技术设计文档"
+
+    def should_skip(self) -> tuple:
+        """判断是否应该跳过当前阶段"""
+        from .phase_skip_rules import should_skip_for_non_cpp_project
+        return should_skip_for_non_cpp_project(self.phase_number, self.context)
 
     def execute(self) -> PhaseResult:
         self.log("调用 AI 生成技术设计文档...")
@@ -66,9 +47,16 @@ class Phase3TechnicalDesign(PhaseInterface):
         )
         cached_context = [self.context.requirements_content]
 
+        # Use Prompt engine to generate dynamic System Prompt based on language
+        prompt_engine = get_prompt_engine()
+        system_prompt = prompt_engine.generate_design_prompt(
+            language=self.context.language,
+            features=getattr(self.context, 'features', None),
+        )
+
         try:
             tech_design = client.generate(
-                system=_SYSTEM_PROMPT,
+                system=system_prompt,
                 user_message=user_message,
                 cached_context=cached_context,
                 max_tokens=8192,

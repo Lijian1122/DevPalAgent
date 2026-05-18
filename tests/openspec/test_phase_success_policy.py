@@ -25,6 +25,12 @@ def test_phase10_success_requires_nonzero_passing_tests():
     assert validate_phase_success(10, result) == ["Phase 10 succeeded with test_total <= 0"]
 
 
+def test_phase10_success_allows_explicit_skip():
+    result = PhaseResult.ok("phase 10", skipped=True, test_skipped=True)
+
+    assert validate_phase_success(10, result) == []
+
+
 def test_phase10_success_rejects_failing_tests():
     result = PhaseResult.ok("phase 10", test_total=3, test_failed=1)
 

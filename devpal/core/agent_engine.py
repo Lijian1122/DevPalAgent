@@ -832,6 +832,7 @@ ALWAYS: Extract real parameter values from user's natural language query!"""
                 project_dir = result.get("project_dir", "Unknown")
                 test_passed = result.get("test_passed", 0)
                 test_total = result.get("test_total", 0)
+                test_summary = result.get("test_summary") or f"{test_passed}/{test_total} 通过"
                 success = result.get("success", False)
 
                 if success:
@@ -839,7 +840,7 @@ ALWAYS: Extract real parameter values from user's natural language query!"""
 
 ✅ **项目信息**
 - 项目目录: `{project_dir}`
-- 测试结果: {test_passed}/{test_total} 通过
+- 测试结果: {test_summary}
 
 所有代码、测试、文档已生成完成，可以直接使用。"""
                 else:

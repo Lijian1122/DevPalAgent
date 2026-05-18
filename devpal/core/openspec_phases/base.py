@@ -73,6 +73,8 @@ class OpenSpecContext:
     project_name: str = ""
     language: str = "cpp"  # cpp / python
     is_cpp: bool = True
+    project_type: str = ""  # 项目类型：installer, cli_tool, library, application 等
+    features: List[str] = field(default_factory=list)  # 项目特性：install, auth, database 等
 
     # 各阶段输出
     phase_results: Dict[int, PhaseResult] = field(default_factory=dict)
@@ -145,6 +147,8 @@ class OpenSpecContext:
             "project_name": self.project_name,
             "language": self.language,
             "is_cpp": self.is_cpp,
+            "project_type": self.project_type,
+            "features": list(self.features),
             "phase_results": {
                 str(num): result.to_dict()
                 for num, result in self.phase_results.items()
@@ -222,6 +226,8 @@ def validate_phase_success(phase_num: int, result: PhaseResult) -> List[str]:
             )
 
     if phase_num == 10:
+        if result.data.get("skipped") or result.data.get("test_skipped"):
+            return violations
         test_total = int(result.data.get("test_total", 0) or 0)
         test_failed = int(result.data.get("test_failed", 0) or 0)
         if test_total <= 0:

@@ -20,6 +20,11 @@ class Phase5GenerateTests(PhaseInterface):
         self.phase_name = "Generate test documentation"
         self.tool_registry = tool_registry
 
+    def should_skip(self) -> tuple:
+        """判断是否应该跳过当前阶段"""
+        from .phase_skip_rules import should_skip_for_non_cpp_project
+        return should_skip_for_non_cpp_project(self.phase_number, self.context)
+
     def execute(self) -> PhaseResult:
         self.log("Phase 5: scanning tests/ and generating test documentation...")
 
@@ -31,12 +36,26 @@ class Phase5GenerateTests(PhaseInterface):
                 errors=["tests directory does not exist"],
             )
 
-        test_files = sorted(tests_dir.glob("test_*.cpp"))
+        # Check for test files based on language
+        language = self.context.language
+        if language == 'cpp':
+            test_files = sorted(tests_dir.glob("test_*.cpp"))
+            test_pattern = "test_*.cpp"
+        elif language == 'python':
+            test_files = sorted(tests_dir.glob("test_*.py"))
+            test_pattern = "test_*.py"
+        elif language == 'shell':
+            test_files = sorted(tests_dir.glob("test_*.sh"))
+            test_pattern = "test_*.sh"
+        else:
+            test_files = []
+            test_pattern = "test_*"
+
         if not test_files:
-            self.log("  [WARN] no test_*.cpp files found in tests/")
+            self.log(f"  [WARN] no {test_pattern} files found in tests/")
             return PhaseResult.fail(
                 "No test files found",
-                errors=["expected at least one tests/test_*.cpp"],
+                errors=[f"expected at least one tests/{test_pattern}"],
             )
 
         self.log("  [OK] found {} test file(s)".format(len(test_files)))

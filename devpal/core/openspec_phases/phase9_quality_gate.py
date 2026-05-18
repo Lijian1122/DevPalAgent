@@ -138,32 +138,76 @@ class Phase9QualityGate(PhaseInterface):
         violations = []
         warnings = []
 
-        # 检查 1: CMakeLists.txt
-        if not self._check_cmake_exists():
-            violations.append("CMakeLists.txt not found")
-        else:
-            self.log("  [OK] CMakeLists.txt exists")
+        # 根据语言动态检查
+        language = getattr(self.context, 'language', 'cpp')
 
-        # 检查 2: src/main.cpp
-        main_check = self._check_main_cpp()
-        if main_check:
-            violations.append(main_check)
-        else:
-            self.log("  [OK] src/main.cpp exists with main()")
+        if language == 'cpp':
+            # C++ 项目检查
+            # 检查 1: CMakeLists.txt
+            if not self._check_cmake_exists():
+                violations.append("CMakeLists.txt not found")
+            else:
+                self.log("  [OK] CMakeLists.txt exists")
 
-        # 检查 3: test_base.h
-        test_base_check = self._check_test_base()
-        if test_base_check:
-            violations.append(test_base_check)
-        else:
-            self.log("  [OK] test_base.h API is consistent")
+            # 检查 2: src/main.cpp
+            main_check = self._check_main_cpp()
+            if main_check:
+                violations.append(main_check)
+            else:
+                self.log("  [OK] src/main.cpp exists with main()")
 
-        # 检查 4: 测试文件存在性
-        test_files_check = self._check_test_files_exist()
-        if test_files_check:
-            violations.append(test_files_check)
+            # 检查 3: test_base.h
+            test_base_check = self._check_test_base()
+            if test_base_check:
+                violations.append(test_base_check)
+            else:
+                self.log("  [OK] test_base.h API is consistent")
+
+            # 检查 4: 测试文件存在性
+            test_files_check = self._check_test_files_exist()
+            if test_files_check:
+                violations.append(test_files_check)
+            else:
+                self.log("  [OK] Test files present")
+
+        elif language == 'python':
+            # Python 项目检查
+            # 检查 1: src/main.py 或 src/__main__.py
+            main_check = self._check_python_main()
+            if main_check:
+                violations.append(main_check)
+            else:
+                self.log("  [OK] Python main entry point exists")
+
+            # 检查 2: 测试文件存在性（pytest）
+            test_files_check = self._check_python_test_files()
+            if test_files_check:
+                violations.append(test_files_check)
+            else:
+                self.log("  [OK] Python test files present")
+
+        elif language == 'shell':
+            # Shell 项目检查
+            # 检查 1: scripts/main.sh 或主脚本
+            main_check = self._check_shell_main()
+            if main_check:
+                violations.append(main_check)
+            else:
+                self.log("  [OK] Shell main script exists")
+
+            # 检查 2: 测试文件存在性
+            test_files_check = self._check_shell_test_files()
+            if test_files_check:
+                violations.append(test_files_check)
+            else:
+                self.log("  [OK] Shell test files present")
+
         else:
-            self.log("  [OK] Test files present")
+            # 其他语言：通用检查
+            self.log("  [INFO] Language '{}' - using generic checks".format(language))
+            # 至少检查项目目录存在
+            if not self.context.project_dir.exists():
+                violations.append("Project directory not found")
 
         # 如果硬性检查失败，立即返回（快速失败）
         if violations:
@@ -410,9 +454,36 @@ class Phase9QualityGate(PhaseInterface):
     def _run_validation_engine(self):
         """Run four-layer validation and log per-layer results."""
         engine = ValidationEngine()
-        ctx = {"project_dir": self.context.project_dir}
+        language = getattr(self.context, 'language', 'cpp')
+        project_type = getattr(self.context, 'project_type', '')
+        is_cpp = bool(getattr(self.context, 'is_cpp', language == 'cpp'))
+        ctx = {
+            "project_dir": self.context.project_dir,
+            "language": language,
+            "project_type": project_type,
+        }
 
-        # FORMAT: file existence
+        if is_cpp:
+            self._register_cpp_validation_checks(engine)
+        elif language == 'python':
+            self._register_python_validation_checks(engine)
+        else:
+            self.log("  [INFO] Four-layer validation: no specialized checks for language '{}'".format(language))
+
+        result = engine.validate(None, context=ctx, stop_on_error=False)
+
+        # Log per-layer summary
+        for level in [ValidationLevel.FORMAT, ValidationLevel.SEMANTIC,
+                      ValidationLevel.PARSER, ValidationLevel.BUSINESS]:
+            level_issues = [i for i in result.issues if i.level == level]
+            errors = [i for i in level_issues if i.severity == ValidationSeverity.ERROR]
+            status = "[FAIL]" if errors else "[OK]  "
+            self.log("  {} {} layer: {} issue(s)".format(
+                status, level.value.upper(), len(level_issues)))
+
+        return result
+
+    def _register_cpp_validation_checks(self, engine) -> None:
         def _fmt_cmake(content, ctx):
             if not self._check_cmake_exists():
                 return [ValidationIssue(ValidationLevel.FORMAT, ValidationSeverity.ERROR,
@@ -427,7 +498,6 @@ class Phase9QualityGate(PhaseInterface):
             self.log("  [OK] FORMAT: src/main.cpp exists with main()")
             return []
 
-        # SEMANTIC: API contract
         def _sem_test_base(content, ctx):
             msg = self._check_test_base()
             if msg:
@@ -435,7 +505,6 @@ class Phase9QualityGate(PhaseInterface):
             self.log("  [OK] SEMANTIC: test_base.h API is consistent")
             return []
 
-        # BUSINESS: test files exist
         def _biz_test_files(content, ctx):
             msg = self._check_test_files_exist()
             if msg:
@@ -448,18 +517,23 @@ class Phase9QualityGate(PhaseInterface):
         engine.register_validator(ValidationLevel.SEMANTIC, _sem_test_base)
         engine.register_validator(ValidationLevel.BUSINESS, _biz_test_files)
 
-        result = engine.validate(None, context=ctx, stop_on_error=False)
+    def _register_python_validation_checks(self, engine) -> None:
+        def _fmt_python_main(content, ctx):
+            msg = self._check_python_main()
+            if msg:
+                return [ValidationIssue(ValidationLevel.FORMAT, ValidationSeverity.ERROR, msg)]
+            self.log("  [OK] FORMAT: Python main entry point exists")
+            return []
 
-        # Log per-layer summary
-        for level in [ValidationLevel.FORMAT, ValidationLevel.SEMANTIC,
-                      ValidationLevel.PARSER, ValidationLevel.BUSINESS]:
-            level_issues = [i for i in result.issues if i.level == level]
-            errors = [i for i in level_issues if i.severity == ValidationSeverity.ERROR]
-            status = "[FAIL]" if errors else "[OK]  "
-            self.log("  {} {} layer: {} issue(s)".format(
-                status, level.value.upper(), len(level_issues)))
+        def _biz_python_tests(content, ctx):
+            msg = self._check_python_test_files()
+            if msg:
+                return [ValidationIssue(ValidationLevel.BUSINESS, ValidationSeverity.ERROR, msg)]
+            self.log("  [OK] BUSINESS: Python test files present")
+            return []
 
-        return result
+        engine.register_validator(ValidationLevel.FORMAT, _fmt_python_main)
+        engine.register_validator(ValidationLevel.BUSINESS, _biz_python_tests)
 
     def _check_cmake_exists(self) -> bool:
         return (self.context.project_dir / "CMakeLists.txt").exists()
@@ -542,6 +616,21 @@ class Phase9QualityGate(PhaseInterface):
                              if i.severity == ValidationSeverity.ERROR)
                 lines.append("- {} layer: {} error(s), {} warning(s)".format(
                     level.value.upper(), errors, len(level_issues) - errors))
+            if val_result.issues:
+                lines.append("")
+                lines.append("#### Validation Details")
+                lines.append("")
+                for issue in val_result.issues:
+                    detail = "- [{}][{}] {}".format(
+                        issue.level.value.upper(),
+                        issue.severity.value.upper(),
+                        issue.message,
+                    )
+                    if issue.location:
+                        detail += " ({})".format(issue.location)
+                    if issue.suggestion:
+                        detail += " — {}".format(issue.suggestion)
+                    lines.append(detail)
             lines.append("")
 
         if violations:
@@ -1134,3 +1223,65 @@ class Phase9QualityGate(PhaseInterface):
             str(issue.get('category', '')),
             str(issue.get('message', '')),
         )
+
+    # ========== Python 项目检查方法 ==========
+    def _check_python_main(self) -> str:
+        """检查 Python 主入口文件"""
+        main_candidates = [
+            self.context.project_dir / "src" / "main.py",
+            self.context.project_dir / "src" / "__main__.py",
+            self.context.project_dir / "main.py",
+        ]
+
+        for main_path in main_candidates:
+            if main_path.exists():
+                return ""
+
+        return "No Python main entry point found (src/main.py, src/__main__.py, or main.py)"
+
+    def _check_python_test_files(self) -> str:
+        """检查 Python 测试文件（pytest）"""
+        tests_dir = self.context.project_dir / "tests"
+        if not tests_dir.exists():
+            # Python 项目测试文件可选
+            return ""
+
+        # 查找 pytest 测试文件
+        test_files = list(tests_dir.glob("test_*.py")) + list(tests_dir.glob("*_test.py"))
+
+        if not test_files:
+            # 测试文件可选，不强制要求
+            return ""
+
+        return ""
+
+    # ========== Shell 项目检查方法 ==========
+    def _check_shell_main(self) -> str:
+        """检查 Shell 主脚本"""
+        main_candidates = [
+            self.context.project_dir / "scripts" / "main.sh",
+            self.context.project_dir / "main.sh",
+            self.context.project_dir / "install.sh",
+        ]
+
+        for main_path in main_candidates:
+            if main_path.exists():
+                return ""
+
+        return "No Shell main script found (scripts/main.sh, main.sh, or install.sh)"
+
+    def _check_shell_test_files(self) -> str:
+        """检查 Shell 测试文件"""
+        tests_dir = self.context.project_dir / "tests"
+        if not tests_dir.exists():
+            # Shell 项目测试文件可选
+            return ""
+
+        # 查找 Shell 测试文件
+        test_files = list(tests_dir.glob("test_*.sh")) + list(tests_dir.glob("*_test.sh"))
+
+        if not test_files:
+            # 测试文件可选，不强制要求
+            return ""
+
+        return ""

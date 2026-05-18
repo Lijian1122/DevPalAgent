@@ -30,8 +30,13 @@ class Phase10RunTests(PhaseInterface):
         self.phase_name = "Compile + test + update docs"
         self.tool_registry = tool_registry
         self.compiledb = CompileDB()
-         # 新增：初始化自愈器
+        # 新增：初始化自愈器
         self.self_healer = None  # 延迟初始化，需要 LLM client
+
+    def should_skip(self) -> tuple:
+        """判断是否应该跳过当前阶段"""
+        from .phase_skip_rules import should_skip_for_non_cpp_project
+        return should_skip_for_non_cpp_project(self.phase_number, self.context)
 
     def execute(self) -> PhaseResult:
         self.log("Phase 10 start: compile + run tests + update docs (AI self-heal enabled)")
@@ -43,11 +48,88 @@ class Phase10RunTests(PhaseInterface):
             self.log("  [FAIL] tests/ directory not found")
             return PhaseResult.fail("No tests to run", errors=["tests/ directory not found"])
 
-        test_files = list(tests_dir.glob("test_*.cpp"))
-        if not test_files:
-            self.log("  [FAIL] no test files found")
-            return PhaseResult.fail("No tests to run", errors=["no test_*.cpp files found"])
+        # Check for test files based on language
+        language = self.context.language
+        if language == 'cpp':
+            test_files = list(tests_dir.glob("test_*.cpp"))
+            test_pattern = "test_*.cpp"
+        elif language == 'python':
+            test_files = list(tests_dir.glob("test_*.py"))
+            test_pattern = "test_*.py"
+        elif language == 'shell':
+            test_files = list(tests_dir.glob("test_*.sh"))
+            test_pattern = "test_*.sh"
+        else:
+            test_files = []
+            test_pattern = "test_*"
 
+        if not test_files:
+            self.log(f"  [FAIL] no test files found (pattern: {test_pattern})")
+            return PhaseResult.fail("No tests to run", errors=[f"no {test_pattern} files found"])
+
+        # Branch based on language
+        language = self.context.language
+
+        if language == 'python':
+            return self._run_python_tests(project_dir, tests_dir, test_files)
+        elif language == 'cpp':
+            return self._run_cpp_tests(project_dir, tests_dir, test_files)
+        else:
+            self.log(f"  [WARN] Unsupported language for testing: {language}")
+            return PhaseResult.ok("Tests skipped (unsupported language)", skipped=True)
+
+    def _run_python_tests(self, project_dir: Path, tests_dir: Path, test_files: List[Path]) -> PhaseResult:
+        """Run Python tests using pytest"""
+        self.log(f"  [TEST] Running {len(test_files)} Python test files with pytest...")
+
+        try:
+            # Set PYTHONPATH to include src directory
+            import os
+            env = os.environ.copy()
+            src_dir = project_dir / "src"
+            if src_dir.exists():
+                pythonpath = str(src_dir)
+                if 'PYTHONPATH' in env:
+                    pythonpath = f"{pythonpath}{os.pathsep}{env['PYTHONPATH']}"
+                env['PYTHONPATH'] = pythonpath
+
+            # Use relative path "tests" instead of absolute path
+            result = subprocess.run(
+                ["pytest", "tests", "-v"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=300,
+                env=env
+            )
+
+            if result.returncode == 0:
+                self.log("  [OK] All Python tests passed")
+                return PhaseResult.ok(
+                    "Python tests passed",
+                    test_count=len(test_files),
+                    passed=True
+                )
+            else:
+                self.log("  [FAIL] Some Python tests failed")
+                self.log(f"  [OUTPUT] {result.stdout}")
+                self.log(f"  [ERROR] {result.stderr}")
+                return PhaseResult.fail(
+                    "Python tests failed",
+                    errors=[result.stderr]
+                )
+        except FileNotFoundError:
+            self.log("  [WARN] pytest not found, skipping tests")
+            return PhaseResult.ok("Tests skipped (pytest not installed)", skipped=True)
+        except subprocess.TimeoutExpired:
+            self.log("  [FAIL] Tests timed out after 300s")
+            return PhaseResult.fail("Tests timed out", errors=["timeout after 300s"])
+        except Exception as exc:
+            self.log(f"  [FAIL] Test execution failed: {exc}")
+            return PhaseResult.fail("Test execution failed", errors=[str(exc)])
+
+    def _run_cpp_tests(self, project_dir: Path, tests_dir: Path, test_files: List[Path]) -> PhaseResult:
+        """Run C++ tests (original logic)"""
         # 检测编译器
         compiler_cmd, compiler_env = self._detect_compiler()
         if not compiler_cmd:
@@ -641,42 +723,42 @@ class Phase10RunTests(PhaseInterface):
 
     def _get_affected_tests_from_changes(self) -> List[Path]:
         """根据代码变更确定需要运行的测试文件
-        
+
         使用 ArtifactGraph 分析哪些测试受到影响
-        
+
         Returns:
             受影响的测试文件列表，如果无法确定则返回空列表（表示运行所有测试）
         """
         graph = self.context.artifact_graph
         if graph is None:
             return []
-        
+
         try:
             from devpal.core.schema.artifact_graph import ArtifactType
         except ImportError:
             return []
-        
+
         # 获取所有 AI 生成的代码文件（这些是可能变更的文件）
         changed_files = self.context.ai_generated_files
         if not changed_files:
           return []
-        
+
         affected_tests = set()
-        
+
         for file_path in changed_files:
             try:
                 rel_path = Path(file_path).relative_to(self.context.project_dir).as_posix()
                 file_node_id = f"file:{rel_path}"
-                
+
                 # 查找测试该文件的所有测试
                 for node, dep_type in graph.get_dependents(file_node_id):
                     if node.type == ArtifactType.TEST and node.path:
                         affected_tests.add(node.path)
-                
+
           # 如果这个文件本身就是测试文件，也包含它
                 if rel_path.startswith("tests/") and Path(file_path).exists():
                     affected_tests.add(Path(file_path))
             except (ValueError, AttributeError):
                 continue
-        
+
             return sorted(list(affected_tests))

@@ -17,6 +17,11 @@ class Phase7TestDocs(PhaseInterface):
         self.phase_name = "Test docs (merged into Phase 5)"
         self.tool_registry = tool_registry
 
+    def should_skip(self) -> tuple:
+        """判断是否应该跳过当前阶段"""
+        from .phase_skip_rules import should_skip_for_non_cpp_project
+        return should_skip_for_non_cpp_project(self.phase_number, self.context)
+
     def execute(self) -> PhaseResult:
         self.log("Phase 7: test documentation already generated in Phase 5, skipping.")
         return PhaseResult.ok(

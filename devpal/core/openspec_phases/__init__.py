@@ -4,7 +4,7 @@ OpenSpec 11 阶段工作流 - 模块化实现
 """
 
 from .base import PhaseInterface, PhaseResult, OpenSpecContext
-from .scheduler import OpenSpecPhaseScheduler
+from .enhanced_scheduler import EnhancedOpenSpecScheduler, EnhancedOpenSpecScheduler as OpenSpecPhaseScheduler
 from .phase1_parse_requirements import Phase1ParseRequirements
 from .phase2_create_structure import Phase2CreateStructure
 from .phase3_technical_design import Phase3TechnicalDesign
@@ -22,6 +22,7 @@ __all__ = [
     'PhaseResult',
     'OpenSpecContext',
     'OpenSpecPhaseScheduler',
+    'EnhancedOpenSpecScheduler',
     'Phase1ParseRequirements',
     'Phase2CreateStructure',
     'Phase3TechnicalDesign',

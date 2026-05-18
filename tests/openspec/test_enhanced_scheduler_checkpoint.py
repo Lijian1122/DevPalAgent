@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from devpal.core.openspec_phases.base import OpenSpecContext, PhaseResult
-from devpal.core.openspec_phases.enhanced_scheduler import CheckpointManager
+from devpal.core.openspec_phases.enhanced_scheduler import CheckpointManager, EnhancedOpenSpecScheduler
 
 
 def _make_context(tmp_path: Path) -> OpenSpecContext:
@@ -20,6 +20,24 @@ def _make_context(tmp_path: Path) -> OpenSpecContext:
     context.test_total = 3
     context.set_phase_result(3, PhaseResult.ok("phase 3", artifact="design.md"))
     return context
+
+
+class _DummyRegistry:
+    pass
+
+
+def test_scheduler_checkpoint_path_does_not_add_cpp_prefix_for_installer_name(tmp_path):
+    requirements_file = tmp_path / "test_phase_skip.md"
+    requirements_file.write_text("install script project", encoding="utf-8")
+
+    scheduler = EnhancedOpenSpecScheduler(
+        str(requirements_file),
+        _DummyRegistry(),
+        enable_progress=False,
+    )
+
+    assert scheduler.checkpoint.checkpoint_file == Path("test_phase_skip") / ".spec" / "checkpoint.json"
+    assert scheduler.checkpoint.checkpoint_file.parts[0] != "cpp_test_phase_skip"
 
 
 def test_checkpoint_clear_removes_completed_phases(tmp_path):

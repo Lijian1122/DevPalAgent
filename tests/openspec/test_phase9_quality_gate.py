@@ -188,6 +188,37 @@ def test_quality_gate_fails_zero_tests(context, temp_project, tool_registry):
     assert any("No test files" in err for err in result.errors)
 
 
+def test_quality_gate_python_installer_does_not_run_cpp_validation(context, temp_project, tool_registry):
+    context.is_cpp = False
+    context.language = "python"
+    context.project_type = "installer"
+    (temp_project / "src" / "main.py").write_text("def main():\n    return 0\n", encoding="utf-8")
+    (temp_project / "tests" / "test_main.py").write_text("def test_main():\n    assert True\n", encoding="utf-8")
+
+    phase = Phase9QualityGate(context, tool_registry)
+    result = phase.execute()
+
+    assert result.success is True
+    report = (temp_project / "docs" / "quality_gate_report.md").read_text(encoding="utf-8")
+    assert "CMakeLists.txt not found" not in report
+    assert "src/main.cpp not found" not in report
+    assert "tests/test_base.h not found" not in report
+    assert "No test files found in tests/ directory" not in report
+    assert "FORMAT layer: 0 error(s)" in report
+    assert "BUSINESS layer: 0 error(s)" in report
+
+
+def test_quality_gate_report_includes_validation_details(context, temp_project, tool_registry):
+    phase = Phase9QualityGate(context, tool_registry)
+    result = phase.execute()
+
+    assert result.success is False
+    report = (temp_project / "docs" / "quality_gate_report.md").read_text(encoding="utf-8")
+    assert "#### Validation Details" in report
+    assert "CMakeLists.txt not found" in report
+    assert "src/main.cpp not found" in report
+
+
 def test_quality_gate_report_generation(context, temp_project, tool_registry):
     """Test that quality gate generates a report file"""
     # Create all required files

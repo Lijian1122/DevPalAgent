@@ -19,6 +19,11 @@ class Phase6CMakeConfig(PhaseInterface):
         self.phase_name = "生成 CMakeLists.txt 配置"
         self.tool_registry = tool_registry
 
+    def should_skip(self) -> tuple:
+        """判断是否应该跳过当前阶段"""
+        from .phase_skip_rules import should_skip_for_non_cpp_project
+        return should_skip_for_non_cpp_project(self.phase_number, self.context)
+
     def execute(self) -> PhaseResult:
         """执行 Phase 6
 

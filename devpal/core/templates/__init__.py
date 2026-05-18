@@ -6,6 +6,7 @@
 from .base import BaseTemplate, TemplateContext, TemplateCategory
 from .registry import TemplateRegistry, registry
 from .requirements_parser import RequirementsParser
+from .install_script_generator import InstallScriptGenerator
 
 # 注册内置模板
 from . import cpp_templates
@@ -18,4 +19,5 @@ __all__ = [
     'TemplateRegistry',
     'registry',
     'RequirementsParser',
+    'InstallScriptGenerator',
 ]

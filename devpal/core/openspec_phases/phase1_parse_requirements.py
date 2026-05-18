@@ -49,6 +49,21 @@ class Phase1ParseRequirements(PhaseInterface):
         self.log(f"[OK] 需求文档已读取 ({len(result.content)} 字符)")
         self.log(f"[OK] 结构化需求: {len(self.context.structured_requirements)} 项")
 
+        # 检测项目特性和类型
+        self.context.features = self._detect_features(result.content)
+        self.context.project_type = self._detect_project_type(result.content)
+
+        # 根据项目类型更新 is_cpp 和 language
+        if self.context.project_type in ['installer', 'cli_tool', 'tooling'] or 'install' in self.context.features:
+            self.context.is_cpp = False
+            self.context.language = 'python'  # 安装脚本默认使用 Python
+
+        if self.context.features:
+            self.log(f"[INFO] 检测到特性: {', '.join(self.context.features)}")
+        if self.context.project_type:
+            self.log(f"[INFO] 项目类型: {self.context.project_type}")
+        self.log(f"[INFO] 语言: {self.context.language}, is_cpp: {self.context.is_cpp}")
+
         delta = self._compute_requirements_delta()
         self.context.requirements_delta = delta
         if delta["changed"]:
@@ -77,7 +92,7 @@ class Phase1ParseRequirements(PhaseInterface):
         支持两种模式：
         1. 无标题的纯文本（整体作为单个需求）
         2. 多级标题组织的结构化需求（## 开头的章节）
-        
+
         返回标准化的需求列表，每个需求包含：
         - id: 需求ID (REQ-XXX格式)
         - title: 需求标题
@@ -90,7 +105,7 @@ class Phase1ParseRequirements(PhaseInterface):
         # 提取所有##开头的章节
         sections = re.findall(r"(^##\s+.+?)(?=^##\s+|\Z)", content, re.MULTILINE | re.DOTALL)
         requirements: List[Dict[str, object]] = []
-        
+
         # 处理无章节的纯文本情况
         if not sections:
             stripped = content.strip()
@@ -161,11 +176,11 @@ class Phase1ParseRequirements(PhaseInterface):
                         scenarios.append(current_scenario)
                     current_scenario = {"given": given_match.group(1).strip()}
                     continue
-                    
+
                 if when_match:
                     current_scenario["when"] = when_match.group(1).strip()
                     continue
-                    
+
                 if then_match:
                     current_scenario["then"] = then_match.group(1).strip()
                     continue
@@ -174,11 +189,11 @@ class Phase1ParseRequirements(PhaseInterface):
                 if "验收" in line or "acceptance" in line.lower():
                     in_acceptance = True
                     continue
-                    
+
                 if line.startswith(("- [ ]", "- [x]", "- [X]")):
                     acceptance_criteria.append(line[5:].strip())
                     continue
-                    
+
                 if in_acceptance and line.startswith("-"):
                     acceptance_criteria.append(line.lstrip("- ").strip())
                     continue
@@ -189,7 +204,7 @@ class Phase1ParseRequirements(PhaseInterface):
                         line.split(":", 1)[-1].strip() if ":" in line else line
                     )
                     continue
-                    
+
                 if not in_acceptance and "given" not in current_scenario:
                     description_lines.append(line)
 
@@ -293,3 +308,76 @@ class Phase1ParseRequirements(PhaseInterface):
         }
         delta_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         self.log(f"  [OK] .spec/delta.json written ({payload['summary']})")
+
+    # ------------------------------------
+    # 项目特性和类型检测
+    # -------------------------
+
+    def _detect_features(self, content: str) -> List[str]:
+        """检测项目特性
+
+        Args:
+            content: 需求文档内容
+
+        Returns:
+            特性列表，如 ['install', 'auth', 'database']
+        """
+        features = []
+        content_lower = content.lower()
+
+        # 安装脚本特性
+        install_keywords = ['install', 'installer', 'setup', 'deploy', 'script', '安装', '部署']
+        if any(keyword in content_lower for keyword in install_keywords):
+            features.append('install')
+
+        # 认证特性
+        auth_keywords = ['auth', 'login', 'authentication', '认证', '登录']
+        if any(keyword in content_lower for keyword in auth_keywords):
+            features.append('auth')
+
+        # 数据库特性
+        db_keywords = ['database', 'db', 'sql', 'mysql', 'postgres', '数据库']
+        if any(keyword in content_lower for keyword in db_keywords):
+            features.append('database')
+
+    # API 特性
+        api_keywords = ['api', 'rest', 'restful', 'endpoint', 'http']
+        if any(keyword in content_lower for keyword in api_keywords):
+           features.append('api')
+
+        # Web 特性
+        web_keywords = ['web', 'html', 'css', 'javascript', 'frontend', '前端', '网页']
+        if any(keyword in content_lower for keyword in web_keywords):
+          features.append('web')
+
+        return features
+
+    def _detect_project_type(self, content: str) -> str:
+        """检测项目类型
+
+        Args:
+            content: 需求文档内容
+
+        Returns:
+            项目类型，如 'installer', 'cli_tool', 'library', 'application'
+    """
+        content_lower = content.lower()
+
+        # 安装脚本项目
+        if any(kw in content_lower for kw in ['installer', 'install script', '安装脚本', 'setup script']):
+            return 'installer'
+
+        # CLI 工具
+        if any(kw in content_lower for kw in ['cli tool', 'command line', '命令行工具', 'terminal']):
+           return 'cli_tool'
+
+      # 库/框架
+        if any(kw in content_lower for kw in ['library', 'framework', '库', '框架', 'sdk']):
+            return 'library'
+
+        # Web 应用
+        if any(kw in content_lower for kw in ['web app', 'web application', 'website', '网站', 'web服务']):
+            return 'web_app'
+
+        # 默认为应用程序
+        return ''

@@ -292,18 +292,16 @@ class EnhancedOpenSpecScheduler:
         self.progress = ProgressMonitor() if enable_progress else None
 
         #
-        checkpoint_file = self._get_checkpoint_file(self.context.requirements_file, self.context.is_cpp)
+        checkpoint_file = self._get_checkpoint_file(self.context.requirements_file)
         self.checkpoint = CheckpointManager(checkpoint_file, self.context.requirements_file) if enable_checkpoint else None
 
-    def _get_checkpoint_file(self, requirements_file: Path, is_cpp: bool) -> Path:
+    def _get_checkpoint_file(self, requirements_file: Path) -> Path:
         req_path = Path(requirements_file)
         project_name = req_path.stem
         if project_name.endswith('_requirements'):
             project_name = project_name.replace('_requirements', '')
         if project_name.startswith('req_'):
             project_name = project_name.replace('req_', '')
-        if is_cpp and not project_name.startswith('cpp_'):
-            project_name = f'cpp_{project_name}'
         return Path(project_name) / '.spec' / 'checkpoint.json'
 
     def run_all_phases(self, resume: bool = True) -> Dict:
@@ -410,10 +408,35 @@ class EnhancedOpenSpecScheduler:
         for i in range(start_phase, len(phases) + 1):
             phase = phases[i - 1]
 
-            #
+            # Check checkpoint first
             if self.checkpoint and self.checkpoint.is_phase_completed(i):
                 print(f"[SKIP] Phase {i} ")
                 continue
+
+            # Check if phase should be skipped based on project type/language
+            if hasattr(phase, 'should_skip'):
+                should_skip, skip_reason = phase.should_skip()
+                if should_skip:
+                    skip_msg = f"[SKIP] Phase {i} ({phase.phase_name}) - {skip_reason}"
+                    print(skip_msg)
+                    if context.logger:
+                        context.logger.info(skip_msg)
+                    # Record skipped phase as successful with explicit skip metadata
+                    skip_data = {
+                        "skipped": True,
+                        "skip_reason": skip_reason,
+                    }
+                    if i == 10:
+                        skip_data.update({
+                            "test_skipped": True,
+                            "test_status": "skipped",
+                            "test_summary": f"skipped ({skip_reason})",
+                        })
+                    result = PhaseResult.ok(f"Skipped: {skip_reason}", **skip_data)
+                    context.set_phase_result(i, result)
+                    if self.checkpoint:
+                        self.checkpoint.save(i, True, context)
+                    continue
 
             #
             if self.progress:
@@ -512,7 +535,22 @@ class EnhancedOpenSpecScheduler:
         if self.checkpoint:
             self.checkpoint.clear(archive_reason="completed")
 
-        #
+        phase10_result = context.get_phase_result(10)
+        phase10_data = phase10_result.data if phase10_result else {}
+        test_skipped = bool(phase10_data.get("test_skipped") or phase10_data.get("skipped"))
+        test_status = str(phase10_data.get("test_status") or ("skipped" if test_skipped else "completed"))
+        test_summary = str(
+            phase10_data.get("test_summary")
+            or (
+                "skipped ({})".format(phase10_data.get("skip_reason", "not applicable"))
+                if test_skipped
+                else "{}/{} passed".format(
+                    getattr(context, 'test_passed', 0),
+                    getattr(context, 'test_total', 0),
+                )
+            )
+        )
+
         return {
             'success': True,
             'project_dir': str(context.project_dir),
@@ -520,6 +558,9 @@ class EnhancedOpenSpecScheduler:
             'test_passed': getattr(context, 'test_passed', 0),
             'test_failed': getattr(context, 'test_failed', 0),
             'test_total': getattr(context, 'test_total', 0),
+            'test_skipped': test_skipped,
+            'test_status': test_status,
+            'test_summary': test_summary,
             'log_file': str(context.log_file) if context.log_file else None,
             'phases': context.phase_results
         }

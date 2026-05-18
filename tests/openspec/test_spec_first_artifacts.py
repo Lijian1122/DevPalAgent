@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from devpal.core.openspec_phases.base import OpenSpecContext
+from devpal.core.openspec_phases.base import OpenSpecContext, PhaseResult
 from devpal.core.openspec_phases.phase1_parse_requirements import Phase1ParseRequirements
 from devpal.core.openspec_phases.phase11_final_report import Phase11FinalReport
 from devpal.core.openspec_phases.phase2_create_structure import Phase2CreateStructure
@@ -104,3 +104,34 @@ def test_phase11_writes_artifact_graph_and_acceptance_matrix(tmp_path):
     assert "REQ-001 用户登录" in report
     assert "tests/test_login_service.cpp" in report
     assert "Passed" in report
+
+
+def test_phase11_reports_skipped_phase10_without_zero_of_zero_passed(tmp_path):
+    project_dir = tmp_path / "installer_project"
+    for folder in ["src", "tests", "docs", ".spec"]:
+        (project_dir / folder).mkdir(parents=True, exist_ok=True)
+
+    context = OpenSpecContext(project_dir=project_dir, requirements_file=tmp_path / "requirements.md")
+    context.structured_requirements = [
+        {"id": "REQ-001", "title": "生成安装脚本", "description": "", "acceptance_criteria": []}
+    ]
+    context.set_phase_result(
+        10,
+        PhaseResult.ok(
+            "Skipped: installer project",
+            skipped=True,
+            test_skipped=True,
+            test_status="skipped",
+            test_summary="skipped (installer project)",
+        ),
+    )
+
+    result = Phase11FinalReport(context).execute()
+
+    assert result.success
+    assert result.data["test_skipped"] is True
+    assert result.data["test_summary"] == "skipped (installer project)"
+    report = (project_dir / "docs" / "final_report.md").read_text(encoding="utf-8")
+    assert "0/0 passed" not in report
+    assert "- Summary: skipped (installer project)" in report
+    assert "| 10 | Compile and run tests | skipped |" in report

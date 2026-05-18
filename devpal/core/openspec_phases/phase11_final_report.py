@@ -37,11 +37,7 @@ class Phase11FinalReport(PhaseInterface):
         self.log("=" * 60)
         self.log("  OpenSpec 11-phase pipeline complete")
         self.log("  project: {}".format(self.context.project_dir))
-        self.log(
-            "  tests: {}/{} passed".format(
-                self.context.test_passed, self.context.test_total
-            )
-        )
+        self.log("  tests: {}".format(self._test_summary()))
         self.log(
             "  files generated: {}".format(len(set(self.context.generated_files)))
         )
@@ -62,6 +58,9 @@ class Phase11FinalReport(PhaseInterface):
             project_dir=str(self.context.project_dir),
             test_passed=self.context.test_passed,
             test_total=self.context.test_total,
+            test_skipped=self._is_test_skipped(),
+            test_status="skipped" if self._is_test_skipped() else "completed",
+            test_summary=self._test_summary(),
             generated_files=len(set(self.context.generated_files)),
             llm_calls=self.context.llm_calls,
             llm_input_tokens=self.context.llm_input_tokens,
@@ -75,6 +74,8 @@ class Phase11FinalReport(PhaseInterface):
         passed = self.context.test_passed
         total = self.context.test_total
         rate = "{:.1f}%".format(passed / total * 100) if total else "n/a"
+        test_skipped = self._is_test_skipped()
+        test_summary = self._test_summary()
 
         phase_names = {
             1: "Parse requirements",
@@ -111,8 +112,10 @@ class Phase11FinalReport(PhaseInterface):
             "",
             "## 3. Test Results",
             "",
-            "- Passed: {}/{}".format(passed, total),
-            "- Pass rate: {}".format(rate),
+            "- Status: {}".format("skipped" if test_skipped else "completed"),
+            "- Summary: {}".format(test_summary),
+            "- Passed: {}".format("not applicable" if test_skipped else "{}/{}".format(passed, total)),
+            "- Pass rate: {}".format("not applicable" if test_skipped else rate),
             "",
             "### Requirement Status",
             "",
@@ -149,6 +152,8 @@ class Phase11FinalReport(PhaseInterface):
             result = self.context.get_phase_result(phase_num)
             if phase_num == 11:
                 status = "OK"
+            elif result and self._is_phase_skipped(result):
+                status = "skipped"
             elif result and result.success:
                 status = "OK"
             elif result is None:
@@ -226,6 +231,32 @@ class Phase11FinalReport(PhaseInterface):
 
         return {"nodes": nodes, "edges": edges}
 
+    def _phase10_data(self) -> Dict[str, object]:
+        result = self.context.get_phase_result(10)
+        return result.data if result else {}
+
+    def _is_phase_skipped(self, result: PhaseResult) -> bool:
+        return bool(result.data.get("skipped") or result.data.get("test_skipped"))
+
+    def _is_test_skipped(self) -> bool:
+        data = self._phase10_data()
+        return bool(data.get("test_skipped") or data.get("skipped"))
+
+    def _test_summary(self) -> str:
+        data = self._phase10_data()
+        if self._is_test_skipped():
+            summary = data.get("test_summary")
+            if summary:
+                return str(summary)
+            reason = data.get("skip_reason", "not applicable")
+            return "skipped ({})".format(reason)
+        return "{}/{} passed".format(self.context.test_passed, self.context.test_total)
+
+    def _acceptance_status(self) -> str:
+        if self._is_test_skipped():
+            return "Skipped"
+        return "Passed" if self.context.test_total > 0 and self.context.test_failed == 0 else "Failed"
+
     def _generate_status_summary(self) -> list:
         """Return markdown lines showing requirement status distribution."""
         summary = self.context.get_status_summary()
@@ -284,7 +315,7 @@ class Phase11FinalReport(PhaseInterface):
 
                     implementation = ", ".join(code_files) if code_files else "(none)"
                     tests = ", ".join(test_files) if test_files else "(none)"
-                    status = "Passed" if self.context.test_total > 0 and self.context.test_failed == 0 else "Failed"
+                    status = self._acceptance_status()
 
                     lines.append(
                         "| {} {} | {} | {} | {} |".format(req_id, title, implementation, tests, status)
@@ -316,7 +347,7 @@ class Phase11FinalReport(PhaseInterface):
 
          source_files = self._relative_files(["src/*.cpp", "include/*.h"])
          test_files = self._relative_files(["tests/test_*.cpp"])
-         status = "Passed" if self.context.test_total > 0 and self.context.test_failed == 0 else "Failed"
+         status = self._acceptance_status()
 
          implementation = ", ".join(source_files) if source_files else "(none)"
          tests = ", ".join(test_files) if test_files else "(none)"
@@ -402,7 +433,8 @@ class Phase11FinalReport(PhaseInterface):
                 "",
                 "## Test Results",
                 "",
-                "- Passed: {}/{}".format(self.context.test_passed, self.context.test_total),
+                "- Status: {}".format("skipped" if self._is_test_skipped() else "completed"),
+                "- Summary: {}".format(self._test_summary()),
                 "",
             ]
 
