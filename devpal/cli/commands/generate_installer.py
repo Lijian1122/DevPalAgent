@@ -27,7 +27,6 @@ def generate_installer(lang, output_dir, verbose):
 
     - Bash (Linux/macOS)
     - Batch (Windows)
-    - Python (cross-platform)
 
     Examples:
 
@@ -72,7 +71,6 @@ def generate_installer(lang, output_dir, verbose):
         click.echo(f"\nUsage:")
         click.echo(f"  Bash:   bash {output_path}/install_claude_cli.sh [--lang=en|zh]")
         click.echo(f"  Batch:  {output_path}\\install_claude_cli.bat [--lang=en|zh]")
-        click.echo(f"  Python: python {output_path}/install_claude_cli.py [--lang=en|zh]")
 
         return 0
 

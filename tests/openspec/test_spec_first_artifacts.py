@@ -60,6 +60,63 @@ def test_phase1_extracts_structured_requirements(tmp_path):
     assert req["status"] == "PROPOSED"
 
 
+def test_phase1_keeps_python_project_with_install_feature_on_python(tmp_path):
+    content = """# Python app
+
+## REQ-001: Package installer
+- Build a Python CLI that can install plugins for users.
+- Use pytest for tests.
+"""
+    context = OpenSpecContext(project_dir=tmp_path / "out", requirements_file=tmp_path / "requirements.md")
+    context.is_cpp = False
+    context.language = "python"
+    phase = Phase1ParseRequirements(context, _FileReaderRegistry(content))
+
+    result = phase.execute()
+
+    assert result.success
+    assert context.project_type == ""
+    assert context.language == "python"
+    assert context.is_cpp is False
+
+
+def test_phase1_classifies_plain_shell_project_without_installer_skip(tmp_path):
+    content = """# Maintenance shell script
+
+## REQ-001: Backup job
+- Build a shell script project with scripts/main.sh.
+- Add bats tests.
+"""
+    context = OpenSpecContext(project_dir=tmp_path / "out", requirements_file=tmp_path / "requirements.md")
+    phase = Phase1ParseRequirements(context, _FileReaderRegistry(content))
+
+    result = phase.execute()
+
+    assert result.success
+    assert context.project_type == ""
+    assert context.language == "shell"
+    assert context.is_cpp is False
+
+
+def test_phase1_classifies_installer_as_shell_project(tmp_path):
+    content = """# 平台安装脚本生成器测试
+
+## REQ-001: 生成平台安装脚本
+- 为 macOS/Linux 生成 install_claude_cli.sh shell 脚本
+- 为 Windows 生成 install_claude_cli.bat 批处理脚本
+- 这是一个安装工具项目
+"""
+    context = OpenSpecContext(project_dir=tmp_path / "out", requirements_file=tmp_path / "requirements.md")
+    phase = Phase1ParseRequirements(context, _FileReaderRegistry(content))
+
+    result = phase.execute()
+
+    assert result.success
+    assert context.project_type == "installer"
+    assert context.language == "shell"
+    assert context.is_cpp is False
+
+
 def test_phase2_creates_cpp_structure(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = OpenSpecContext(project_dir=Path("."), requirements_file=Path("simple_login.md"))
@@ -93,15 +150,31 @@ def test_phase2_creates_installer_structure_without_cpp_prefix_or_include(tmp_pa
     monkeypatch.chdir(tmp_path)
     context = OpenSpecContext(project_dir=Path("."), requirements_file=Path("test_phase_skip.md"))
     context.is_cpp = False
-    context.language = "python"
+    context.language = "shell"
     context.project_type = "installer"
 
     result = Phase2CreateStructure(context, _DummyRegistry()).execute()
 
     assert result.success
     assert context.project_name == "test_phase_skip"
+    assert "scripts" in result.data["subdirs"]
     assert "include" not in result.data["subdirs"]
     assert not (tmp_path / "cpp_test_phase_skip").exists()
+
+
+def test_phase2_creates_plain_shell_structure_with_lib(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = OpenSpecContext(project_dir=Path("."), requirements_file=Path("backup_job.md"))
+    context.is_cpp = False
+    context.language = "shell"
+
+    result = Phase2CreateStructure(context, _DummyRegistry()).execute()
+
+    assert result.success
+    assert context.project_name == "backup_job"
+    assert "scripts" in result.data["subdirs"]
+    assert "lib" in result.data["subdirs"]
+    assert "include" not in result.data["subdirs"]
 
 
 def test_phase2_writes_requirements_json(tmp_path, monkeypatch):
@@ -185,12 +258,14 @@ def test_phase11_python_claude_md_uses_python_conventions(tmp_path):
 
 def test_phase11_reports_skipped_phase10_without_zero_of_zero_passed(tmp_path):
     project_dir = tmp_path / "installer_project"
-    for folder in ["src", "tests", "docs", ".spec"]:
+    for folder in ["scripts", "tests", "docs", ".spec"]:
         (project_dir / folder).mkdir(parents=True, exist_ok=True)
+    (project_dir / "scripts" / "install_claude_cli.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    (project_dir / "scripts" / "install_claude_cli.bat").write_text("@echo off\n", encoding="utf-8")
 
     context = OpenSpecContext(project_dir=project_dir, requirements_file=tmp_path / "requirements.md")
     context.is_cpp = False
-    context.language = "python"
+    context.language = "shell"
     context.project_type = "installer"
     context.structured_requirements = [
         {"id": "REQ-001", "title": "生成安装脚本", "description": "", "acceptance_criteria": []}
@@ -213,10 +288,14 @@ def test_phase11_reports_skipped_phase10_without_zero_of_zero_passed(tmp_path):
     assert result.data["test_summary"] == "skipped (installer project)"
     report = (project_dir / "docs" / "final_report.md").read_text(encoding="utf-8")
     assert "0/0 passed" not in report
+    assert "install_claude_cli.sh" in report
+    assert "install_claude_cli.bat" in report
     assert "- Summary: skipped (installer project)" in report
     assert "| 10 | Compile and run tests | skipped |" in report
     claude_md = (project_dir / "CLAUDE.md").read_text(encoding="utf-8")
     assert "Summary: skipped (installer project)" in claude_md
+    assert "Language: Shell Script" in claude_md
+    assert "scripts/" in claude_md
     coding_section = claude_md.split("## Coding Conventions", 1)[1]
     assert ".cpp" not in coding_section
     assert "test_base.h" not in coding_section

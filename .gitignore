@@ -46,3 +46,4 @@ data/
 
 # ===== OpenSpec generated projects =====
 cpp_simple_login/
+test_phase_skip/

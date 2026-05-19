@@ -63,8 +63,8 @@ class Phase2CreateStructure(PhaseInterface):
         project_type = getattr(self.context, 'project_type', '')
         language = getattr(self.context, 'language', 'cpp')
 
-        if project_type in {'installer', 'tooling', 'cli_tool'}:
-            return ['src', 'tests', 'docs', '.spec']
+        if project_type in {'installer', 'tooling'}:
+            return ['scripts', 'tests', 'docs', '.spec']
 
         try:
             from devpal.core.schema.languages.language_config import get_language_features

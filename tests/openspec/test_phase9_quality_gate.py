@@ -188,12 +188,14 @@ def test_quality_gate_fails_zero_tests(context, temp_project, tool_registry):
     assert any("No test files" in err for err in result.errors)
 
 
-def test_quality_gate_python_installer_does_not_run_cpp_validation(context, temp_project, tool_registry):
+def test_quality_gate_shell_installer_does_not_run_cpp_validation(context, temp_project, tool_registry):
     context.is_cpp = False
-    context.language = "python"
+    context.language = "shell"
     context.project_type = "installer"
-    (temp_project / "src" / "main.py").write_text("def main():\n    return 0\n", encoding="utf-8")
-    (temp_project / "tests" / "test_main.py").write_text("def test_main():\n    assert True\n", encoding="utf-8")
+    scripts_dir = temp_project / "scripts"
+    scripts_dir.mkdir(exist_ok=True)
+    (scripts_dir / "install_claude_cli.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    (scripts_dir / "install_claude_cli.bat").write_text("@echo off\n", encoding="utf-8")
 
     phase = Phase9QualityGate(context, tool_registry)
     result = phase.execute()

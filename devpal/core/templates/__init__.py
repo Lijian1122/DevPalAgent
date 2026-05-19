@@ -11,6 +11,7 @@ from .install_script_generator import InstallScriptGenerator
 # 注册内置模板
 from . import cpp_templates
 from . import python_templates
+from . import shell_templates
 
 __all__ = [
     'BaseTemplate',

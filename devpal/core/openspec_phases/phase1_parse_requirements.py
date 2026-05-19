@@ -54,9 +54,16 @@ class Phase1ParseRequirements(PhaseInterface):
         self.context.project_type = self._detect_project_type(result.content)
 
         # 根据项目类型更新 is_cpp 和 language
-        if self.context.project_type in ['installer', 'cli_tool', 'tooling'] or 'install' in self.context.features:
+        if self.context.project_type in ['installer', 'tooling']:
             self.context.is_cpp = False
-            self.context.language = 'python'  # 安装脚本默认使用 Python
+            self.context.language = 'shell'
+        elif self.context.project_type == 'cli_tool':
+            self.context.is_cpp = False
+            if self.context.language == 'cpp':
+                self.context.language = 'python'
+        elif self._is_shell_project(result.content):
+            self.context.is_cpp = False
+            self.context.language = 'shell'
 
         if self.context.features:
             self.log(f"[INFO] 检测到特性: {', '.join(self.context.features)}")
@@ -313,6 +320,14 @@ class Phase1ParseRequirements(PhaseInterface):
     # 项目特性和类型检测
     # -------------------------
 
+    def _is_shell_project(self, content: str) -> bool:
+        content_lower = content.lower()
+        shell_markers = [
+            'shell script', 'bash script', 'sh script', '.sh', 'bats', 'shell 脚本',
+            'bash 脚本', '脚本项目',
+        ]
+        return any(marker in content_lower for marker in shell_markers)
+
     def _detect_features(self, content: str) -> List[str]:
         """检测项目特性
 
@@ -326,7 +341,10 @@ class Phase1ParseRequirements(PhaseInterface):
         content_lower = content.lower()
 
         # 安装脚本特性
-        install_keywords = ['install', 'installer', 'setup', 'deploy', 'script', '安装', '部署']
+        install_keywords = [
+            'installer', 'install script', 'setup script', 'windows installer',
+            '安装脚本', '安装工具', '批处理脚本',
+        ]
         if any(keyword in content_lower for keyword in install_keywords):
             features.append('install')
 
@@ -364,7 +382,14 @@ class Phase1ParseRequirements(PhaseInterface):
         content_lower = content.lower()
 
         # 安装脚本项目
-        if any(kw in content_lower for kw in ['installer', 'install script', '安装脚本', 'setup script']):
+        installer_markers = [
+            'install script', 'setup script', 'windows installer', 'installer script',
+            '安装脚本', '安装工具', '批处理脚本',
+        ]
+        script_markers = ['.bat', '.sh', 'shell script', 'batch script', 'shell 脚本']
+        if any(kw in content_lower for kw in installer_markers):
+            return 'installer'
+        if 'installer' in content_lower and any(kw in content_lower for kw in script_markers):
             return 'installer'
 
         # CLI 工具

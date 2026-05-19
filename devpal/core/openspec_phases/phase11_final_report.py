@@ -304,12 +304,11 @@ class Phase11FinalReport(PhaseInterface):
                     test_files = []
                     try:
                         dependents = graph.get_dependents(req_node_id)
-                        for node_id, dep_type in dependents:
-                            node = graph.get_node(node_id)
+                        for node, dep_type in dependents:
                             if node and dep_type == DependencyType.IMPLEMENTS and node.type == ArtifactType.CODE:
-                                code_files.append(Path(node.path).name if node.path else node_id)
+                                code_files.append(Path(node.path).name if node.path else node.id)
                             elif node and dep_type == DependencyType.TESTS and node.type == ArtifactType.TEST:
-                                test_files.append(Path(node.path).name if node.path else node_id)
+                                test_files.append(Path(node.path).name if node.path else node.id)
                     except Exception:
                         pass
 
@@ -329,16 +328,13 @@ class Phase11FinalReport(PhaseInterface):
                         "",
                         "- Requirements with code: {}/{}".format(
                             coverage.get("requirements_with_code", 0),
-                            coverage.get("total_requirements", 0)
+                            matrix.get("total_requirements", len(matrix.get("requirements", [])))
                         ),
                         "- Requirements with tests: {}/{}".format(
-                            coverage.get("requirements_with_tests", 0),
-                            coverage.get("total_requirements", 0)
+                            coverage.get("requirements_with_tests", coverage.get("requirements_with_test", 0)),
+                            matrix.get("total_requirements", len(matrix.get("requirements", [])))
                         ),
-                        "- Code files with tests: {}/{}".format(
-                            coverage.get("code_with_tests", 0),
-                            coverage.get("total_code", 0)
-                        ),
+                        "- Code files: {}".format(len(matrix.get("code_files", []))),
                     ])
 
                 return lines
@@ -367,8 +363,8 @@ class Phase11FinalReport(PhaseInterface):
             return ["src/*.cpp", "src/*.cc", "src/*.cxx", "include/*.h", "include/*.hpp"]
         if language == "python":
             return ["src/*.py"]
-        if language == "shell" or project_type in {"installer", "tooling", "cli_tool"}:
-            return ["scripts/*.sh", "src/*.py", "src/*.sh"]
+        if language == "shell" or project_type in {"installer", "tooling"}:
+            return ["scripts/*.sh", "scripts/*.bat", "src/*.sh"]
         return ["src/*"]
 
     def _test_file_patterns(self) -> List[str]:
@@ -391,10 +387,10 @@ class Phase11FinalReport(PhaseInterface):
     def _file_structure_lines(self) -> List[str]:
         features = self._language_features()
         project_type = getattr(self.context, "project_type", "")
-        if project_type in {"installer", "tooling", "cli_tool"}:
+        if project_type in {"installer", "tooling"}:
             return [
-                "src/        # Installer/tooling implementation files",
-                "tests/      # Python test files (test_*.py)",
+                "scripts/    # Platform installer scripts (.sh for macOS/Linux, .bat for Windows)",
+                "tests/      # Optional shell test files (test_*.sh)",
                 "docs/       # Generated documentation",
                 ".spec/      # OpenSpec artifacts",
             ]
@@ -416,7 +412,7 @@ class Phase11FinalReport(PhaseInterface):
             lines.append("- {} names: {}".format(element.capitalize(), convention))
         lines.append("- Test framework: {}".format(features.test_framework))
         lines.append("- Build system: {}".format(features.build_system))
-        if getattr(self.context, "project_type", "") in {"installer", "tooling", "cli_tool"}:
+        if getattr(self.context, "project_type", "") in {"installer", "tooling"}:
             lines.append("- Project type: installer/tooling; native build phases are not applicable")
         return lines
 

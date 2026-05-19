@@ -13,6 +13,7 @@ from .base import PhaseInterface, PhaseResult, OpenSpecContext
 from ..compiledb import CompileDB
 from ..llm_client import get_llm_client
 from ..templates import registry, TemplateContext
+from ..templates.install_script_generator import InstallScriptGenerator
 from ..prompts import get_prompt_engine
 
 
@@ -71,6 +72,23 @@ class Phase4GenerateCode(PhaseInterface):
 
         # 如果需求未变更且不强制重新生成，跳过 AI 生成
         existing_business_files = self._find_existing_business_files(project_dir, project_name)
+        if self._is_installer_project():
+            script_files = [path.resolve() for path in InstallScriptGenerator().generate_all(project_dir / "scripts")]
+            self.context.ai_generated_files.extend(script_files)
+            self.context.generated_files.extend(infra_files + script_files)
+            for req in (self.context.structured_requirements or []):
+                self.context.update_requirement_status(req.get("id", ""), "IN_PROGRESS")
+            self._update_artifact_graph(project_dir, script_files)
+            self.compiledb.index_project(project_dir, use_cache=False)
+            self.compiledb.save_cache(project_dir)
+            return PhaseResult.ok(
+                "Phase 4 complete: generated installer scripts",
+                infra_count=len(infra_files),
+                ai_count=len(script_files),
+                total_files=len(infra_files) + len(script_files),
+                deterministic_installer=True,
+            )
+
         if existing_business_files and not force_regenerate and not delta_changed:
             self.log("  [INCREMENTAL] No requirement changes detected, skipping AI generation")
             self.context.ai_generated_files.extend(existing_business_files)
@@ -299,6 +317,10 @@ class Phase4GenerateCode(PhaseInterface):
             turns=result.turns,
         )
 
+    def _is_installer_project(self) -> bool:
+        project_type = getattr(self.context, 'project_type', '')
+        return project_type in {'installer', 'tooling'}
+
     def _apply_infrastructure_templates(self, project_name):
         """Apply CMake/README/skeleton/test_base templates."""
         project_dir = self.context.project_dir
@@ -346,6 +368,15 @@ class Phase4GenerateCode(PhaseInterface):
             f"include/{namespace}.h",
         }
         business_files: List[Path] = []
+        if self._is_installer_project():
+            scripts_dir = project_dir / "scripts"
+            if scripts_dir.exists():
+                business_files.extend(sorted(scripts_dir.glob("*.sh")))
+                business_files.extend(sorted(scripts_dir.glob("*.bat")))
+            business_files.extend(sorted(project_dir.glob("install*.sh")))
+            business_files.extend(sorted(project_dir.glob("install*.bat")))
+            return business_files
+
         for folder in ("src", "include", "tests"):
             root = project_dir / folder
             if not root.exists():

@@ -22,7 +22,7 @@ def should_skip_for_non_cpp_project(phase_num: int, context) -> Tuple[bool, str]
         return False, ""
 
     # 安装脚本项目的跳过规则
-    is_installer = 'install' in context.features or context.project_type in ['installer', 'cli_tool', 'tooling']
+    is_installer = context.project_type in ['installer', 'tooling']
 
     if is_installer:
         skip_rules = {

@@ -1259,6 +1259,10 @@ class Phase9QualityGate(PhaseInterface):
     def _check_shell_main(self) -> str:
         """检查 Shell 主脚本"""
         main_candidates = [
+            self.context.project_dir / "scripts" / "install_claude_cli.sh",
+            self.context.project_dir / "scripts" / "install_claude_cli.bat",
+            self.context.project_dir / "install_claude_cli.sh",
+            self.context.project_dir / "install_claude_cli.bat",
             self.context.project_dir / "scripts" / "main.sh",
             self.context.project_dir / "main.sh",
             self.context.project_dir / "install.sh",
@@ -1268,7 +1272,7 @@ class Phase9QualityGate(PhaseInterface):
             if main_path.exists():
                 return ""
 
-        return "No Shell main script found (scripts/main.sh, main.sh, or install.sh)"
+        return "No Shell main script found (scripts/install_claude_cli.sh, scripts/install_claude_cli.bat, scripts/main.sh, main.sh, or install.sh)"
 
     def _check_shell_test_files(self) -> str:
         """检查 Shell 测试文件"""

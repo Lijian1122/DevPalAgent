@@ -37,10 +37,9 @@ class InstallScriptGenerator:
         return messages_by_locale
 
     def generate_bash_script(self) -> str:
-        """Generate Bash installation script"""
+        """Generate Bash installation script for macOS/Linux"""
         messages = self._collect_messages()
 
-        # Build message function
         msg_cases = []
         for locale, msgs in messages.items():
             cases = []
@@ -64,13 +63,17 @@ class InstallScriptGenerator:
 set -euo pipefail
 
 SCRIPT_LANG="en"
+LOCAL_NODE_DIR="$PWD/.nodejs"
+LOCAL_NODE_HOME="$LOCAL_NODE_DIR/current"
+NODE_VERSION="${{NODE_VERSION:-v24.15.0}}"
+NPM_INSTALL_TIMEOUT_SECONDS="${{NPM_INSTALL_TIMEOUT_SECONDS:-120}}"
+NPM_MIRROR_REGISTRY="${{NPM_MIRROR_REGISTRY:-https://registry.npmmirror.com}}"
 
-# Colors
-RED='\\033[0;31m'
-GREEN='\\033[0;32m'
-NC='\\033[0m'
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
-# Detect language
 for arg in "$@"; do
     case "$arg" in
         --lang=*) SCRIPT_LANG="${{arg#*=}}" ;;
@@ -83,18 +86,69 @@ command_exists() {{
     command -v "$1" >/dev/null 2>&1
 }}
 
+claude_works() {{
+    command_exists claude && claude --version >/dev/null 2>&1
+}}
+
+prepend_local_node() {{
+    if [ -x "$LOCAL_NODE_HOME/bin/node" ]; then
+        export PATH="$LOCAL_NODE_HOME/bin:$PATH"
+    fi
+}}
+
+download_lts_node() {{
+    echo -e "${{YELLOW}}!${{NC}} Node.js not found; installing Node.js $NODE_VERSION into $LOCAL_NODE_DIR"
+    mkdir -p "$LOCAL_NODE_DIR" "$LOCAL_NODE_HOME"
+
+    os_name="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    arch_name="$(uname -m)"
+    case "$os_name" in
+        linux) node_os="linux" ;;
+        darwin) node_os="darwin" ;;
+        *) echo -e "${{RED}}✗${{NC}} Unsupported OS for automatic Node.js install: $os_name"; return 1 ;;
+    esac
+    case "$arch_name" in
+        x86_64|amd64) node_arch="x64" ;;
+        arm64|aarch64) node_arch="arm64" ;;
+        *) echo -e "${{RED}}✗${{NC}} Unsupported architecture for automatic Node.js install: $arch_name"; return 1 ;;
+    esac
+
+    base_url="https://nodejs.org/dist/$NODE_VERSION/"
+    archive="node-$NODE_VERSION-${{node_os}}-${{node_arch}}.tar.xz"
+    tmp_archive="$LOCAL_NODE_DIR/$archive"
+    if command_exists curl; then
+        curl -fL "$base_url$archive" -o "$tmp_archive"
+    elif command_exists wget; then
+        wget -O "$tmp_archive" "$base_url$archive"
+    else
+        echo -e "${{RED}}✗${{NC}} curl or wget is required to download Node.js"
+        return 1
+    fi
+
+    rm -rf "$LOCAL_NODE_HOME"
+    mkdir -p "$LOCAL_NODE_HOME"
+    tar -xJf "$tmp_archive" -C "$LOCAL_NODE_HOME" --strip-components=1
+    rm -f "$tmp_archive"
+    prepend_local_node
+}}
+
 check_node() {{
+    prepend_local_node
     echo "$(msg 'install.checking_node')"
     if command_exists node; then
         echo -e "${{GREEN}}✓${{NC}} Node.js found"
         return 0
-    else
-        echo -e "${{RED}}✗${{NC}} $(msg 'install.node_not_found')"
-        return 1
     fi
+    if download_lts_node && command_exists node; then
+        echo -e "${{GREEN}}✓${{NC}} Node.js installed locally"
+        return 0
+    fi
+    echo -e "${{RED}}✗${{NC}} $(msg 'install.node_not_found')"
+    return 1
 }}
 
 check_npm() {{
+    prepend_local_node
     echo "$(msg 'install.checking_npm')"
     if command_exists npm; then
         echo -e "${{GREEN}}✓${{NC}} npm found"
@@ -105,9 +159,37 @@ check_npm() {{
     fi
 }}
 
+run_with_timeout() {{
+    "$@" &
+    local pid="$!"
+    local elapsed=0
+    while kill -0 "$pid" >/dev/null 2>&1; do
+        if [ "$elapsed" -ge "$NPM_INSTALL_TIMEOUT_SECONDS" ]; then
+            kill "$pid" >/dev/null 2>&1 || true
+            wait "$pid" 2>/dev/null || true
+            return 124
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    wait "$pid"
+}}
+
+run_npm_install() {{
+    if [ "${{USE_NPM_MIRROR:-0}}" = "1" ]; then
+        run_with_timeout npm install -g @anthropic-ai/claude-code --registry="$NPM_MIRROR_REGISTRY"
+        return $?
+    fi
+    if run_with_timeout npm install -g @anthropic-ai/claude-code; then
+        return 0
+    fi
+    echo -e "${{YELLOW}}!${{NC}} npm install failed or timed out; retrying with npm mirror: $NPM_MIRROR_REGISTRY"
+    run_with_timeout npm install -g @anthropic-ai/claude-code --registry="$NPM_MIRROR_REGISTRY"
+}}
+
 install_claude_cli() {{
     echo "$(msg 'install.installing')"
-    if npm install -g @anthropic-ai/claude-code; then
+    if run_npm_install; then
         echo -e "${{GREEN}}✓${{NC}} $(msg 'install.install_success')"
         return 0
     else
@@ -117,8 +199,9 @@ install_claude_cli() {{
 }}
 
 verify_installation() {{
+    prepend_local_node
     echo "$(msg 'install.verifying')"
-    if command_exists claude; then
+    if claude_works; then
         echo -e "${{GREEN}}✓${{NC}} $(msg 'install.verify_success')"
         return 0
     else
@@ -131,7 +214,8 @@ main() {{
     echo "$(msg 'install.welcome')"
     echo ""
 
-    if command_exists claude; then
+    prepend_local_node
+    if claude_works; then
         version="$(claude --version 2>/dev/null || echo 'unknown')"
         already_installed="$(msg 'install.already_installed')"
         already_installed="${{already_installed//{{version}}/$version}}"
@@ -170,11 +254,166 @@ main "$@"
 
     def generate_batch_script(self) -> str:
         """Generate Windows Batch installation script"""
-        return "@echo off\\necho Batch installer\\n"
+        return r'''@echo off
+setlocal enabledelayedexpansion
+
+set "SCRIPT_LANG=en"
+set "LOCAL_NODE_DIR=%CD%\.nodejs"
+set "LOCAL_NODE_HOME=%LOCAL_NODE_DIR%\current"
+if not defined NODE_VERSION set "NODE_VERSION=v24.15.0"
+if not defined NPM_INSTALL_TIMEOUT_SECONDS set "NPM_INSTALL_TIMEOUT_SECONDS=120"
+if not defined NPM_MIRROR_REGISTRY set "NPM_MIRROR_REGISTRY=https://registry.npmmirror.com"
+for %%A in (%*) do (
+    set "ARG=%%~A"
+    if /I "!ARG:~0,7!"=="--lang=" set "SCRIPT_LANG=!ARG:~7!"
+)
+
+echo Claude Code CLI Installation Script
+echo.
+
+call :prepend_local_node
+call :claude_works
+if not errorlevel 1 (
+    set "CLAUDE_VERSION=unknown"
+    for /f "delims=" %%V in ('claude --version 2^>nul') do set "CLAUDE_VERSION=%%V"
+    if /I "%SCRIPT_LANG%"=="zh" (
+        echo [OK] Claude Code CLI 已安装: !CLAUDE_VERSION!
+        echo 安装完成。
+    ) else (
+        echo [OK] Claude Code CLI is already installed: !CLAUDE_VERSION!
+        echo Installation complete.
+    )
+    exit /b 0
+)
+
+call :msg checking_node
+where node >nul 2>nul
+if errorlevel 1 (
+    call :install_local_node
+    if errorlevel 1 (
+        call :msg node_missing
+        call :msg manual_install
+        exit /b 1
+    )
+)
+call :msg node_found
+
+call :msg checking_npm
+where npm >nul 2>nul
+if errorlevel 1 (
+    call :msg npm_missing
+    call :msg manual_install
+    exit /b 1
+)
+call :msg npm_found
+
+echo.
+call :msg installing
+call :run_npm_install
+if errorlevel 1 (
+    call :msg install_failed
+    exit /b 1
+)
+call :msg install_success
+
+echo.
+call :msg verifying
+call :prepend_local_node
+call :claude_works
+if errorlevel 1 (
+    call :msg verify_failed
+    exit /b 1
+)
+call :msg verify_success
+call :msg done
+exit /b 0
+
+:claude_works
+where claude >nul 2>nul
+if errorlevel 1 exit /b 1
+call claude --version >nul 2>nul
+if errorlevel 1 exit /b 1
+exit /b 0
+
+:prepend_local_node
+if exist "%LOCAL_NODE_HOME%\node.exe" (
+    set "PATH=%LOCAL_NODE_HOME%;%LOCAL_NODE_HOME%\node_modules\npm\bin;%PATH%"
+)
+exit /b 0
+
+:install_local_node
+echo [WARN] Node.js not found; installing Node.js %NODE_VERSION% into %LOCAL_NODE_DIR%
+if not exist "%LOCAL_NODE_DIR%" mkdir "%LOCAL_NODE_DIR%"
+call powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $root=Join-Path (Get-Location) '.nodejs'; New-Item -ItemType Directory -Force -Path $root | Out-Null; $version=$env:NODE_VERSION; $url='https://nodejs.org/dist/' + $version + '/'; $name='node-' + $version + '-win-x64.zip'; $zip=Join-Path $root $name; Invoke-WebRequest -UseBasicParsing ($url + $name) -OutFile $zip; $extract=Join-Path $root 'extract'; if (Test-Path $extract) { Remove-Item -Recurse -Force $extract }; Expand-Archive -Force $zip $extract; $nodeDir=Get-ChildItem $extract -Directory | Select-Object -First 1; $current=Join-Path $root 'current'; if (Test-Path $current) { Remove-Item -Recurse -Force $current }; Move-Item $nodeDir.FullName $current; Remove-Item -Recurse -Force $extract; Remove-Item -Force $zip"
+if errorlevel 1 exit /b 1
+call :prepend_local_node
+where node >nul 2>nul
+if errorlevel 1 exit /b 1
+exit /b 0
+
+:run_npm_install
+if /I "%USE_NPM_MIRROR%"=="1" (
+    call :run_npm_with_timeout mirror
+    exit /b %ERRORLEVEL%
+)
+call :run_npm_with_timeout default
+if not errorlevel 1 exit /b 0
+echo [WARN] npm install failed or timed out; retrying with npm mirror: %NPM_MIRROR_REGISTRY%
+call :run_npm_with_timeout mirror
+exit /b %ERRORLEVEL%
+
+:run_npm_with_timeout
+set "NPM_MODE=%~1"
+if /I "%NPM_MODE%"=="mirror" (
+    call powershell -NoProfile -ExecutionPolicy Bypass -Command "$timeout=[int]$env:NPM_INSTALL_TIMEOUT_SECONDS; $args=@('install','-g','@anthropic-ai/claude-code','--registry=' + $env:NPM_MIRROR_REGISTRY); $p=Start-Process -FilePath 'npm' -ArgumentList $args -NoNewWindow -PassThru; if (-not $p.WaitForExit($timeout * 1000)) { try { $p.Kill() } catch {}; exit 124 }; exit $p.ExitCode"
+) else (
+    call powershell -NoProfile -ExecutionPolicy Bypass -Command "$timeout=[int]$env:NPM_INSTALL_TIMEOUT_SECONDS; $args=@('install','-g','@anthropic-ai/claude-code'); $p=Start-Process -FilePath 'npm' -ArgumentList $args -NoNewWindow -PassThru; if (-not $p.WaitForExit($timeout * 1000)) { try { $p.Kill() } catch {}; exit 124 }; exit $p.ExitCode"
+)
+exit /b %ERRORLEVEL%
+
+:msg
+set "KEY=%~1"
+if /I "%SCRIPT_LANG%"=="zh" goto msg_zh
+goto msg_en
+
+:msg_zh
+if "%KEY%"=="checking_node" echo 正在检查 Node.js...
+if "%KEY%"=="node_found" echo [OK] Node.js 已找到
+if "%KEY%"=="node_missing" echo [ERROR] 未找到 Node.js
+if "%KEY%"=="checking_npm" echo 正在检查 npm...
+if "%KEY%"=="npm_found" echo [OK] npm 已找到
+if "%KEY%"=="npm_missing" echo [ERROR] 未找到 npm
+if "%KEY%"=="installing" echo 正在安装 Claude Code CLI...
+if "%KEY%"=="install_success" echo [OK] 安装成功
+if "%KEY%"=="install_failed" echo [ERROR] 安装失败
+if "%KEY%"=="verifying" echo 正在验证安装...
+if "%KEY%"=="verify_success" echo [OK] Claude Code CLI 可用
+if "%KEY%"=="verify_failed" echo [ERROR] 未能验证 claude 命令
+if "%KEY%"=="manual_install" echo 请检查网络，或设置 NPM_MIRROR_REGISTRY 后重试。
+if "%KEY%"=="done" echo 安装完成。
+exit /b 0
+
+:msg_en
+if "%KEY%"=="checking_node" echo Checking Node.js...
+if "%KEY%"=="node_found" echo [OK] Node.js found
+if "%KEY%"=="node_missing" echo [ERROR] Node.js not found
+if "%KEY%"=="checking_npm" echo Checking npm...
+if "%KEY%"=="npm_found" echo [OK] npm found
+if "%KEY%"=="npm_missing" echo [ERROR] npm not found
+if "%KEY%"=="installing" echo Installing Claude Code CLI...
+if "%KEY%"=="install_success" echo [OK] Installation successful
+if "%KEY%"=="install_failed" echo [ERROR] Installation failed
+if "%KEY%"=="verifying" echo Verifying installation...
+if "%KEY%"=="verify_success" echo [OK] Claude Code CLI is available
+if "%KEY%"=="verify_failed" echo [ERROR] Could not verify claude command
+if "%KEY%"=="manual_install" echo Check your network, or set NPM_MIRROR_REGISTRY and retry.
+if "%KEY%"=="done" echo Installation complete.
+exit /b 0
+'''
 
     def generate_python_script(self) -> str:
         """Generate Python cross-platform installation script"""
-        return "#!/usr/bin/env python3\\nprint('Python installer')\\n"
+        return "#!/usr/bin/env python3\nprint('Python installer')\n"
 
     def generate_all(self, output_dir: Path) -> List[Path]:
         """Generate all installation scripts"""
@@ -191,10 +430,5 @@ main "$@"
         batch_path = output_dir / 'install_claude_cli.bat'
         batch_path.write_text(self.generate_batch_script(), encoding='utf-8')
         generated_files.append(batch_path)
-
-        python_path = output_dir / 'install_claude_cli.py'
-        python_path.write_text(self.generate_python_script(), encoding='utf-8')
-        python_path.chmod(0o755)
-        generated_files.append(python_path)
 
         return generated_files
