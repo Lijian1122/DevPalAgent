@@ -189,10 +189,11 @@ class Phase10RunTests(PhaseInterface):
                         if self.self_healer.heal_compile_error(main_cpp, main_compile_output, use_fallback=use_fallback):
                             self.context.self_heal_attempts += 1
                             continue  # 重新编译
-                        else:
-                            self.log(f"  [HEAL] Failed to fix main.cpp compile error, giving up")
-                            break
-
+                    else:
+                        self.log(f"  [HEAL] Attempt {attempt + 1} failed")
+                    if attempt < MAX_MAIN_HEAL_ATTEMPTS - 1:
+                               self.log(f"  [HEAL] Will retry with different model in next attempt")
+                     # 不break，让循环继续尝试下一次
             if not main_success:
                 self.log("  [ERROR] Main program compilation failed after all heal attempts")
                 return PhaseResult.fail(

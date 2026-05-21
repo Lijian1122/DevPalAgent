@@ -131,6 +131,15 @@ class Phase11FinalReport(PhaseInterface):
             "",
             "```",
         ]
+
+        # M2: Add change information
+        if self.context.current_change_id:
+            lines.append("")
+            lines.append("## 1.1 OpenSpec Change")
+            lines.append("")
+            lines.append("- Change ID: `{}`".format(self.context.current_change_id))
+        lines.append("- Change directory: `openspec/changes/{}`".format(self.context.current_change_id))
+
         for f in unique_files:
             try:
                 rel = Path(f).relative_to(self.context.project_dir.resolve())
@@ -185,14 +194,40 @@ class Phase11FinalReport(PhaseInterface):
         # Try using full ArtifactGraph instance
         graph = self.context.artifact_graph
         if graph is not None:
-         try:
+            # M2: Add change node to artifact graph
+            if self.context.current_change_id and self.context.current_change_dir:
+                from ..schema.artifact_graph import ArtifactNode, ArtifactType, DependencyType
+
+                change_path = "openspec/changes/{}".format(self.context.current_change_id)
+
+                change_node = ArtifactNode(
+           id="change:{}".format(self.context.current_change_id),
+                 type=ArtifactType.SPEC,
+                    path=change_path,
+               name=self.context.current_change_id,
+                description="OpenSpec change {}".format(self.context.current_change_id),
+            metadata={"change_type": "openspec_change"}
+                )
+                graph.add_node(change_node)
+
+                # Link change to affected requirements
+            for req in self.context.structured_requirements:
+                req_id = req.get("id")
+                if req_id:
+                   graph.add_dependency(
+                          "change:{}".format(self.context.current_change_id),
+                  "req:{}".format(req_id),
+                       DependencyType.REFERENCES
+                      )
+
+        try:
             graph.save_to_file(graph_path)
             self.context.artifact_graph_data = json.loads(
                     graph_path.read_text(encoding="utf-8"))
             self.context.generated_files.append(graph_path)
             self.log("  [OK] Saved using ArtifactGraph.save_to_file()")
             return graph_path
-         except Exception as e:
+        except Exception as e:
                 self.log("  [WARN] ArtifactGraph.save_to_file() failed: {}".format(e))
 
         # Fallback: simple JSON

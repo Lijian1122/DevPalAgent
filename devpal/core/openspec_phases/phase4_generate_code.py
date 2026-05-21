@@ -55,7 +55,37 @@ class Phase4GenerateCode(PhaseInterface):
         self.phase_name = "Generate core code"
         self.tool_registry = tool_registry
         self.compiledb = CompileDB()
+        self.skipped_files = []  # Track skipped files for better reporting
 
+    def _read_change_artifacts(self) -> Dict[str, str]:
+        """Read change directory artifacts if available (M2 implementation)"""
+        artifacts = {}
+        
+        if not self.context.current_change_dir:
+             return artifacts
+
+        # 从变更目录读取关键产物
+        artifacts = {}
+
+        # 读取 spec.md（设计规范）
+        spec_path = self.context.current_change_dir / "specs" / "spec.md"
+        if spec_path.exists():
+         artifacts["spec"] = spec_path.read_text(encoding="utf-8")
+        self.log("  [M2] Read spec.md from change directory")
+
+        # 读取 tasks.md（任务清单）
+        tasks_path = self.context.current_change_dir / "tasks.md"
+        if tasks_path.exists():
+            artifacts["tasks"] = tasks_path.read_text(encoding="utf-8")
+            self.log("  [M2] Read tasks.md from change directory")
+
+        # 读取 design.md（设计文档）
+        design_path = self.context.current_change_dir / "design.md"
+        if design_path.exists():
+            artifacts["design"] = design_path.read_text(encoding="utf-8")
+            self.log("  [M2] Read design.md from change directory")
+        return artifacts
+    
     def execute(self) -> PhaseResult:
         self.log("Phase 4 start: infrastructure templates + AI code generation")
         project_dir = self.context.project_dir
@@ -274,15 +304,34 @@ class Phase4GenerateCode(PhaseInterface):
 
         self._update_usage_stats(client)
 
+        # Check if no AI files were generated
         if not ai_files:
-            return PhaseResult.fail(
-                "AI produced no code files",
-                errors=[
-                    "stop_reason={}".format(result.stop_reason),
-                    "turns={}".format(result.turns),
-                    "text={}".format(result.text_output[:500]),
-                ],
-            )
+            # Distinguish between "skipped" (files exist) and "failed" (AI error)
+            if self.skipped_files or infra_files:
+            # Files were skipped because they already exist - this is OK
+                self.log("  [INFO] Code generation skipped (all files already exist)")
+                self.log(f"  [SUMMARY] Skipped: {len(self.skipped_files)} files")
+                self.log(f"  [SUMMARY] Infrastructure: {len(infra_files)} files")
+              
+           # Mark as successful with skipped flag
+                return PhaseResult.ok(
+                    "Code generation completed (files already exist)",
+                    skipped=True,
+             skipped_count=len(self.skipped_files),
+          infra_files=len(infra_files),
+                    ai_files_generated=0
+           )
+            else:
+            # True failure: AI didn't generate files and nothing was skipped
+                return PhaseResult.fail(
+             "AI produced no code files",
+                    errors=[
+                     "stop_reason={}".format(result.stop_reason),
+                        "turns={}".format(result.turns),
+                        "text={}".format(result.text_output[:500]),
+                    ],
+                )
+
 
         self.context.ai_generated_files.extend(ai_files)
         # P2.3: mark all requirements as IN_PROGRESS
@@ -305,6 +354,11 @@ class Phase4GenerateCode(PhaseInterface):
                 "Code generation completed with errors",
                 errors=errors,
             )
+
+        # Log summary statistics
+        self.log(f"  [SUMMARY] Generated: {len(ai_files)} AI files")
+        self.log(f"  [SUMMARY] Skipped: {len(self.skipped_files)} existing files")
+        self.log(f"  [SUMMARY] Infrastructure: {len(infra_files)} files")
 
         return PhaseResult.ok(
             "Phase 4 complete",

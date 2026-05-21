@@ -83,6 +83,9 @@ class Phase3TechnicalDesign(PhaseInterface):
         self.context.tech_design_content = tech_design
         self.context.generated_files.append(tech_doc_path)
 
+        # M2: Also write to change directory if it exists
+        self._write_design_to_change_dir(tech_design)
+
         self.log(f"  [OK] 技术设计文档生成: {tech_doc_path} ({len(tech_design)} chars)")
         return PhaseResult.ok(
             "技术设计文档生成成功",
@@ -98,3 +101,13 @@ class Phase3TechnicalDesign(PhaseInterface):
         ctx.llm_input_tokens = client.usage.input_tokens
         ctx.llm_output_tokens = client.usage.output_tokens
         ctx.llm_cache_read_tokens = client.usage.cache_read_tokens
+
+    def _write_design_to_change_dir(self, design_content: str):
+        """Write design to change directory if it exists (M2 implementation)"""
+        if not self.context.current_change_dir:
+            return
+
+        design_path = self.context.current_change_dir / "design.md"
+        design_path.write_text(design_content, encoding="utf-8")
+        self.context.generated_files.append(design_path)
+        self.log(f"  [M2] Design written to change directory: openspec/changes/{self.context.current_change_id}/design.md")

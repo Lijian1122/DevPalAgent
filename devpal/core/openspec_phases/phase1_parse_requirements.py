@@ -14,7 +14,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional, Any
 
 from .base import PhaseInterface, PhaseResult, OpenSpecContext
 
@@ -80,6 +80,14 @@ class Phase1ParseRequirements(PhaseInterface):
 
         # P1.3: 写入 .spec/delta.json
         self._write_delta_json(delta)
+
+        # M2: Generate openspec/changes/<id>/ directory
+        try:
+            change_id = self._generate_change_directory(delta)
+            if change_id:
+                self.log(f"[M2] OpenSpec change directory created: {change_id}")
+        except Exception as e:
+            self.log(f"[M2 ERROR] Failed to generate change directory: {e}")
 
         return PhaseResult.ok(
             "需求文档解析成功",
@@ -406,3 +414,259 @@ class Phase1ParseRequirements(PhaseInterface):
 
         # 默认为应用程序
         return ''
+
+    # ===================
+    # M2: OpenSpec Change Directory Generation
+    # ===============
+
+    def _generate_change_directory(self, delta: Dict[str, Any]) -> Optional[str]:
+        """Generate openspec/changes/<id>/ directory structure (M2 implementation)"""
+        if not delta["changed"]:
+            return None
+
+     # Convert requirement IDs to full requirement objects
+        req_map = {req["id"]: req for req in self.context.structured_requirements}
+        added_reqs = [req_map[req_id] for req_id in delta["added"] if req_id in req_map]
+        modified_reqs = [req_map[req_id] for req_id in delta["modified"] if req_id in req_map]
+        removed_req_ids = delta["removed"]
+
+        # Generate change-id
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        feature_slug = self._extract_feature_slug(self.context.requirements_content)
+        change_type = self._detect_change_type(delta)
+        change_id = f"{change_type}-{feature_slug}-{timestamp}"
+
+        # Create change directory (use absolute path - CRITICAL FIX)
+        abs_project_dir = self.context.project_dir.resolve()
+        change_dir = abs_project_dir / "openspec" / "changes" / change_id
+        change_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate proposal.md
+        proposal_content = self._generate_proposal_md(added_reqs, modified_reqs, removed_req_ids, change_id)
+        proposal_path = change_dir / "proposal.md"
+        proposal_path.write_text(proposal_content, encoding="utf-8")
+        self.context.generated_files.append(proposal_path)
+
+     # Generate specs/spec.md
+        spec_content = self._generate_spec_md(added_reqs, modified_reqs, removed_req_ids)
+        spec_dir = change_dir / "specs"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        spec_path = spec_dir / "spec.md"
+        spec_path.write_text(spec_content, encoding="utf-8")
+        self.context.generated_files.append(spec_path)
+
+        # Generate tasks.md
+        tasks_content = self._generate_tasks_md(added_reqs)
+        tasks_path = change_dir / "tasks.md"
+        tasks_path.write_text(tasks_content, encoding="utf-8")
+        self.context.generated_files.append(tasks_path)
+
+        # Generate metadata.json
+        metadata = {
+            "change_id": change_id,
+            "change_type": change_type,
+            "title": self._extract_title(self.context.requirements_content),
+            "description": self._extract_description(self.context.requirements_content),
+            "status": "PROPOSED",
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "requirements_affected": {
+          "added": delta["added"],
+                "modified": delta["modified"],
+                "removed": delta["removed"],
+          },
+            "generated_files": [],
+        "author": "devpal-agent",
+        }
+        metadata_path = change_dir / "metadata.json"
+        metadata_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
+        self.context.generated_files.append(metadata_path)
+
+        # Store change_id in context for downstream phases
+        self.context.current_change_id = change_id
+        self.context.current_change_dir = change_dir
+
+        self.log(f"[OK] Change directory generated: openspec/changes/{change_id}")
+        self.log(f"[OK] Change ID: {change_id}")
+
+        return change_id
+
+    def _extract_feature_slug(self, content: str) -> str:
+        """Extract feature name from requirements content"""
+        match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
+        if match:
+            title = match.group(1).strip()
+            slug = re.sub(r'[^\w\s-]', '', title, flags=re.UNICODE)
+            slug = re.sub(r'[-\s]+', '-', slug)
+            return slug[:30]
+        return "change"
+
+    def _detect_change_type(self, delta: Dict[str, Any]) -> str:
+        """Detect change type from delta"""
+        if delta["added"] and not delta["modified"] and not delta["removed"]:
+            return "feature"
+        elif delta["removed"]:
+            return "refactor"
+        elif delta["modified"]:
+            return "update"
+        return "change"
+
+    def _generate_proposal_md(self, added_reqs: List[Dict], modified_reqs: List[Dict],
+              removed_req_ids: List[str], change_id: str) -> str:
+        """Generate proposal.md content"""
+        lines = [
+            f"# Change Proposal: {change_id}",
+          "",
+        "## Overview",
+       "",
+            self._extract_description(self.context.requirements_content) or "No description provided.",
+            "",
+        "## Motivation",
+          "",
+            "This change addresses the following requirements:",
+            "",
+      ]
+
+        if added_reqs:
+            lines.append("### New Requirements")
+            lines.append("")
+            for req in added_reqs:
+                lines.append(f"- **{req.get('id')}**: {req.get('title', 'Untitled')}")
+            lines.append("")
+
+        if modified_reqs:
+            lines.append("### Modified Requirements")
+            lines.append("")
+            for req in modified_reqs:
+             lines.append(f"- **{req.get('id')}**: {req.get('title', 'Untitled')}")
+             lines.append("")
+
+        if removed_req_ids:
+            lines.append("### Removed Requirements")
+            lines.append("")
+        for req_id in removed_req_ids:
+           lines.append(f"- **{req_id}**: (removed)")
+           lines.append("")
+
+        lines.extend([
+            "## Impact Analysis",
+            "",
+            f"- Requirements added: {len(added_reqs)}",
+            f"- Requirements modified: {len(modified_reqs)}",
+            f"- Requirements removed: {len(removed_req_ids)}",
+            "",
+            "## Implementation Plan",
+            "",
+            "See `tasks.md` for detailed implementation tasks.",
+            "",
+        ])
+
+        return "\n".join(lines)
+
+    def _generate_spec_md(self, added_reqs: List[Dict], modified_reqs: List[Dict],
+                          removed_req_ids: List[str]) -> str:
+        """Generate specs/spec.md in ADDED/MODIFIED/REMOVED format"""
+        lines = [
+            "# Specification Delta",
+         "",
+     f"Generated: {datetime.now().isoformat()}",
+            "",
+        ]
+
+        if added_reqs:
+          lines.append("## ADDED Requirements")
+          lines.append("")
+          for req in added_reqs:
+                lines.append(f"### {req.get('id')}: {req.get('title', 'Untitled')}")
+                lines.append("")
+                lines.append(req.get('description', 'No description'))
+                lines.append("")
+                lines.append("---")
+                lines.append("")
+
+        if modified_reqs:
+            lines.append("## MODIFIED Requirements")
+            lines.append("")
+            for req in modified_reqs:
+                lines.append(f"### {req.get('id')}: {req.get('title', 'Untitled')}")
+            lines.append("")
+            lines.append("(Modified - see delta.json for detailed changes)")
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+
+        if removed_req_ids:
+            lines.append("## REMOVED Requirements")
+            lines.append("")
+            for req_id in removed_req_ids:
+              lines.append(f"### {req_id}: (removed)")
+              lines.append("")
+              lines.append("---")
+              lines.append("")
+
+        return "\n".join(lines)
+
+    def _generate_tasks_md(self, added_reqs: List[Dict]) -> str:
+        """Generate tasks.md with implementation tasks"""
+        lines = [
+            "# Implementation Tasks",
+            "",
+            "## Phase 3: Technical Design",
+       "",
+            "- [ ] Review requirements and create technical design",
+            "- [ ] Identify key components and interfaces",
+            "- [ ] Document design decisions",
+          "",
+            "## Phase 4: Code Generation",
+        ]
+
+        for req in added_reqs:
+            req_id = req.get('id', 'REQ-???')
+            title = req.get('title', 'Untitled')
+            lines.append(f"- [ ] Implement {req_id}: {title}")
+
+        lines.extend([
+            "",
+            "## Phase 5: Test Generation",
+            "",
+            "- [ ] Generate unit tests for new functionality",
+            "- [ ] Generate integration tests",
+            "",
+            "## Phase 9: Quality Gate",
+            "",
+            "- [ ] Run validation checks",
+            "- [ ] Address validation issues",
+            "",
+         "## Phase 10: Test Execution",
+            "",
+        "- [ ] Execute all tests",
+       "- [ ] Verify test coverage",
+         "",
+        ])
+
+        return "\n".join(lines)
+
+    def _extract_title(self, content: str) -> str:
+        """Extract title from requirements content"""
+        match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
+        if match:
+          return match.group(1).strip()
+        return "Untitled Change"
+
+    def _extract_description(self, content: str) -> str:
+        """Extract description from requirements content"""
+        lines = content.split('\n')
+        desc_lines = []
+        found_title = False
+
+        for line in lines:
+          if line.startswith('#'):
+            found_title = True
+            continue
+
+          if found_title and line.strip():
+             desc_lines.append(line.strip())
+             if len(desc_lines) >= 3:
+              break
+
+        return ' '.join(desc_lines) if desc_lines else "No description provided."

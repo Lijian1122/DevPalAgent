@@ -102,7 +102,14 @@ Output rules:
 - Use only C++17 STL unless the design mandates otherwise
 - src/main.cpp must include a working main() function that exercises the primary workflow
 - For every non-trivial class, emit at least one tests/test_<class>.cpp that includes "test_base.h"
-- Do NOT regenerate CMakeLists.txt, README.md, include/<project>.h, or tests/test_base.h - they already exist"""
+- Do NOT regenerate CMakeLists.txt, README.md, include/<project>.h, or tests/test_base.h - they already exist
+
+C++ Constructor Requirements:
+- ALWAYS provide a default constructor (no parameters) for every class
+- Also provide parameterized constructors as needed
+- Initialize all member variables in constructors (use member initializer lists)
+- Example: class User should have both User() and User(const std::string& username, ...)
+- This ensures classes can be used in STL containers and avoid "no suitable default constructor" errors"""
 
         elif language == 'python':
             required_files = """REQUIRED FILES (you MUST generate ALL of these):
