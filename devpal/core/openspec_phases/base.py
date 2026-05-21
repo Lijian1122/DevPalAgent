@@ -110,6 +110,10 @@ class OpenSpecContext:
     logger: Optional[Any] = None  # OpenSpecLogger 实例
     log_file: Optional[Path] = None  # 日志文件路径
 
+    # M2: OpenSpec Change tracking
+    current_change_id: Optional[str] = None
+    current_change_dir: Optional[Path] = None
+
     # 失败策略
     abort_on_critical_failure: bool = True  # 关键阶段失败时终止流程
 
@@ -169,6 +173,8 @@ class OpenSpecContext:
             "llm_output_tokens": self.llm_output_tokens,
             "llm_cache_read_tokens": self.llm_cache_read_tokens,
             "log_file": self.log_file.as_posix() if self.log_file else None,
+            "current_change_id": self.current_change_id,
+            "current_change_dir": self.current_change_dir.as_posix() if self.current_change_dir else None,
             "abort_on_critical_failure": self.abort_on_critical_failure,
             "force_regenerate_code": self.force_regenerate_code,
         }
@@ -207,6 +213,9 @@ class OpenSpecContext:
         self.llm_cache_read_tokens = int(data.get("llm_cache_read_tokens", self.llm_cache_read_tokens) or 0)
         log_file = data.get("log_file")
         self.log_file = Path(log_file) if log_file else self.log_file
+        self.current_change_id = data.get("current_change_id")
+        change_dir = data.get("current_change_dir")
+        self.current_change_dir = Path(change_dir) if change_dir else None
         self.abort_on_critical_failure = bool(data.get("abort_on_critical_failure", self.abort_on_critical_failure))
         self.force_regenerate_code = bool(data.get("force_regenerate_code", self.force_regenerate_code))
 

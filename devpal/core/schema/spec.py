@@ -308,6 +308,78 @@ class SpecSnapshot:
         )
 
 
+@dataclass
+class OpenSpecChange:
+    """OpenSpec change tracking model - M2 implementation"""
+    change_id: str  # Format: <type>-<feature>-<timestamp>
+    change_type: str  # "feature" | "bugfix" | "refactor" | "docs" | "update"
+    title: str
+    description: str
+
+    # Requirements affected
+    added_requirements: List[SpecRequirement] = field(default_factory=list)
+    modified_requirements: List[Tuple[SpecRequirement, SpecRequirement]] = field(default_factory=list)  # (old, new)
+    removed_requirements: List[SpecRequirement] = field(default_factory=list)
+
+    # Status tracking
+    status: SpecStatus = SpecStatus.PROPOSED
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)
+
+    # Artifacts
+    generated_files: List[str] = field(default_factory=list)
+    affected_artifacts: List[str] = field(default_factory=list)
+
+    # Metadata
+    author: str = "devpal-agent"
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to JSON"""
+        return {
+            "change_id": self.change_id,
+            "change_type": self.change_type,
+            "title": self.title,
+            "description": self.description,
+         "added_requirements": [r.to_dict() for r in self.added_requirements],
+          "modified_requirements": [
+                {"old": old.to_dict(), "new": new.to_dict()}
+                for old, new in self.modified_requirements
+            ],
+          "removed_requirements": [r.to_dict() for r in self.removed_requirements],
+            "status": self.status.value,
+            "created_at": self.created_at.isoformat(),
+        "updated_at": self.updated_at.isoformat(),
+          "generated_files": self.generated_files,
+       "affected_artifacts": self.affected_artifacts,
+            "author": self.author,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'OpenSpecChange':
+        """Deserialize from JSON"""
+        return cls(
+            change_id=data["change_id"],
+            change_type=data["change_type"],
+            title=data["title"],
+            description=data["description"],
+            added_requirements=[SpecRequirement.from_dict(r) for r in data.get("added_requirements", [])],
+         modified_requirements=[
+                (SpecRequirement.from_dict(m["old"]), SpecRequirement.from_dict(m["new"]))
+                for m in data.get("modified_requirements", [])
+            ],
+            removed_requirements=[SpecRequirement.from_dict(r) for r in data.get("removed_requirements", [])],
+            status=SpecStatus(data.get("status", "proposed")),
+            created_at=datetime.fromisoformat(data["created_at"]),
+            updated_at=datetime.fromisoformat(data["updated_at"]),
+         generated_files=data.get("generated_files", []),
+            affected_artifacts=data.get("affected_artifacts", []),
+          author=data.get("author", "devpal-agent"),
+            metadata=data.get("metadata", {}),
+    )
+
+
 class SpecEngine:
     """规范引擎 - Phase 1 核心入口
 

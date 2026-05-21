@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-05-21T10:42:49",
+  "added": [
+    "REQ-001",
+    "REQ-002",
+    "REQ-003",
+    "REQ-004"
+  ],
+  "modified": [],
+  "removed": [],
+  "changed": true,
+  "summary": "4 added, 0 modified, 0 removed"
+}
