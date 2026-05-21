@@ -1,32 +1,41 @@
 # -*- coding: utf-8 -*-
 
-from devpal.core.openspec_phases.phase4_generate_code import _AI_SYSTEM_PROMPT
+from devpal.core.prompts.prompt_engine import get_prompt_engine
 
 
-def test_phase4_system_prompt_formats_with_cpp_example_braces():
-    prompt = _AI_SYSTEM_PROMPT.format(namespace="cpp_simple_login")
+def test_phase4_system_prompt_includes_cpp_requirements():
+    """Test that C++ code generation prompt includes key requirements"""
+    engine = get_prompt_engine()
+    prompt = engine.generate_code_gen_prompt('cpp')
 
-    assert "namespace cpp_simple_login" in prompt
-    assert "int main() {" in prompt
-    assert "TEST_MAIN_BEGIN" in prompt
-    assert "RUN_TEST(testFunction1);" in prompt
-    assert "TEST_MAIN_END" in prompt
+    # Check file structure requirements
+    assert "include/<name>.h" in prompt
+    assert "src/<name>.cpp" in prompt
+    assert "tests/test_<class>.cpp" in prompt
 
+    # Check constructor requirements
+    assert "default constructor" in prompt
+    assert "parameterized constructors" in prompt
 
-def test_phase4_prompt_declares_test_base_contract():
-    prompt = _AI_SYSTEM_PROMPT.format(namespace="cpp_simple_login")
-
-    for macro in ["ASSERT_TRUE", "ASSERT_EQ", "RUN_TEST", "TEST_MAIN_BEGIN", "TEST_MAIN_END"]:
-        assert macro in prompt
-
-    assert "Do NOT define custom pass/fail counters" in prompt
-    assert "Do NOT call throw directly" in prompt
+    # Check third-party library constraint
+    assert "ONLY C++17 STL" in prompt or "NO third-party libraries" in prompt
 
 
-def test_phase4_prompt_declares_cpp_stl_include_contract():
-    prompt = _AI_SYSTEM_PROMPT.format(namespace="cpp_simple_login")
+def test_phase4_prompt_includes_best_practices():
+    """Test that prompt includes C++ best practices"""
+    engine = get_prompt_engine()
+    prompt = engine.generate_code_gen_prompt('cpp')
 
-    assert "std::lock_guard" in prompt
-    assert "#include <mutex>" in prompt
-    assert "Never include <lock_guard>" in prompt
-    assert "Do NOT invent non-existent standard headers" in prompt
+    # Check best practices are included
+    assert "C++17" in prompt
+    assert "STL" in prompt or "standard library" in prompt
+
+
+def test_phase4_prompt_includes_naming_conventions():
+    """Test that prompt includes naming conventions"""
+    engine = get_prompt_engine()
+    prompt = engine.generate_code_gen_prompt('cpp')
+
+    # Check naming conventions
+    assert "PascalCase" in prompt
+    assert "snake_case" in prompt
