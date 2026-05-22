@@ -20,6 +20,8 @@ from .openspec_workflow import OpenSpecWorkflowExecutor
 from .compiler_detector import find_visual_studio_compiler, find_vcvarsall
 from .test_result_parser import parse_test_results
 from .openspec_phases import OpenSpecPhaseScheduler
+from devpal.skills import SkillRouter, SkillContext
+from devpal.skills.builtin import InstallerSkill, CodeReviewSkill, MultiAgentSkill
 
 
 def find_visual_studio_compiler() -> Tuple[bool, str, Dict[str, str]]:
@@ -231,6 +233,15 @@ class AgentEngine:
 
         self.planner = Planner(tool_registry=self.tool_registry) if self.config.enable_planning else None
         self.reflector = Reflector(memory_manager=self.memory) if self.config.enable_reflection else None
+
+        # =====================================
+        # Skills 系统初始化
+        # ====================================================
+        self.skill_router = SkillRouter([
+            InstallerSkill(),
+            CodeReviewSkill(),
+            MultiAgentSkill()
+        ], confidence_threshold=0.8)
 
         # OpenSpec 完整流程执行器 (9 阶段)
         self.openspec_workflow = OpenSpecWorkflowExecutor(self.tool_registry)
@@ -649,12 +660,60 @@ ALWAYS: Extract real parameter values from user's natural language query!"""
             return ("Please provide a requirements document (.md file path).\n"
                     "OpenSpec workflow is ready to execute once requirements file is specified.")
 
+        
+        # =================================================
+        # Skills 路由 - 意图识别和任务级编排
+        # =================================================
+        skill_context = SkillContext(
+            user_query=user_query,
+            workspace_path=self.workspace_path,
+            tool_registry=self.tool_registry
+        )
+
+        skill, confidence = self.skill_router.route(skill_context)
+
+        if skill:
+            # 路由到 Skill 执行
+            if self.config.verbose:
+                print(f"{'=' * 60}")
+                print(f" Skill Router: {skill.name}")
+                print(f" Confidence: {confidence:.2f}")
+                print(f"{'=' * 60}")
+
+            try:
+                skill_result = skill.execute(skill_context)
+
+                if skill_result.success:
+                    result_msg = f"{skill_result.content}"
+                    if skill_result.artifacts:
+                        result_msg += "\nGenerated artifacts:\n"
+                        for artifact in skill_result.artifacts:
+                            result_msg += f"  - {artifact}\n"
+                    return result_msg
+                else:
+                    # Skill 执行失败，fallback 到 Plan-Act-Reflect
+                    if self.config.verbose:
+                        print(f"[!] Skill execution failed: {skill_result.content}")
+                        print("[!] Falling back to Plan-Act-Reflect\n")
+            except Exception as e:
+                # Skill 执行异常，fallback 到 Plan-Act-Reflect
+                if self.config.verbose:
+                    print(f"[!] Skill execution error: {str(e)}")
+                    print("[!] Falling back to Plan-Act-Reflect\n")
+        else:
+            # 低置信度，fallback 到 Plan-Act-Reflect
+            if self.config.verbose:
+                print(f"\n{'=' * 60}")
+                print(" Skill Router: Fallback to Planner")
+                print(f" Best confidence: {confidence:.2f} (< 0.8)")
+                print(f"{'=' * 60}\n")
+
         enhanced_system_prompt = self._build_system_prompt(user_query)
 
         if self.config.verbose:
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f" DevPal received task: {user_query}")
-            print(f"{'='*60}\n")
+            print(f"{'=' * 60}\n")
 
         plan = None
         if self.config.enable_planning and self.planner:
