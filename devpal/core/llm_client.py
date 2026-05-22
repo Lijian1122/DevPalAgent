@@ -1,213 +1,192 @@
 # -*- coding: utf-8 -*-
 """
-LLM Client - Anthropic Claude API thin wrapper
+LLM Client - Multi-provider LLM client with fallback support
 
-Supports prompt caching (5-minute TTL) and multi-turn tool_use loops.
-Shared across OpenSpec Phase 3/4/10 so the same requirements/tech design
-payload can be reused via cache breakpoints.
+Supports Anthropic Claude, OpenAI GPT-4, and other providers.
 """
 
-from __future__ import annotations
-
-from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
-try:
-    from anthropic import Anthropic
-    _ANTHROPIC_AVAILABLE = True
-except ImportError:
-    Anthropic = None
-    _ANTHROPIC_AVAILABLE = False
-
-from devpal.config import get_config
-
-
-DEFAULT_MAX_TOKENS = 8192
-CACHE_MIN_CHARS = 2000
-
-
-@dataclass
-class LLMUsage:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_creation_tokens: int = 0
-    calls: int = 0
-
-    def add(self, usage: Any) -> None:
-        self.calls += 1
-        self.input_tokens += getattr(usage, "input_tokens", 0) or 0
-        self.output_tokens += getattr(usage, "output_tokens", 0) or 0
-        self.cache_read_tokens += getattr(usage, "cache_read_input_tokens", 0) or 0
-        self.cache_creation_tokens += getattr(usage, "cache_creation_input_tokens", 0) or 0
-
-
-@dataclass
-class ToolUseResult:
-    stop_reason: str = ""
-    text_output: str = ""
-    tool_calls_handled: int = 0
-    turns: int = 0
+from .llm_providers.base import BaseLLMProvider, LLMUsage, ToolUseResult
+from .llm_providers.anthropic import AnthropicProvider
+from .llm_providers.openai import OpenAIProvider
 
 
 class LLMClient:
-    """Anthropic Claude wrapper with prompt caching and tool_use loop."""
-
-    def __init__(self, model: Optional[str] = None):
-        if not _ANTHROPIC_AVAILABLE:
-            raise RuntimeError(
-                "anthropic SDK not installed. Run: pip install anthropic>=0.97.0"
-            )
-
-        config = get_config()
-        self.config = config
-        self.model = model or config.anthropic_model
-        self.api_key = config.anthropic_auth_token
-        self.base_url = config.anthropic_base_url
-
-        if not self.api_key:
-            raise RuntimeError(
-                "Anthropic API Key missing. Set env ANTHROPIC_AUTH_TOKEN or "
-                "anthropic.auth_token in config/config.yaml"
-            )
-
-        kwargs: Dict[str, Any] = {"api_key": self.api_key}
-        if self.base_url and self.base_url != "https://api.anthropic.com":
-            kwargs["base_url"] = self.base_url
-
-        self._client = Anthropic(**kwargs)
-        self.usage = LLMUsage()
-
-    def _call(
+    """Multi-provider LLM client with fallback support"""
+    
+    def __init__(
         self,
-        system_blocks: List[Dict[str, Any]],
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        max_tokens: int = DEFAULT_MAX_TOKENS,
-    ) -> Any:
-        kwargs: Dict[str, Any] = {
-            "model": self.model,
-            "max_tokens": max_tokens,
-            "system": system_blocks,
-            "messages": messages,
-        }
-        if tools:
-            kwargs["tools"] = tools
-        response = self._client.messages.create(**kwargs)
-        self.usage.add(response.usage)
-        return response
+        provider: str = "anthropic",
+        model: Optional[str] = None,
+        fallback_providers: Optional[List[str]] = None,
+        **kwargs
+    ):
+        """Initialize LLM Client
 
-    def generate(
+        Args:
+            provider: Provider name ("anthropic", "openai", etc.)
+            model: Model name (if None, use provider default)
+            fallback_providers: List of fallback provider names
+            **kwargs: Provider-specific configuration
+        """
+        self.provider_name = provider
+        self.fallback_providers = fallback_providers or []
+        self.kwargs = kwargs
+
+        # Create main provider
+        self.provider = self._create_provider(provider, model, **kwargs)
+
+        # Fallback provider instances (lazy initialization)
+        self._fallback_instances = {}
+    
+    def _create_provider(
         self,
-        system: str,
-        user_message: str,
-        cached_context: Optional[List[str]] = None,
-        max_tokens: int = DEFAULT_MAX_TOKENS,
-    ) -> str:
-        """Single-turn text generation."""
-        system_blocks = self._build_system_blocks(system)
-        user_content = self._build_user_content(cached_context, user_message)
-        messages = [{"role": "user", "content": user_content}]
-        response = self._call(system_blocks, messages, max_tokens=max_tokens)
-        parts: List[str] = []
-        for block in response.content:
-            if getattr(block, "type", None) == "text":
-                parts.append(block.text)
-        return "".join(parts)
+        provider: str,
+        model: Optional[str],
+        **kwargs
+    ) -> BaseLLMProvider:
+        """Create provider instance"""
+        if provider == "anthropic":
+            return AnthropicProvider(model=model, **kwargs)
+        elif provider == "openai":
+            return OpenAIProvider(model=model, **kwargs)
+        else:
+            raise ValueError(f"Unsupported provider: {provider}")
 
-    def generate_with_tool_loop(
-        self,
-        system: str,
-        user_message: str,
-        tools: List[Dict[str, Any]],
-        tool_handler: Callable[[str, Dict[str, Any]], str],
-        cached_context: Optional[List[str]] = None,
-        max_turns: int = 10,
-        max_tokens: int = DEFAULT_MAX_TOKENS,
-    ) -> ToolUseResult:
-        """Multi-turn tool_use loop until end_turn or max_turns reached."""
-        system_blocks = self._build_system_blocks(system)
-        user_content = self._build_user_content(cached_context, user_message)
-        messages: List[Dict[str, Any]] = [{"role": "user", "content": user_content}]
+    def generate(self, *args, **kwargs) -> str:
+        """Generate text response with fallback"""
+        try:
+            return self.provider.generate(*args, **kwargs)
+        except Exception as e:
+            return self._fallback_generate(*args, error=e, **kwargs)
 
-        result = ToolUseResult()
-        text_parts: List[str] = []
+    def generate_with_tool_loop(self, *args, **kwargs) -> ToolUseResult:
+        """Generate with tool loop (backward compatibility)"""
+        # Map to generate_with_tools
+        return self.generate_with_tools(*args, **kwargs)
 
-        for turn in range(max_turns):
-            result.turns = turn + 1
-            response = self._call(system_blocks, messages, tools=tools, max_tokens=max_tokens)
-            result.stop_reason = response.stop_reason or ""
+    def generate_with_tools(self, *args, **kwargs) -> ToolUseResult:
+        """Generate response with tool calls, with fallback"""
+        try:
+            return self.provider.generate_with_tools(*args, **kwargs)
+        except Exception as e:
+            return self._fallback_generate_with_tools(*args, error=e, **kwargs)
 
-            for block in response.content:
-                if getattr(block, "type", None) == "text" and block.text:
-                    text_parts.append(block.text)
+    def _fallback_generate(self, *args, error, **kwargs) -> str:
+        """Fallback to alternative provider"""
+        for fallback_name in self.fallback_providers:
+            try:
+                # Lazy initialization
+                if fallback_name not in self._fallback_instances:
+                    self._fallback_instances[fallback_name] = self._create_provider(
+                        fallback_name, None, **self.kwargs
+                    )
 
-            messages.append({"role": "assistant", "content": response.content})
+                fallback = self._fallback_instances[fallback_name]
+                result = fallback.generate(*args, **kwargs)
 
-            if response.stop_reason != "tool_use":
-                break
+                # Merge usage statistics
+                self._merge_usage(fallback.usage)
 
-            tool_results: List[Dict[str, Any]] = []
-            for block in response.content:
-                if getattr(block, "type", None) != "tool_use":
-                    continue
-                try:
-                    output = tool_handler(block.name, block.input or {})
-                    is_error = False
-                except Exception as exc:
-                    output = f"[tool_error] {exc}"
-                    is_error = True
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": output,
-                    "is_error": is_error,
-                })
-                result.tool_calls_handled += 1
+                return result
+            except Exception:
+                continue
 
-            if tool_results:
-                messages.append({"role": "user", "content": tool_results})
+        # All fallbacks failed, raise original error
+        raise error
 
-        result.text_output = "".join(text_parts)
-        return result
+    def _fallback_generate_with_tools(self, *args, error, **kwargs) -> ToolUseResult:
+        """Fallback to alternative provider for tool calls"""
+        for fallback_name in self.fallback_providers:
+            try:
+                if fallback_name not in self._fallback_instances:
+                    self._fallback_instances[fallback_name] = self._create_provider(
+                        fallback_name, None, **self.kwargs
+                    )
 
-    @staticmethod
-    def _build_system_blocks(system: str) -> List[Dict[str, Any]]:
-        block: Dict[str, Any] = {"type": "text", "text": system}
-        if len(system) >= CACHE_MIN_CHARS:
-            block["cache_control"] = {"type": "ephemeral"}
-        return [block]
+                fallback = self._fallback_instances[fallback_name]
+                result = fallback.generate_with_tools(*args, **kwargs)
 
-    @staticmethod
-    def _build_user_content(
-        cached_context: Optional[List[str]],
-        user_message: str,
-    ) -> List[Dict[str, Any]]:
-        content: List[Dict[str, Any]] = []
-        if cached_context:
-            for ctx in cached_context:
-                if not ctx:
-                    continue
-                block: Dict[str, Any] = {"type": "text", "text": ctx}
-                if len(ctx) >= CACHE_MIN_CHARS:
-                    block["cache_control"] = {"type": "ephemeral"}
-                content.append(block)
-        content.append({"type": "text", "text": user_message})
-        return content
+                # Merge usage statistics
+                self._merge_usage(fallback.usage)
+
+                return result
+            except Exception:
+                continue
+
+        # All fallbacks failed, raise original error
+        raise error
+
+    def _merge_usage(self, fallback_usage: LLMUsage):
+        """Merge fallback provider usage into main provider"""
+        self.provider.usage.calls += fallback_usage.calls
+        self.provider.usage.input_tokens += fallback_usage.input_tokens
+        self.provider.usage.output_tokens += fallback_usage.output_tokens
+        self.provider.usage.cache_read_tokens += fallback_usage.cache_read_tokens
+        self.provider.usage.cache_creation_tokens += fallback_usage.cache_creation_tokens
+
+    @property
+    def usage(self) -> LLMUsage:
+        """Get usage statistics"""
+        return self.provider.usage
+
+    def reset_usage(self):
+        """Reset usage statistics"""
+        self.provider.reset_usage()
+        for fallback in self._fallback_instances.values():
+            fallback.reset_usage()
 
 
+# Global singleton instance
 _llm_client_instance = None
 
 
-def get_llm_client() -> LLMClient:
-    """Return global LLMClient singleton."""
+def get_llm_client(
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    fallback_providers: Optional[List[str]] = None,
+    **kwargs
+) -> LLMClient:
+    """Get LLM Client instance (from config or parameters)
+
+    Args:
+        provider: Provider name (if None, use config default)
+        model: Model name (if None, use provider default)
+        fallback_providers: List of fallback provider names
+        **kwargs: Provider-specific configuration
+    Returns:
+        LLMClient instance
+    """
     global _llm_client_instance
-    if _llm_client_instance is None:
-        _llm_client_instance = LLMClient()
-    return _llm_client_instance
+
+    # If no parameters provided, return singleton
+    if provider is None and model is None and not kwargs:
+        if _llm_client_instance is None:
+            # Load from config
+            from devpal.config import get_config
+            config = get_config()
+
+            # Use Anthropic as default for backward compatibility
+            _llm_client_instance = LLMClient(
+                provider="anthropic",
+                model=config.anthropic_model,
+                api_key=config.anthropic_auth_token,
+                auth_token=config.anthropic_auth_token,
+                base_url=config.anthropic_base_url
+            )
+        return _llm_client_instance
+
+    # Create new instance with provided parameters
+    return LLMClient(
+        provider=provider or "anthropic",
+        model=model,
+        fallback_providers=fallback_providers,
+        **kwargs
+    )
 
 
 def reset_llm_client() -> None:
-    """Reset singleton (for tests)."""
+    """Reset singleton (for tests)"""
     global _llm_client_instance
     _llm_client_instance = None
