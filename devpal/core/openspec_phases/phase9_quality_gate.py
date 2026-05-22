@@ -990,8 +990,10 @@ class Phase9QualityGate(PhaseInterface):
             client = self._get_fix_plan_client(use_fallback=use_fallback)
             response = client.generate(
                 system=system_message,
-                user_message=prompt
+                user_message=prompt,
+                cached_context=[self.context.requirements_content, self.context.tech_design_content] if self.context.requirements_content or self.context.tech_design_content else None
             )
+            self._update_usage_stats(client)
 
             json_str = self._extract_json_object(response)
             if not json_str:
@@ -1289,3 +1291,12 @@ class Phase9QualityGate(PhaseInterface):
             return ""
 
         return ""
+
+    def _update_usage_stats(self, client) -> None:
+        """Sync LLM usage stats from client to context."""
+        ctx = self.context
+        ctx.llm_calls += client.usage.calls
+        ctx.llm_input_tokens += client.usage.input_tokens
+        ctx.llm_output_tokens += client.usage.output_tokens
+        ctx.llm_cache_read_tokens += client.usage.cache_read_tokens
+        ctx.llm_cache_creation_tokens += client.usage.cache_creation_tokens
