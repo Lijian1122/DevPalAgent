@@ -511,6 +511,7 @@ class Phase4GenerateCode(PhaseInterface):
         ctx.llm_input_tokens = client.usage.input_tokens
         ctx.llm_output_tokens = client.usage.output_tokens
         ctx.llm_cache_read_tokens = client.usage.cache_read_tokens
+        ctx.llm_cache_creation_tokens = client.usage.cache_creation_tokens
 
     def _detect_features(self) -> list:
         """Phase 4 no longer keyword-matches business features; AI parses reqs."""

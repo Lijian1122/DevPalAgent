@@ -105,6 +105,7 @@ class OpenSpecContext:
     llm_input_tokens: int = 0
     llm_output_tokens: int = 0
     llm_cache_read_tokens: int = 0
+    llm_cache_creation_tokens: int = 0  # Prompt Caching: 缓存创建 tokens
 
     # 日志系统
     logger: Optional[Any] = None  # OpenSpecLogger 实例

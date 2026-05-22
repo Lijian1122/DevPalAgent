@@ -101,6 +101,7 @@ class Phase3TechnicalDesign(PhaseInterface):
         ctx.llm_input_tokens = client.usage.input_tokens
         ctx.llm_output_tokens = client.usage.output_tokens
         ctx.llm_cache_read_tokens = client.usage.cache_read_tokens
+        ctx.llm_cache_creation_tokens = client.usage.cache_creation_tokens
 
     def _write_design_to_change_dir(self, design_content: str):
         """Write design to change directory if it exists (M2 implementation)"""

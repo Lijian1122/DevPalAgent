@@ -709,6 +709,7 @@ class Phase10RunTests(PhaseInterface):
         ctx.llm_input_tokens = client.usage.input_tokens
         ctx.llm_output_tokens = client.usage.output_tokens
         ctx.llm_cache_read_tokens = client.usage.cache_read_tokens
+        ctx.llm_cache_creation_tokens = client.usage.cache_creation_tokens
 
     def _update_artifact_graph_test_results(self, test_results: List[Dict]) -> None:
         """Update ArtifactGraph with test results metadata."""

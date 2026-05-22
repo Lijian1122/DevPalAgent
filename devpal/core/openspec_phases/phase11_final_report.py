@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from .base import PhaseInterface, PhaseResult, OpenSpecContext
+from ..cache_strategy import CacheMetrics
 
 
 class Phase11FinalReport(PhaseInterface):
@@ -19,8 +20,15 @@ class Phase11FinalReport(PhaseInterface):
     def execute(self) -> PhaseResult:
         self.log("Phase 11: generating final report...")
 
+        # 生成 cache metrics
+        cache_metrics = CacheMetrics.from_context(self.context)
+        cache_metrics_path = self.context.project_dir / ".spec" / "cache_metrics.json"
+        cache_metrics.save_to_file(cache_metrics_path)
+        self.log(f"  [OK] Cache metrics saved: {cache_metrics_path}")
+        self.log(cache_metrics.format_summary())
+
         artifact_graph_path = self._write_artifact_graph()
-        report_content = self._generate_final_report(artifact_graph_path)
+        report_content = self._generate_final_report(artifact_graph_path, cache_metrics)
         report_path = self.context.project_dir / "docs" / "final_report.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report_content, encoding="utf-8")
@@ -42,11 +50,12 @@ class Phase11FinalReport(PhaseInterface):
             "  files generated: {}".format(len(set(self.context.generated_files)))
         )
         self.log(
-            "  llm: {} calls, in={} out={} cache_read={}".format(
+            "  llm: {} calls, in={} out={} cache_read={} cache_create={}".format(
                 self.context.llm_calls,
                 self.context.llm_input_tokens,
                 self.context.llm_output_tokens,
                 self.context.llm_cache_read_tokens,
+                self.context.llm_cache_creation_tokens,
             )
         )
         self.log("  self-heal attempts: {}".format(self.context.self_heal_attempts))
@@ -69,7 +78,7 @@ class Phase11FinalReport(PhaseInterface):
             self_heal_attempts=self.context.self_heal_attempts,
         )
 
-    def _generate_final_report(self, artifact_graph_path: Path) -> str:
+    def _generate_final_report(self, artifact_graph_path: Path, cache_metrics: CacheMetrics) -> str:
         unique_files = sorted(set(self.context.generated_files))
         passed = self.context.test_passed
         total = self.context.test_total
@@ -107,6 +116,14 @@ class Phase11FinalReport(PhaseInterface):
             "- Input tokens: {}".format(self.context.llm_input_tokens),
             "- Output tokens: {}".format(self.context.llm_output_tokens),
             "- Cache read tokens: {}".format(self.context.llm_cache_read_tokens),
+            "- Cache creation tokens: {}".format(self.context.llm_cache_creation_tokens),
+            "",
+            "### Cache Performance",
+            "",
+        "- Cache hit rate: {:.1%}".format(cache_metrics.cache_hit_rate),
+            "- Cost reduction: {:.1%}".format(cache_metrics.cost_reduction_percentage),
+            "- Total cache tokens: {:,}".format(cache_metrics.total_cache_tokens),
+        "",
             "- Self-heal attempts: {}".format(self.context.self_heal_attempts),
             "- AI-generated files: {}".format(len(self.context.ai_generated_files)),
             "",
