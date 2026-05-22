@@ -68,7 +68,7 @@ class Config:
         return self.get("anthropic.auth_token")
 
     @property
-    def anthropic_base_url(self) -> str:
+    def anthropidot_base_url(self) -> str:
         """获取 Anthropic API 基础 URL"""
         url = os.getenv("ANTHROPIC_BASE_URL")
         if url:
@@ -100,6 +100,45 @@ class Config:
     def command_timeout(self) -> int:
         """获取命令执行超时时间"""
         return int(self.get("tools.command_timeout", 30))
+
+    # ===== 新增：多 LLM Provider 配置 =====
+    @property
+    def llm_default_provider(self) -> str:
+        """获取默认 LLM Provider"""
+        return self.get("llm.default_provider", "anthropic")
+
+    @property
+    def llm_fallback_providers(self) -> list:
+        """获取 Fallback Provider 列表"""
+        return self.get("llm.fallback_providers", [])
+
+    def get_provider_config(self, provider: str) -> dict:
+        """获取指定 Provider 的配置
+
+        Args:
+            provider: Provider 名称（anthropic/openai/gemini）
+
+        Returns:
+            Provider 配置字典
+        """
+        config = self.get(f"llm.{provider}", {})
+
+        # 处理环境变量
+        if provider == "anthropic":
+            if not config.get("auth_token"):
+                config["auth_token"] = self.anthropic_auth_token
+            if not config.get("base_url"):
+                config["base_url"] = self.anthropic_base_url
+            if not config.get("model"):
+                config["model"] = self.anthropic_model
+        elif provider == "openai":
+            if not config.get("api_key"):
+                config["api_key"] = os.getenv("OPENAI_API_KEY")
+        elif provider == "gemini":
+            if not config.get("api_key"):
+                config["api_key"] = os.getenv("GOOGLE_API_KEY")
+
+        return config
 
 
 # 全局配置实例

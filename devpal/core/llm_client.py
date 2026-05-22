@@ -167,14 +167,16 @@ def get_llm_client(
             from devpal.config import get_config
             config = get_config()
 
-            # Use Anthropic as default for backward compatibility
+            # Use config default provider
+            default_provider = config.llm_default_provider
+            fallback_list = config.llm_fallback_providers
+            provider_config = config.get_provider_config(default_provider)
+
             _llm_client_instance = LLMClient(
-                provider="anthropic",
-                model=config.anthropic_model,
-                api_key=config.anthropic_auth_token,
-                auth_token=config.anthropic_auth_token,
-                base_url=config.anthropic_base_url
-            )
+                provider=default_provider,
+                fallback_providers=fallback_list,
+              **provider_config
+          )
         return _llm_client_instance
 
     # Create new instance with provided parameters
