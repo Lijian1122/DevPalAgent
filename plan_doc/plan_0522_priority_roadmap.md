@@ -1922,7 +1922,37 @@ python -m pytest tests/openspec/ tests/e2e/
 
 ---
 
-### 11.2 P1+：LLM-as-a-Judge Critique Phase（2-3天）
+### 11.2 P1+：LLM-as-a-Judge Critique Phase（2-3天）✅ **已完成**
+
+**完成时间**：2026-05-23  
+**实际工期**：1 天（提前 1-2 天完成）
+
+**提交记录**：
+- `cd8562c` - feat: implement Phase 9.5 LLM-as-a-Judge Critique Phase
+
+**实现文件**：
+- `devpal/core/openspec_phases/phase9_5_critique.py` (439 行)
+- `devpal/core/openspec_phases/enhanced_scheduler.py` (Phase 9.5 集成)
+- `devpal/core/openspec_phases/base.py` (critique_result 字段)
+- `devpal/core/openspec_phases/phase11_final_report.py` (Critique 章节)
+
+**已实现能力**：
+- ✅ 5 维度评估系统（Readability/Architecture/Security/Performance/Maintainability）
+- ✅ LLM 调用与 JSON 解析
+- ✅ Markdown + JSON 双格式报告
+- ✅ 非阻塞设计（失败不终止流程）
+- ✅ 可配置启用/禁用
+- ✅ 完整集成到 11 阶段流程
+
+**测试结果**（cpp_simple_login 项目）：
+- Overall Score: 86.6/100 (Good ⭐⭐⭐⭐)
+- Readability: 85.0/100
+- Architecture: 88.0/100
+- Security: 90.0/100
+- Performance: 82.0/100
+- Maintainability: 87.0/100
+- 关键问题: 0
+- 改进建议: 10 条
 
 **目标**：在 Phase 9/10 后增加独立的 Critique Phase，用 LLM 评审代码质量
 
@@ -2314,8 +2344,265 @@ python test_simple.py
 
 ---
 
-**文档版本**：v3.0（增加 LLM-as-a-Judge + OpenSpec Change + 根因分析）  
+## 12. 下一阶段规划（2026-05-24 起）
+
+### 12.1 当前完成状态总览
+
+**✅ 已完成的 P0 任务**：
+1. ✅ 多LLM Provider 支持（Anthropic + OpenAI）
+2. ✅ Prompt Caching 深度优化（80.5% hit rate, 60.7% cost reduction）
+3. ✅ Multi-Agent Skills 系统（5 个 Skills）
+4. ✅ LLM-as-a-Judge Critique Phase（Phase 9.5）
+
+**⏳ 待完成的 P1 任务**：
+1. ⏳ OpenSpec Change 完整集成（1-2 天）
+2. ⏳ Self-Healing 根因分析增强（1-2 天）
+3. ⏳ 面试准备完善（1 天）
+
+---
+
+### 12.2 优先级排序（下一阶段）
+
+#### P0：OpenSpec Change 完整集成（1-2 天）
+
+**目标**：让 OpenSpec Changes 真正工作，生成完整的 change 目录结构
+
+**当前问题**：
+- Phase 1 有 `_generate_change_directory()` 代码但未执行
+- 条件检查 `if not delta["changed"]` 可能导致提前返回
+- 实际文件系统中找不到 `openspec/changes/` 目录
+
+**实施任务**：
+
+**Task 1: 调试 Phase 1 变更目录生成**（0.5 天）
+- 文件：`devpal/core/openspec_phases/phase1_parse_requirements.py`
+- 检查为什么 `_generate_change_directory()` 未执行
+- 确保 `openspec/changes/{change-id}/` 目录正确创建
+- 验证 proposal.md / specs/spec.md / tasks.md 生成
+
+**Task 2: Phase 3 输出 design.md**（0.5 天）
+- 文件：`devpal/core/openspec_phases/phase3_technical_design.py`
+- 在技术设计生成后，写入 `openspec/changes/{change-id}/design.md`
+- 从 `context.current_change_id` 获取 change-id
+
+**Task 3: Phase 4 读取 change artifacts**（0.5 天）
+- 文件：`devpal/core/openspec_phases/phase4_generate_code.py`
+- 读取 `openspec/changes/{change-id}/specs/spec.md` 作为上下文
+- 读取 `openspec/changes/{change-id}/tasks.md` 作为任务清单
+
+**Task 4: Phase 11 引用 change-id 和文件路径**（0.5 天）
+- 文件：`devpal/core/openspec_phases/phase11_final_report.py`
+- 在 final_report.md 中显示 change-id
+- 列出 `openspec/changes/{change-id}/` 下的所有文件
+
+**验收标准**：
+```bash
+python test_simple.py
+
+# 验证：
+# 1. openspec/changes/feat-xxx-{hash}/ 目录存在
+# 2. proposal.md / specs/spec.md / tasks.md / design.md 文件完整
+# 3. spec.md 采用 ADDED/MODIFIED/REMOVED 格式
+# 4. final_report.md 显示 change-id 和文件列表
+```
+
+**面试价值**：
+- 展示 OpenSpec 规范遵循
+- 证明适配团队协作流程
+- 变更追踪和管理能力
+
+---
+
+#### P1：Self-Healing 根因分析增强（1-2 天）
+
+**目标**：从简单 Retry 升级到基于 Traceability 的根因分析
+
+**当前问题**：
+- TestSelfHealer 只修复表面症状（编译错误、测试失败）
+- 无根本原因分析（为什么会出现这个错误？）
+- 无学习机制（相同错误重复出现）
+
+**实施任务**：
+
+**Task 1: 创建根因分析模块**（0.5 天）
+- 新增文件：`devpal/core/root_cause_analyzer.py`
+- 实现错误分类逻辑（语法/逻辑/环境错误）
+- 实现追溯链路分析（错误 → Phase → Prompt → 需求）
+
+**Task 2: 集成到 TestSelfHealer**（0.5 天）
+- 在修复前先进行根因分析
+- 根据根因选择修复策略
+- 记录分析结果到 metadata
+
+**Task 3: 实现修复历史学习**（0.5 天）
+- 新增文件：`devpal/core/healing_history.py`
+- 记录：错误类型 → 修复策略 → 成功率
+- 对相似错误快速应用已知修复
+
+**Task 4: 生成根因分析报告**（0.5 天）
+- 输出 `docs/root_cause_analysis.md`
+- 包含：错误分类、追溯链路、修复策略、学习记录
+
+**验收标准**：
+```bash
+python test_simple.py
+
+# 验证：
+# 1. 编译/测试失败时生成 root_cause_analysis.md
+# 2. 报告包含错误分类和追溯链路
+# 3. 相同错误第二次出现时快速修复
+# 4. final_report.md 显示根因分析统计
+```
+
+**面试价值**：
+- 展示智能自愈能力
+- 学习机制和知识积累
+- 可观测性和透明度
+
+---
+
+#### P1：面试准备完善（1 天）
+
+**目标**：完善面试演示脚本和文档
+
+**实施任务**：
+
+**Task 1: 更新演示脚本**（0.3 天）
+- 新增 Demo: Phase 9.5 Critique 演示
+- 新增 Demo: OpenSpec Change 演示
+- 新增 Demo: 根因分析演示
+- 更新 `doc3.0/interview_demo_script.md`
+
+**Task 2: 完善 Q&A 文档**（0.3 天）
+- 新增 `doc3.0/interview_qa_critique.md` - Critique Phase Q&A
+- 新增 `doc3.0/interview_qa_openspec_change.md` - OpenSpec Change Q&A
+- 新增 `doc3.0/interview_qa_root_cause.md` - 根因分析 Q&A
+
+**Task 3: 更新架构图和 README**（0.2 天）
+- 更新 README.md 架构图（增加 Phase 9.5）
+- 更新 `doc3.0/interview_pitch.md`（增加 Critique 亮点）
+
+**Task 4: 端到端测试验证**（0.2 天）
+- 运行所有演示脚本
+- 验证 7 个演示场景可用
+- 记录演示时间和关键点
+
+**验收标准**：
+- 7 个演示脚本全部可运行
+- 10 个面试问题有对应演示
+- 文档完整性 100%
+
+---
+
+### 12.3 时间线（Week 3-4）
+
+#### Week 3（Day 7-9）
+
+**Day 7: OpenSpec Change 完整集成**（1-2 天）
+- 上午：调试 Phase 1 变更目录生成
+- 下午：Phase 3 输出 design.md + Phase 4 读取 artifacts
+
+**Day 8: OpenSpec Change 完成 + Self-Healing 开始**
+- 上午：Phase 11 引用 change-id + 测试验证
+- 下午：创建根因分析模块
+
+**Day 9: Self-Healing 根因分析**（1-2 天）
+- 上午：集成到 TestSelfHealer + 修复历史学习
+- 下午：生成根因分析报告 + 测试验证
+
+#### Week 4（Day 10）
+
+**Day 10: 面试准备**（1 天）
+- 上午：更新演示脚本 + Q&A 文档
+- 下午：架构图更新 + 端到端测试
+
+---
+
+### 12.4 成功指标（更新）
+
+| 指标 | 当前 | 目标 | 验证方式 |
+|----|------|------|-------|
+| **已完成** ||||
+| 多LLM Provider | ✅ 2 | 2+ | Anthropic/OpenAI 已实现 |
+| Cache Hit Rate | ✅ 80.5% | >60% | cache_metrics.json |
+| API Cost Reduction | ✅ -60.7% | -40% | 对比测试 |
+| Skills 数量 | ✅ 5 | 5+ | 已实现 |
+| LLM Critique 维度 | ✅ 5 | 5 | critique_report.md |
+| **待完成** ||||
+| OpenSpec Change 覆盖率 | 0% | 100% | 每次运行生成 change 目录 |
+| 根因分析准确率 | N/A | >80% | 人工验证分析结果 |
+| 自愈成功率 | ~60% | >80% | 统计修复成功次数 |
+| 面试准备完成度 | 80% | 100% | 7 个演示脚本可运行 |
+
+---
+
+### 12.5 面试能力矩阵（最终）
+
+| 面试考察点 | 状态 | 演示方式 |
+|-----------|:----:|---------|
+| Agent Workflow Orchestration | ✅ | 11 阶段 + Skills 系统 |
+| Tool Use | ✅ | Phase 4 tool loop |
+| State Management | ✅ | OpenSpecContext + checkpoint |
+| Prompt Engineering | ✅ | PromptEngine + Caching (80.5% hit) |
+| Multi-Agent Collaboration | ✅ | Skills 系统 + multi_agent_skill |
+| **Evaluation** | ✅ | Phase 9/10/11 + **Phase 9.5 Critique** |
+| Memory System | ✅ | 三层架构 |
+| **Reliability** | ✅ | retry/checkpoint + **根因分析** |
+| **Change Management** | ⏳ | **OpenSpec Changes**（待完成）|
+| **Traceability** | ✅ | ArtifactGraph + change-id |
+
+**完成度**：9/10（90%）
+
+---
+
+### 12.6 核心亮点总结
+
+**已完成的核心亮点**：
+1. 🌟 **LLM-as-a-Judge**：5 维度代码质量评审（皇冠明珠）✅
+2. 🌟 **Prompt Caching**：80.5% hit rate, 60.7% cost reduction ✅
+3. 🌟 **Multi-Agent Skills**：5 个 Skills，意图识别 100% 准确 ✅
+4. 🌟 **多LLM Provider**：Anthropic + OpenAI + Fallback ✅
+
+**待完成的核心亮点**：
+5. 🌟 **OpenSpec Changes**：完整的变更管理流程 ⏳
+6. 🌟 **根因分析**：基于 Traceability 的智能自愈 ⏳
+
+---
+
+### 12.7 后续中长期规划（Week 5+）
+
+#### P2：M3 Archive + Traceability（3-4 天）
+- `archive_change(change_id)` 命令
+- Delta merge 到 main spec
+- ArtifactGraph 扩展
+- Coverage matrix 生成
+
+#### P2：多维度质量评分系统（2-3 天）
+- 建立完整的质量评分体系
+- Quality Scorecard
+- 趋势分析
+- 对标基准
+
+#### P2：LanguagePlugin 主流程化（3-5 天）
+- 统一 LanguagePlugin 接口
+- Phase 2/4/9/10/11 迁移到插件
+- 移除硬编码语言分支
+
+#### P3：EventBus 主流程接入（1-2 天）
+- 定义核心事件
+- Phase 1-11 发布事件
+- 输出 `.spec/events.jsonl`
+
+#### P4：AI-agnostic 协作模式（5-7 天）
+- CLAUDE.md 模板完善
+- changes 目录文档化
+- propose-only / apply-only 模式
+- Cursor/Cline 集成文档
+
+---
+
+**文档版本**：v4.0（Phase 9.5 完成，规划 OpenSpec Change + 根因分析）  
 **创建日期**：2026-05-22  
 **更新日期**：2026-05-23  
-**预计完成**：2026-06-05（2 周）  
+**下一阶段预计完成**：2026-05-27（4 天）  
 **负责人**：DevPalAgent Team
