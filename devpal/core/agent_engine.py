@@ -21,7 +21,13 @@ from .compiler_detector import find_visual_studio_compiler, find_vcvarsall
 from .test_result_parser import parse_test_results
 from .openspec_phases import OpenSpecPhaseScheduler
 from devpal.skills import SkillRouter, SkillContext
-from devpal.skills.builtin import InstallerSkill, CodeReviewSkill, MultiAgentSkill
+from devpal.skills.builtin import (
+    InstallerSkill,
+    CodeReviewSkill,
+    MultiAgentSkill,
+    TestGenerationSkill,
+    OpenSpecSkill
+)
 
 
 def find_visual_studio_compiler() -> Tuple[bool, str, Dict[str, str]]:
@@ -240,7 +246,9 @@ class AgentEngine:
         self.skill_router = SkillRouter([
             InstallerSkill(),
             CodeReviewSkill(),
-            MultiAgentSkill()
+            MultiAgentSkill(),
+            TestGenerationSkill(),
+            OpenSpecSkill()
         ], confidence_threshold=0.8)
 
         # OpenSpec 完整流程执行器 (9 阶段)
