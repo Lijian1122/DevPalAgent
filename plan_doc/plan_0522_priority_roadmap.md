@@ -10,18 +10,23 @@
 
 基于 M1（语言感知闭环稳定版）已完成的基础，下一阶段聚焦于：
 
-1. **Prompt Caching 优化**（P0）- 降低 API 成本，提升响应速度
-2. **Multi-Agent Skills 系统**（P0）- 提升任务编排能力，展示 Agent 框架深度
-3. **OpenSpec Change MVP**（P1）- 补齐规范协作核心模型
+1. **Prompt Caching 优化**（P0）✅ **已完成** - 降低 API 成本，提升响应速度
+2. **Multi-Agent Skills 系统**（P0）✅ **已完成** - 提升任务编排能力，展示 Agent 框架深度
+3. **OpenSpec Change MVP**（P1）✅ **已完成** - 补齐规范协作核心模型
 4. **面试能力矩阵完善**（P1）- 强化项目故事完整性
 
 **核心判断**：
-- ✅ 当前已有基础 Prompt Caching（cache_control），但未充分利用
-- ❌ 缺少 Skills 系统，任务编排能力不足
-- ⚠️ OpenSpec Change 模型缺失，影响项目故事完整性
-- 🎯 面试场景需要展示：Agent 编排 + Tool Use + State Management + Evaluation
+- ✅ Prompt Caching 已完整实现（2026-05-22）
+- ✅ Skills 系统已完整实现（2026-05-22）
+- ✅ OpenSpec Change 已完整集成（2026-05-24）
+- 🎯 面试场景已具备：Agent 编排 + Tool Use + State Management + Evaluation
 
-**推荐路径**：Prompt Caching + Skills 并行 → OpenSpec Change → 面试准备
+**当前状态**：P0/P1 任务全部完成，进入 P2 阶段
+
+**下一阶段优先级**：
+- **P2: Self-Healing 根因分析增强**（1-2天）- 从简单 Retry 升级到基于 Traceability 的根因分析
+- **P3: LanguagePlugin 主流程化**（2-3天）- 新增语言无需修改核心代码
+- **P4: EventBus 可观测性**（1-2天）- 完善系统监控和调试能力
 
 ---
 
@@ -41,13 +46,14 @@
 
 ### 1.2 当前限制
 
-| 限制 | 影响 | 优先级 |
-|---|---|:---:|
-| Prompt Caching 未充分利用 | API 成本高，响应慢 | P0 |
-| 缺少 Skills 系统 | 任务编排能力弱，面试故事不完整 | P0 |
-| OpenSpec Change 模型缺失 | 与 OpenSpec 规范差距 40-50% | P1 |
-| LanguagePlugin 未主流程化 | 新增语言需修改多处代码 | P2 |
-| EventBus 未接入 | 可观测性不足 | P3 |
+| 限制 | 影响 | 优先级 | 状态 |
+|---|---|:---:|:---:|
+| ~~Prompt Caching 未充分利用~~ | ~~API 成本高，响应慢~~ | ~~P0~~ | ✅ 已完成 |
+| ~~缺少 Skills 系统~~ | ~~任务编排能力弱，面试故事不完整~~ | ~~P0~~ | ✅ 已完成 |
+| ~~OpenSpec Change 模型缺失~~ | ~~与 OpenSpec 规范差距 40-50%~~ | ~~P1~~ | ✅ 已完成 |
+| LanguagePlugin 未主流程化 | 新增语言需修改多处代码 | P2 | 🔄 待实施 |
+| Self-Healing 根因分析不足 | 只修复表面症状，无学习机制 | P2 | 🔄 待实施 |
+| EventBus 未接入 | 可观测性不足 | P3 | 🔄 待实施 |
 
 ### 1.3 面试能力矩阵
 
@@ -2077,53 +2083,75 @@ python test_simple.py
 
 ---
 
-### 11.3 P1：OpenSpec Change 完整集成（1-2天）
+### 11.3 P1：OpenSpec Change 完整集成（1-2天）✅ **已完成**
 
 **目标**：让 OpenSpec Changes 真正工作，生成完整的 change 目录结构
 
 **优先级**：P1（已有代码但未执行，快速补齐）
 
-#### 当前问题
+#### 完成状态（2026-05-24）
 
-- Phase 1 有 `_generate_change_directory()` 代码但未执行
-- 条件检查 `if not delta["changed"]` 可能导致提前返回
-- 实际文件系统中找不到 `openspec/changes/` 目录
+**提交记录**：
+- `5abd79f` - feat: complete OpenSpec Change integration across Phase 1/3/4/11
 
-#### 实施步骤
+**实现文件**：
+- `devpal/core/openspec_phases/phase1_parse_requirements.py` - 已有完整 change 目录生成
+- `devpal/core/openspec_phases/phase3_technical_design.py` - 已有 design.md 写入
+- `devpal/core/openspec_phases/phase4_generate_code.py` - 新增 change artifacts 读取和注入
+- `devpal/core/openspec_phases/phase11_final_report.py` - 新增 Change Artifacts 章节
 
-**Task 1: 调试 Phase 1 变更目录生成**（0.5天）
+**已实现能力**：
+- ✅ Phase 1 生成完整 change 目录（proposal/specs/tasks/metadata.json）
+- ✅ Phase 3 输出 design.md 到 change 目录
+- ✅ Phase 4 读取并注入 change artifacts 到 LLM prompt
+- ✅ Phase 11 在 final report 中展示 change-id 和文件列表
+- ✅ 端到端测试验证所有功能正常工作
+
+**详细文档**：
+- 实现计划：[plan_0524_OpenSpec_Change_Integration.md](plan_0524_OpenSpec_Change_Integration.md)
+- 测试验证：已生成 `openspec/changes/feature-用户登录功能-20260523_222938/` 完整目录
+
+#### 当前问题（已解决）
+
+- ~~Phase 1 有 `_generate_change_directory()` 代码但未执行~~ ✅ 已验证正常执行
+- ~~条件检查 `if not delta["changed"]` 可能导致提前返回~~ ✅ 逻辑正确
+- ~~实际文件系统中找不到 `openspec/changes/` 目录~~ ✅ 已生成完整目录
+
+#### 实施步骤（已完成）
+
+**Task 1: 调试 Phase 1 变更目录生成**（0.5天）✅
 - 文件：`devpal/core/openspec_phases/phase1_parse_requirements.py`
-- 检查为什么 `_generate_change_directory()` 未执行
-- 确保 `openspec/changes/{change-id}/` 目录正确创建
-- 验证 proposal.md / specs/spec.md / tasks.md 生成
+- ✅ 验证 `_generate_change_directory()` 正常执行
+- ✅ 确认 `openspec/changes/{change-id}/` 目录正确创建
+- ✅ 验证 proposal.md / specs/spec.md / tasks.md 生成
 
-**Task 2: Phase 3 输出 design.md**（0.5天）
+**Task 2: Phase 3 输出 design.md**（0.5天）✅
 - 文件：`devpal/core/openspec_phases/phase3_technical_design.py`
-- 在技术设计生成后，写入 `openspec/changes/{change-id}/design.md`
-- 从 `context.current_change_id` 获取 change-id
+- ✅ 技术设计生成后写入 `openspec/changes/{change-id}/design.md`
+- ✅ 从 `context.current_change_id` 获取 change-id
 
-**Task 3: Phase 4 读取 change artifacts**（0.5天）
+**Task 3: Phase 4 读取 change artifacts**（0.5天）✅
 - 文件：`devpal/core/openspec_phases/phase4_generate_code.py`
-- 读取 `openspec/changes/{change-id}/specs/spec.md` 作为上下文
-- 读取 `openspec/changes/{change-id}/tasks.md` 作为任务清单
-- 在 LLM prompt 中引用这些内容
+- ✅ 读取 `openspec/changes/{change-id}/specs/spec.md` 作为上下文
+- ✅ 读取 `openspec/changes/{change-id}/tasks.md` 作为任务清单
+- ✅ 在 LLM prompt 中引用这些内容
 
-**Task 4: Phase 11 引用 change-id 和文件路径**（0.5天）
+**Task 4: Phase 11 引用 change-id 和文件路径**（0.5天）✅
 - 文件：`devpal/core/openspec_phases/phase11_final_report.py`
-- 在 final_report.md 中显示 change-id
-- 列出 `openspec/changes/{change-id}/` 下的所有文件
-- 添加 "Change Artifacts" 章节
+- ✅ 在 final_report.md 中显示 change-id
+- ✅ 列出 `openspec/changes/{change-id}/` 下的所有文件
+- ✅ 添加 "Change Artifacts" 章节
 
-#### 验收标准
+#### 验收标准（已通过）
 
 ```bash
 python test_simple.py
 
-# 验证：
-# 1. openspec/changes/feat-xxx-20260523_xxx/ 目录存在
-# 2. proposal.md / specs/spec.md / tasks.md / design.md 文件完整
-# 3. spec.md 采用 ADDED/MODIFIED/REMOVED 格式
-# 4. final_report.md 显示 change-id 和文件列表
+# 验证结果：
+# ✅ 1. openspec/changes/feature-用户登录功能-20260523_222938/ 目录存在
+# ✅ 2. proposal.md / specs/spec.md / tasks.md / design.md 文件完整
+# ✅ 3. spec.md 采用 ADDED/MODIFIED/REMOVED 格式
+# ✅ 4. final_report.md 显示 change-id 和文件列表
 ```
 
 #### 面试价值
