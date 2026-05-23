@@ -9,15 +9,12 @@ Step 2: invoke Claude with a write_file tool to emit business headers,
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .base import PhaseInterface, PhaseResult, OpenSpecContext
 from ..compiledb import CompileDB
 from ..llm_client import get_llm_client
-from ..templates import registry, TemplateContext
-from ..templates.install_script_generator import InstallScriptGenerator
 from ..prompts import get_prompt_engine
-
-
-
+from ..templates import TemplateContext, registry
+from ..templates.install_script_generator import InstallScriptGenerator
+from .base import OpenSpecContext, PhaseInterface, PhaseResult
 
 _WRITE_FILE_TOOL: Dict[str, Any] = {
     "name": "write_file",
@@ -60,9 +57,9 @@ class Phase4GenerateCode(PhaseInterface):
     def _read_change_artifacts(self) -> Dict[str, str]:
         """Read change directory artifacts if available (M2 implementation)"""
         artifacts = {}
-        
+
         if not self.context.current_change_dir:
-             return artifacts
+            return artifacts
 
         # 从变更目录读取关键产物
         artifacts = {}
@@ -70,7 +67,7 @@ class Phase4GenerateCode(PhaseInterface):
         # 读取 spec.md（设计规范）
         spec_path = self.context.current_change_dir / "specs" / "spec.md"
         if spec_path.exists():
-         artifacts["spec"] = spec_path.read_text(encoding="utf-8")
+            artifacts["spec"] = spec_path.read_text(encoding="utf-8")
         self.log("  [M2] Read spec.md from change directory")
 
         # 读取 tasks.md（任务清单）
@@ -85,7 +82,7 @@ class Phase4GenerateCode(PhaseInterface):
             artifacts["design"] = design_path.read_text(encoding="utf-8")
             self.log("  [M2] Read design.md from change directory")
         return artifacts
-    
+
     def execute(self) -> PhaseResult:
         self.log("Phase 4 start: infrastructure templates + AI code generation")
         project_dir = self.context.project_dir
@@ -101,12 +98,19 @@ class Phase4GenerateCode(PhaseInterface):
         delta_changed = requirements_delta.get("changed", False)
 
         # 如果需求未变更且不强制重新生成，跳过 AI 生成
-        existing_business_files = self._find_existing_business_files(project_dir, project_name)
+        existing_business_files = self._find_existing_business_files(
+            project_dir, project_name
+        )
         if self._is_installer_project():
-            script_files = [path.resolve() for path in InstallScriptGenerator().generate_all(project_dir / "scripts")]
+            script_files = [
+                path.resolve()
+                for path in InstallScriptGenerator().generate_all(
+                    project_dir / "scripts"
+                )
+            ]
             self.context.ai_generated_files.extend(script_files)
             self.context.generated_files.extend(infra_files + script_files)
-            for req in (self.context.structured_requirements or []):
+            for req in self.context.structured_requirements or []:
                 self.context.update_requirement_status(req.get("id", ""), "IN_PROGRESS")
             self._update_artifact_graph(project_dir, script_files)
             self.compiledb.index_project(project_dir, use_cache=False)
@@ -120,13 +124,15 @@ class Phase4GenerateCode(PhaseInterface):
             )
 
         if existing_business_files and not force_regenerate and not delta_changed:
-            self.log("  [INCREMENTAL] No requirement changes detected, skipping AI generation")
+            self.log(
+                "  [INCREMENTAL] No requirement changes detected, skipping AI generation"
+            )
             self.context.ai_generated_files.extend(existing_business_files)
             self.context.generated_files.extend(infra_files + existing_business_files)
             self.compiledb.index_project(project_dir, use_cache=False)
             self.compiledb.save_cache(project_dir)
             return PhaseResult.ok(
-              "Phase 4 skipped: no requirement changes",
+                "Phase 4 skipped: no requirement changes",
                 infra_count=len(infra_files),
                 ai_count=0,
                 reused_count=len(existing_business_files),
@@ -138,36 +144,37 @@ class Phase4GenerateCode(PhaseInterface):
         # 选择性文件重新生成：如果有需求变更，确定受影响的文件
         affected_requirements = []
         if delta_changed and not force_regenerate:
-            affected_requirements = (
-            requirements_delta.get("added", []) +
-            requirements_delta.get("modified", [])
-            )
+            affected_requirements = requirements_delta.get(
+                "added", []
+            ) + requirements_delta.get("modified", [])
             if affected_requirements:
-                self.log("  [SELECTIVE] Requirements changed: {}".format(
-                    ", ".join(affected_requirements)))
+                self.log(
+                    "  [SELECTIVE] Requirements changed: {}".format(
+                        ", ".join(affected_requirements)
+                    )
+                )
                 # 使用 ArtifactGraph 确定受影响的文件（如果可用）
-                affected_files = self._get_affected_files_from_graph(affected_requirements)
+                affected_files = self._get_affected_files_from_graph(
+                    affected_requirements
+                )
                 if affected_files:
-                    self.log("  [SELECTIVE] Will regenerate {} affected files".format(
-                    len(affected_files)))
+                    self.log(
+                        "  [SELECTIVE] Will regenerate {} affected files".format(
+                            len(affected_files)
+                        )
+                    )
                     # 将受影响的文件信息存储到 context
                     self.context.selective_regenerate_files = affected_files
                 else:
-                    self.log("  [SELECTIVE] Cannot determine affected files, will regenerate all")
-
+                    self.log(
+                        "  [SELECTIVE] Cannot determine affected files, will regenerate all"
+                    )
 
         # Check if we should skip AI generation
 
-
-
         delta = self.context.requirements_delta
 
-
-
         delta_changed = delta.get("changed", False) if delta else False
-
-
-
 
         if existing_business_files and not force_regenerate and not delta_changed:
             self.log(
@@ -236,26 +243,26 @@ class Phase4GenerateCode(PhaseInterface):
             return "wrote {}".format(rel)
 
         existing_overview = self._build_existing_files_overview(project_dir)
-        namespace = (
-            project_name.lower().replace("-", "_").replace(" ", "_")
-        )
+        namespace = project_name.lower().replace("-", "_").replace(" ", "_")
         # Use Prompt engine to generate dynamic System Prompt based on language
         prompt_engine = get_prompt_engine()
         system_prompt = prompt_engine.generate_code_gen_prompt(
             language=self.context.language,
-            features=getattr(self.context, 'features', None),
+            features=getattr(self.context, "features", None),
         )
         # Build user message based on language and whether tech design exists
         language = self.context.language
-        if language == 'cpp':
+        if language == "cpp":
             file_instruction = "Use write_file for each .h/.cpp."
-            infra_files_list = "CMakeLists.txt, README.md, tests/test_base.h, include/<project>.h"
+            infra_files_list = (
+                "CMakeLists.txt, README.md, tests/test_base.h, include/<project>.h"
+            )
             test_framework_note = "Do not invent test framework APIs; test_base.h provides ASSERT_TRUE, ASSERT_EQ, RUN_TEST, TEST_MAIN_BEGIN, TEST_MAIN_END.\n"
-        elif language == 'python':
+        elif language == "python":
             file_instruction = "Use write_file for each .py file."
             infra_files_list = "README.md, requirements.txt, .gitignore, src/__init__.py, tests/__init__.py"
             test_framework_note = ""
-        elif language == 'shell':
+        elif language == "shell":
             file_instruction = "Use write_file for each shell script."
             infra_files_list = "README.md"
             test_framework_note = ""
@@ -269,6 +276,21 @@ class Phase4GenerateCode(PhaseInterface):
         else:
             design_instruction = "- You MUST generate ALL business code files based on the requirements document.\n"
 
+        # M2: Read change artifacts if available
+        change_artifacts = self._read_change_artifacts()
+        change_context_section = ""
+        if change_artifacts:
+            change_context_section = (
+                "\n=== CHANGE ARTIFACTS (from openspec/changes/) ===\n"
+            )
+            if "spec" in change_artifacts:
+                change_context_section += f"\n**Specification Delta** (specs/spec.md):\n{change_artifacts['spec'][:1000]}...\n"
+            if "tasks" in change_artifacts:
+                change_context_section += f"\n**Implementation Tasks** (tasks.md):\n{change_artifacts['tasks'][:500]}...\n"
+            if "design" in change_artifacts:
+                change_context_section += f"\n**Technical Design** (design.md):\n{change_artifacts['design'][:1000]}...\n"
+            change_context_section += "\n"
+
         user_message = (
             f"Produce all business code now. {file_instruction}\n\n"
             "IMPORTANT INSTRUCTIONS:\n"
@@ -276,6 +298,7 @@ class Phase4GenerateCode(PhaseInterface):
             "- This run was explicitly configured to regenerate business files; overwrite existing business files when needed.\n"
             f"- ONLY skip infrastructure files: {infra_files_list}.\n"
             f"{test_framework_note}"
+            f"{change_context_section}"
             "=== EXISTING FILES (regenerate business, skip infrastructure) ===\n"
             f"Current Time: 2026-05-15 10:00:00 (Beijing, China)\n\n"
             + existing_overview
@@ -308,36 +331,34 @@ class Phase4GenerateCode(PhaseInterface):
         if not ai_files:
             # Distinguish between "skipped" (files exist) and "failed" (AI error)
             if self.skipped_files or infra_files:
-            # Files were skipped because they already exist - this is OK
+                # Files were skipped because they already exist - this is OK
                 self.log("  [INFO] Code generation skipped (all files already exist)")
                 self.log(f"  [SUMMARY] Skipped: {len(self.skipped_files)} files")
                 self.log(f"  [SUMMARY] Infrastructure: {len(infra_files)} files")
-              
-           # Mark as successful with skipped flag
+
+                # Mark as successful with skipped flag
                 return PhaseResult.ok(
                     "Code generation completed (files already exist)",
                     skipped=True,
-             skipped_count=len(self.skipped_files),
-          infra_files=len(infra_files),
-                    ai_files_generated=0
-           )
+                    skipped_count=len(self.skipped_files),
+                    infra_files=len(infra_files),
+                    ai_files_generated=0,
+                )
             else:
-            # True failure: AI didn't generate files and nothing was skipped
+                # True failure: AI didn't generate files and nothing was skipped
                 return PhaseResult.fail(
-             "AI produced no code files",
+                    "AI produced no code files",
                     errors=[
-                     "stop_reason={}".format(result.stop_reason),
+                        "stop_reason={}".format(result.stop_reason),
                         "turns={}".format(result.turns),
                         "text={}".format(result.text_output[:500]),
                     ],
                 )
 
-
         self.context.ai_generated_files.extend(ai_files)
         # P2.3: mark all requirements as IN_PROGRESS
-        for req in (self.context.structured_requirements or []):
-            self.context.update_requirement_status(
-                req.get("id", ""), "IN_PROGRESS")
+        for req in self.context.structured_requirements or []:
+            self.context.update_requirement_status(req.get("id", ""), "IN_PROGRESS")
         self.context.generated_files.extend(infra_files + ai_files)
 
         self._update_artifact_graph(project_dir, ai_files)
@@ -372,8 +393,8 @@ class Phase4GenerateCode(PhaseInterface):
         )
 
     def _is_installer_project(self) -> bool:
-        project_type = getattr(self.context, 'project_type', '')
-        return project_type in {'installer', 'tooling'}
+        project_type = getattr(self.context, "project_type", "")
+        return project_type in {"installer", "tooling"}
 
     def _apply_infrastructure_templates(self, project_name):
         """Apply CMake/README/skeleton/test_base templates."""
@@ -409,7 +430,9 @@ class Phase4GenerateCode(PhaseInterface):
                 errors.append("{}: {}".format(gen_file.path, exc))
         return generated, errors
 
-    def _find_existing_business_files(self, project_dir: Path, project_name: str) -> List[Path]:
+    def _find_existing_business_files(
+        self, project_dir: Path, project_name: str
+    ) -> List[Path]:
         """Return existing generated business files that make AI regeneration optional."""
         if not project_dir.exists():
             return []
@@ -441,13 +464,15 @@ class Phase4GenerateCode(PhaseInterface):
                     business_files.append(path)
         return business_files
 
-
     def _update_artifact_graph(self, project_dir: Path, ai_files: List[Path]) -> None:
         """Populate context.artifact_graph with requirement->source/test edges."""
         try:
             from devpal.core.schema.artifact_graph import (
-                ArtifactGraph, ArtifactNode, ArtifactType, DependencyType,
-          )
+                ArtifactGraph,
+                ArtifactNode,
+                ArtifactType,
+                DependencyType,
+            )
         except ImportError:
             return
 
@@ -461,35 +486,41 @@ class Phase4GenerateCode(PhaseInterface):
             req_id = str(req.get("id", "REQ-UNKNOWN"))
             node_id = f"req:{req_id}"
             if not graph.get_node(node_id):
-                graph.add_node(ArtifactNode(
-              id=node_id,
-            type=ArtifactType.REQUIREMENT,
-             name=req_id,
-             description=str(req.get("title", "")),
-                ))
+                graph.add_node(
+                    ArtifactNode(
+                        id=node_id,
+                        type=ArtifactType.REQUIREMENT,
+                        name=req_id,
+                        description=str(req.get("title", "")),
+                    )
+                )
 
         for file_path in ai_files:
             # 确保 project_dir 是绝对路径
-            abs_project_dir = project_dir.resolve() if not project_dir.is_absolute() else project_dir
+            abs_project_dir = (
+                project_dir.resolve() if not project_dir.is_absolute() else project_dir
+            )
             rel = file_path.relative_to(abs_project_dir).as_posix()
             is_test = rel.startswith("tests/")
             artifact_type = ArtifactType.TEST if is_test else ArtifactType.CODE
             file_node_id = f"file:{rel}"
             if not graph.get_node(file_node_id):
-                graph.add_node(ArtifactNode(
-                    id=file_node_id,
-            type=artifact_type,
-                    path=file_path,
-                name=file_path.name,
-             ))
+                graph.add_node(
+                    ArtifactNode(
+                        id=file_node_id,
+                        type=artifact_type,
+                        path=file_path,
+                        name=file_path.name,
+                    )
+                )
             for req in requirements:
                 req_id = str(req.get("id", "REQ-UNKNOWN"))
                 req_node_id = f"req:{req_id}"
                 dep = DependencyType.TESTS if is_test else DependencyType.IMPLEMENTS
             try:
-                 graph.add_dependency(file_node_id, req_node_id, dep)
+                graph.add_dependency(file_node_id, req_node_id, dep)
             except ValueError:
-              pass
+                pass
 
     def _build_existing_files_overview(self, project_dir):
         """Return a short bullet list of existing files for AI context."""
@@ -544,7 +575,9 @@ class Phase4GenerateCode(PhaseInterface):
             for node, dep_type in graph.get_dependents(req_node_id):
                 if node.type in (ArtifactType.CODE, ArtifactType.TEST):
                     if node.path:
-                      rel_path = node.path.relative_to(self.context.project_dir).as_posix()
-                      affected_files.add(rel_path)
+                        rel_path = node.path.relative_to(
+                            self.context.project_dir
+                        ).as_posix()
+                        affected_files.add(rel_path)
 
         return sorted(list(affected_files))

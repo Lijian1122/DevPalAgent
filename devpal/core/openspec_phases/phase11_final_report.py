@@ -181,24 +181,35 @@ class Phase11FinalReport(PhaseInterface):
                     dim_name = dim_name_map.get(dim, dim)
                     lines.append(f"| {dim_name} | {score}/100 |")
 
-            lines.extend(
-                [
-                    "",
-                    f"**Critical Issues**: {len(critical_issues)}",
-                    "",
-                    "Detailed report: [critique_report.md](critique_report.md)",
-                    "",
-                ]
-            )
+                lines.extend(
+                    [
+                        "",
+                        f"**Critical Issues**: {len(critical_issues)}",
+                        "",
+                        "Detailed report: [critique_report.md](critique_report.md)",
+                        "",
+                    ]
+                )
 
         lines.extend(
             [
                 "### Requirement Status",
                 "",
             ]
-            + self._generate_status_summary()
             + [
                 "",
+            ]
+        )
+
+        # M2: Add Change Artifacts section
+        if (
+            hasattr(self.context, "current_change_id")
+            and self.context.current_change_id
+        ):
+            lines.extend(self._generate_change_artifacts_section())
+
+        lines.extend(
+            [
                 "### Test Output",
                 "",
                 "```",
@@ -210,18 +221,6 @@ class Phase11FinalReport(PhaseInterface):
                 "```",
             ]
         )
-
-        # M2: Add change information
-        if self.context.current_change_id:
-            lines.append("")
-            lines.append("## 1.1 OpenSpec Change")
-            lines.append("")
-            lines.append("- Change ID: `{}`".format(self.context.current_change_id))
-            lines.append(
-                "- Change directory: `openspec/changes/{}`".format(
-                    self.context.current_change_id
-                )
-            )
 
         for f in unique_files:
             try:
@@ -697,4 +696,59 @@ class Phase11FinalReport(PhaseInterface):
             return claude_md_path
         except Exception as e:
             self.log("  [WARN] CLAUDE.md generation failed: {}".format(e))
-            return None
+
+    def _generate_change_artifacts_section(self) -> List[str]:
+        """Generate Change Artifacts section for final report (M2 implementation)"""
+        lines = [
+            "",
+            "## 3.6. OpenSpec Change Artifacts",
+            "",
+            f"**Change ID**: `{self.context.current_change_id}`",
+            "",
+            f"**Change Directory**: `openspec/changes/{self.context.current_change_id}/`",
+            "",
+            "**Generated Artifacts**:",
+            "",
+        ]
+
+        # List all files in change directory
+        if (
+            hasattr(self.context, "current_change_dir")
+            and self.context.current_change_dir
+        ):
+            change_dir = self.context.current_change_dir
+            if change_dir.exists():
+                artifact_files = [
+                    "proposal.md",
+                    "specs/spec.md",
+                    "tasks.md",
+                    "design.md",
+                    "metadata.json",
+                ]
+
+                for file_name in artifact_files:
+                    file_path = change_dir / file_name
+            if file_path.exists():
+                rel_path = file_path.relative_to(self.context.project_dir)
+                file_size = file_path.stat().st_size
+                lines.append(f"- [{file_name}]({rel_path}) ({file_size} bytes)")
+            else:
+                lines.append(f"- {file_name} (not generated)")
+
+            lines.extend(
+                [
+                    "",
+                    "**Contents**:",
+                    "",
+                    "- `proposal.md` - Change proposal and impact analysis",
+                    "- `specs/spec.md` - Specification delta (ADDED/MODIFIED/REMOVED)",
+                    "- `tasks.md` - Implementation task checklist",
+                    "- `design.md` - Technical design document",
+                    "- `metadata.json` - Change metadata and tracking info",
+                    "",
+                ]
+            )
+
+        return lines
+
+        return None
