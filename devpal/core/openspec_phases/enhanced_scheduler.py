@@ -4,35 +4,35 @@ OpenSpec Phase  -
 
 """
 
-import time
 import json
 import signal
-from pathlib import Path
-from typing import Dict, Optional
+import time
 from contextlib import contextmanager
+from pathlib import Path
+from typing import Dict
 
 from .base import PhaseResult, validate_phase_success
 
 #
 PHASE_TIMEOUTS = {
-    1: 30,   # Phase 1:
-    2: 10,   # Phase 2:
+    1: 30,  # Phase 1:
+    2: 10,  # Phase 2:
     3: 120,  # Phase 3: AI
     4: 180,  # Phase 4: AI
-    5: 30,   # Phase 5:
-    6: 10,   # Phase 6:  CMakeLists
-    7: 10,   # Phase 7:
-    8: 10,   # Phase 8:  README
-    9: 60,   # Phase 9:
+    5: 30,  # Phase 5:
+    6: 10,  # Phase 6:  CMakeLists
+    7: 10,  # Phase 7:
+    8: 10,  # Phase 8:  README
+    9: 60,  # Phase 9:
     10: 600,  # Phase 10:  +  + AI  (10)
     11: 30,  # Phase 11:
 }
 
 #
 RETRY_CONFIG = {
-    3: 2,    # Phase 3: AI  -  2
-    4: 2,    # Phase 4: AI  -  2
-    10: 1,   # Phase 10:  -  1
+    3: 2,  # Phase 3: AI  -  2
+    4: 2,  # Phase 4: AI  -  2
+    10: 1,  # Phase 10:  -  1
 }
 
 #
@@ -41,6 +41,7 @@ CRITICAL_PHASES = [1, 2, 3, 4, 10]
 
 class TimeoutError(Exception):
     """"""
+
     pass
 
 
@@ -48,9 +49,11 @@ class TimeoutError(Exception):
 def timeout_context(seconds: int):
     """"""
     import platform
-    if platform.system() == 'Windows':
+
+    if platform.system() == "Windows":
         # Windows:  threading.Timer
         import threading
+
         timed_out = [False]
 
         def timeout_handler():
@@ -91,22 +94,25 @@ class ProgressMonitor:
     def start_phase(self, phase_num: int, phase_name: str):
         """"""
         self.current_phase = phase_num
-        self.phase_times[phase_num] = {'start': time.time(), 'name': phase_name}
+        self.phase_times[phase_num] = {"start": time.time(), "name": phase_name}
         elapsed = time.time() - self.start_time
         progress = ((phase_num - 1) / self.total_phases) * 100
         remaining = self.estimate_remaining_time()
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print(f" : {progress:.1f}% ({phase_num}/{self.total_phases})")
         print(f" : Phase {phase_num} - {phase_name}")
         print(f"  : {elapsed:.1f}s | : {remaining:.1f}s")
-        print(f"{'='*70}\n")
+        print(f"{'=' * 70}\n")
 
     def end_phase(self, phase_num: int, success: bool):
         """"""
         if phase_num in self.phase_times:
-            self.phase_times[phase_num]['end'] = time.time()
-            self.phase_times[phase_num]['success'] = success
-            duration = self.phase_times[phase_num]['end'] - self.phase_times[phase_num]['start']
+            self.phase_times[phase_num]["end"] = time.time()
+            self.phase_times[phase_num]["success"] = success
+            duration = (
+                self.phase_times[phase_num]["end"]
+                - self.phase_times[phase_num]["start"]
+            )
             status = "[OK] " if success else "[FAIL] "
             print(f" [{status}] Phase {phase_num}  (: {duration:.2f}s)")
 
@@ -116,11 +122,13 @@ class ProgressMonitor:
             #
             return sum(PHASE_TIMEOUTS.values())
 
-        completed_phases = [p for p in self.phase_times.values() if 'end' in p]
+        completed_phases = [p for p in self.phase_times.values() if "end" in p]
         if not completed_phases:
             return 0.0
 
-        avg_time = sum(p['end'] - p['start'] for p in completed_phases) / len(completed_phases)
+        avg_time = sum(p["end"] - p["start"] for p in completed_phases) / len(
+            completed_phases
+        )
         remaining_phases = self.total_phases - self.current_phase + 1
         return avg_time * remaining_phases
 
@@ -133,7 +141,9 @@ class CheckpointManager:
     def __init__(self, checkpoint_file: Path, requirements_file: Path):
         self.checkpoint_file = checkpoint_file
         self.requirements_file = Path(requirements_file)
-        self._requirements_key = self._canonical_requirements_key(self.requirements_file)
+        self._requirements_key = self._canonical_requirements_key(
+            self.requirements_file
+        )
         self.checkpoint = self._load()
 
     @staticmethod
@@ -154,7 +164,7 @@ class CheckpointManager:
     def _load(self) -> dict:
         if self.checkpoint_file.exists():
             try:
-                with open(self.checkpoint_file, 'r', encoding='utf-8') as f:
+                with open(self.checkpoint_file, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception:
                 return {}
@@ -163,35 +173,41 @@ class CheckpointManager:
     def is_valid_for_current_run(self) -> bool:
         if not self.checkpoint:
             return False
-        if self.checkpoint.get('schema_version') != self.SCHEMA_VERSION:
+        if self.checkpoint.get("schema_version") != self.SCHEMA_VERSION:
             return False
-        saved_req = self.checkpoint.get('requirements_file')
+        saved_req = self.checkpoint.get("requirements_file")
         if not saved_req:
             return False
-        return self._canonical_requirements_key(Path(saved_req)) == self._requirements_key
+        return (
+            self._canonical_requirements_key(Path(saved_req)) == self._requirements_key
+        )
 
     def save(self, phase_num: int, success: bool, context):
-        completed_phases = list(self.checkpoint.get('completed_phases', []))
+        completed_phases = list(self.checkpoint.get("completed_phases", []))
         if success and phase_num not in completed_phases:
             completed_phases.append(phase_num)
         self.checkpoint = {
-            'schema_version': self.SCHEMA_VERSION,
-          'requirements_file': self._requirements_path_for_save(self.requirements_file),
-            'project_dir': context.project_dir.as_posix() if context.project_dir else None,
-            'last_phase': phase_num,
-            'last_success': success,
-            'completed_phases': completed_phases,
-            'timestamp': time.time(),
-            'context': context.to_checkpoint_dict(),
+            "schema_version": self.SCHEMA_VERSION,
+            "requirements_file": self._requirements_path_for_save(
+                self.requirements_file
+            ),
+            "project_dir": context.project_dir.as_posix()
+            if context.project_dir
+            else None,
+            "last_phase": phase_num,
+            "last_success": success,
+            "completed_phases": completed_phases,
+            "timestamp": time.time(),
+            "context": context.to_checkpoint_dict(),
         }
         self.checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.checkpoint_file, 'w', encoding='utf-8') as f:
+        with open(self.checkpoint_file, "w", encoding="utf-8") as f:
             json.dump(self.checkpoint, f, indent=2, ensure_ascii=False)
 
     def restore_context(self, context) -> bool:
         if not self.is_valid_for_current_run():
             return False
-        context.restore_from_checkpoint(self.checkpoint.get('context', {}))
+        context.restore_from_checkpoint(self.checkpoint.get("context", {}))
         return True
 
     def archive(self, reason: str = "completed") -> "Path | None":
@@ -202,51 +218,51 @@ class CheckpointManager:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         archive_path = archive_dir / f"{timestamp}_{reason}.json"
         try:
-          archive_path.write_bytes(self.checkpoint_file.read_bytes())
+            archive_path.write_bytes(self.checkpoint_file.read_bytes())
         except Exception:
             return None
         return archive_path
 
     def clear(self, archive_reason: "str | None" = None):
-     if archive_reason is not None:
+        if archive_reason is not None:
             self.archive(archive_reason)
-     if self.checkpoint_file.exists():
-         self.checkpoint_file.unlink()
-         self.checkpoint = {}
+        if self.checkpoint_file.exists():
+            self.checkpoint_file.unlink()
+            self.checkpoint = {}
 
     def get_resume_phase(self) -> int:
-        last_phase = self.checkpoint.get('last_phase', 0)
-        last_success = self.checkpoint.get('last_success', False)
+        last_phase = self.checkpoint.get("last_phase", 0)
+        last_success = self.checkpoint.get("last_success", False)
         return last_phase + 1 if last_success else last_phase
 
     def is_phase_completed(self, phase_num: int) -> bool:
-        return phase_num in self.checkpoint.get('completed_phases', [])
+        return phase_num in self.checkpoint.get("completed_phases", [])
 
 
 # 1:
 def should_retry_error(result) -> bool:
     """"""
     #  errors
-    if not hasattr(result, 'errors') or not result.errors:
+    if not hasattr(result, "errors") or not result.errors:
         return False
 
     retry_keywords = [
-        'timeout',
-        'connection',
-        'rate limit',
-        'temporary',
-        'network',
-        'unavailable',
-        'retry'
+        "timeout",
+        "connection",
+        "rate limit",
+        "temporary",
+        "network",
+        "unavailable",
+        "retry",
     ]
 
     #
-    error_text = ' '.join(str(e) for e in result.errors).lower()
+    error_text = " ".join(str(e) for e in result.errors).lower()
     return any(keyword in error_text for keyword in retry_keywords)
 
 
 class EnhancedOpenSpecScheduler:
-    """ OpenSpec
+    """OpenSpec
     :
     -
     -
@@ -255,15 +271,19 @@ class EnhancedOpenSpecScheduler:
     -
     """
 
-    def __init__(self, requirements_file: str, tool_registry,
-                 enable_timeout: bool = True,
-                 enable_retry: bool = True,
-                 enable_checkpoint: bool = True,
-                 enable_progress: bool = True,
-                 abort_on_critical_failure: bool = True,
-             force_regenerate_code: bool = True,
-             verbose: bool = False,
-             debug: bool = False):
+    def __init__(
+        self,
+        requirements_file: str,
+        tool_registry,
+        enable_timeout: bool = True,
+        enable_retry: bool = True,
+        enable_checkpoint: bool = True,
+        enable_progress: bool = True,
+        abort_on_critical_failure: bool = True,
+        force_regenerate_code: bool = True,
+        verbose: bool = False,
+        debug: bool = False,
+    ):
         """"""
 
         #
@@ -293,16 +313,20 @@ class EnhancedOpenSpecScheduler:
 
         #
         checkpoint_file = self._get_checkpoint_file(self.context.requirements_file)
-        self.checkpoint = CheckpointManager(checkpoint_file, self.context.requirements_file) if enable_checkpoint else None
+        self.checkpoint = (
+            CheckpointManager(checkpoint_file, self.context.requirements_file)
+            if enable_checkpoint
+            else None
+        )
 
     def _get_checkpoint_file(self, requirements_file: Path) -> Path:
         req_path = Path(requirements_file)
         project_name = req_path.stem
-        if project_name.endswith('_requirements'):
-            project_name = project_name.replace('_requirements', '')
-        if project_name.startswith('req_'):
-            project_name = project_name.replace('req_', '')
-        return Path(project_name) / '.spec' / 'checkpoint.json'
+        if project_name.endswith("_requirements"):
+            project_name = project_name.replace("_requirements", "")
+        if project_name.startswith("req_"):
+            project_name = project_name.replace("req_", "")
+        return Path(project_name) / ".spec" / "checkpoint.json"
 
     def run_all_phases(self, resume: bool = True) -> Dict:
         """"""
@@ -319,10 +343,11 @@ class EnhancedOpenSpecScheduler:
                     print(f"\n[RESUME]  Phase {start_phase} \n")
                     self._ensure_logger_for_resume(start_phase)
             else:
-                print("\n[RESUME] checkpoint missing or incompatible; starting from Phase 1\n")
+                print(
+                    "\n[RESUME] checkpoint missing or incompatible; starting from Phase 1\n"
+                )
 
         return self._run_phases_with_enhancements(start_phase)
-
 
     def _ensure_logger_for_resume(self, start_phase: int) -> None:
         context = self.context
@@ -330,8 +355,14 @@ class EnhancedOpenSpecScheduler:
             return
         try:
             from .logger import OpenSpecLogger
+
             context.project_dir.mkdir(parents=True, exist_ok=True)
-            context.logger = OpenSpecLogger(context.project_name, context.project_dir, verbose=self.verbose, debug=self.debug)
+            context.logger = OpenSpecLogger(
+                context.project_name,
+                context.project_dir,
+                verbose=self.verbose,
+                debug=self.debug,
+            )
             context.log_file = context.logger.log_file
             print(f"[INFO] resume log: {context.log_file}")
             context.logger.info(f"[RESUME] start_phase={start_phase}")
@@ -352,6 +383,7 @@ class EnhancedOpenSpecScheduler:
 
         # --- 2:  ---
         #
+        from .logger import OpenSpecLogger
         from .phase1_parse_requirements import Phase1ParseRequirements
         from .phase2_create_structure import Phase2CreateStructure
         from .phase3_technical_design import Phase3TechnicalDesign
@@ -363,7 +395,6 @@ class EnhancedOpenSpecScheduler:
         from .phase9_quality_gate import Phase9QualityGate
         from .phase10_run_tests import Phase10RunTests
         from .phase11_final_report import Phase11FinalReport
-        from .logger import OpenSpecLogger
 
         print()
         print("=" * 70)
@@ -376,7 +407,9 @@ class EnhancedOpenSpecScheduler:
         print(f"  Checkpoint: {'Enabled' if self.enable_checkpoint else 'Disabled'}")
         print(
             "  Force regenerate code: {}".format(
-                "Enabled" if getattr(context, "force_regenerate_code", True) else "Disabled"
+                "Enabled"
+                if getattr(context, "force_regenerate_code", True)
+                else "Disabled"
             )
         )
         print("=" * 70)
@@ -414,7 +447,7 @@ class EnhancedOpenSpecScheduler:
                 continue
 
             # Check if phase should be skipped based on project type/language
-            if hasattr(phase, 'should_skip'):
+            if hasattr(phase, "should_skip"):
                 should_skip, skip_reason = phase.should_skip()
                 if should_skip:
                     skip_msg = f"[SKIP] Phase {i} ({phase.phase_name}) - {skip_reason}"
@@ -427,11 +460,13 @@ class EnhancedOpenSpecScheduler:
                         "skip_reason": skip_reason,
                     }
                     if i == 10:
-                        skip_data.update({
-                            "test_skipped": True,
-                            "test_status": "skipped",
-                            "test_summary": f"skipped ({skip_reason})",
-                        })
+                        skip_data.update(
+                            {
+                                "test_skipped": True,
+                                "test_status": "skipped",
+                                "test_summary": f"skipped ({skip_reason})",
+                            }
+                        )
                     result = PhaseResult.ok(f"Skipped: {skip_reason}", **skip_data)
                     context.set_phase_result(i, result)
                     if self.checkpoint:
@@ -454,10 +489,17 @@ class EnhancedOpenSpecScheduler:
                     try:
                         #
                         context.project_dir.mkdir(parents=True, exist_ok=True)
-                        context.logger = OpenSpecLogger(context.project_name, context.project_dir, verbose=self.verbose, debug=self.debug)
+                        context.logger = OpenSpecLogger(
+                            context.project_name,
+                            context.project_dir,
+                            verbose=self.verbose,
+                            debug=self.debug,
+                        )
                         context.log_file = context.logger.log_file
                         print(f"[INFO] : {context.log_file}")
-                        self._backfill_pre_logger_phases(context, current_phase=i, current_duration=duration)
+                        self._backfill_pre_logger_phases(
+                            context, current_phase=i, current_duration=duration
+                        )
                     except Exception as exc:
                         print(f"[WARN] : {exc}")
                 else:
@@ -530,6 +572,72 @@ class EnhancedOpenSpecScheduler:
                     else:
                         print(f"[WARN] {warning_msg}")
 
+        # --- Phase 9.5: Critique Phase (after Phase 9 Quality Gate) ---
+        if i == 9 and result.success:
+            enable_critique = self.config.get("enable_critique_phase", True)
+            if enable_critique:
+                try:
+                    if context.logger:
+                        context.logger.info("Starting Phase 9.5: Critique Phase")
+
+                    # Get LLM client from base_scheduler
+                    llm_client = None
+                    if hasattr(self.base_scheduler, "llm_client"):
+                        llm_client = self.base_scheduler.llm_client
+
+                    # Get critique config
+                    critique_config = self.config.get("critique_config", {})
+
+                    # Import and execute Phase 9.5
+                    from .phase9_5_critique import Phase9_5Critique
+
+                    phase_9_5 = Phase9_5Critique(
+                        context, llm_client=llm_client, config=critique_config
+                    )
+
+                    if context.logger:
+                        context.logger.phase_start(9.5, "Critique Phase")
+
+                    critique_result, critique_duration = phase_9_5.execute_with_timing()
+
+                    if context.logger:
+                        context.logger.phase_end(
+                            9.5, critique_result.success, critique_duration
+                        )
+
+                    # Store result
+                    context.phase_results[9.5] = critique_result
+
+                    if critique_result.success:
+                        if context.logger:
+                            overall_score = critique_result.data.get(
+                                "overall_score", "N/A"
+                            )
+                            context.logger.info(
+                                f"Phase 9.5 completed: Overall Score = {overall_score}/100"
+                            )
+                    else:
+                        # Critique Phase failure is not critical
+                        if context.logger:
+                            context.logger.warning(
+                                f"Phase 9.5 failed: {critique_result.message}"
+                            )
+                        else:
+                            print(
+                                f"[WARN] Phase 9.5 Critique failed: {critique_result.message}"
+                            )
+
+                except Exception as e:
+                    # Critique Phase errors should not stop the workflow
+                    if context.logger:
+                        context.logger.error(f"Phase 9.5 Critique error: {e}")
+                    else:
+                        print(f"[ERROR] Phase 9.5 Critique error: {e}")
+            else:
+                if context.logger:
+                    context.logger.info("Phase 9.5 Critique disabled, skipping")
+                else:
+                    print("[INFO] Phase 9.5 Critique disabled, skipping")
         # ---  ---
         #
         if self.checkpoint:
@@ -537,42 +645,49 @@ class EnhancedOpenSpecScheduler:
 
         phase10_result = context.get_phase_result(10)
         phase10_data = phase10_result.data if phase10_result else {}
-        test_skipped = bool(phase10_data.get("test_skipped") or phase10_data.get("skipped"))
-        test_status = str(phase10_data.get("test_status") or ("skipped" if test_skipped else "completed"))
+        test_skipped = bool(
+            phase10_data.get("test_skipped") or phase10_data.get("skipped")
+        )
+        test_status = str(
+            phase10_data.get("test_status")
+            or ("skipped" if test_skipped else "completed")
+        )
         test_summary = str(
             phase10_data.get("test_summary")
             or (
                 "skipped ({})".format(phase10_data.get("skip_reason", "not applicable"))
                 if test_skipped
                 else "{}/{} passed".format(
-                    getattr(context, 'test_passed', 0),
-                    getattr(context, 'test_total', 0),
+                    getattr(context, "test_passed", 0),
+                    getattr(context, "test_total", 0),
                 )
             )
         )
 
         return {
-            'success': True,
-            'project_dir': str(context.project_dir),
-            'project_name': context.project_name,
-            'test_passed': getattr(context, 'test_passed', 0),
-            'test_failed': getattr(context, 'test_failed', 0),
-            'test_total': getattr(context, 'test_total', 0),
-            'test_skipped': test_skipped,
-            'test_status': test_status,
-            'test_summary': test_summary,
-            'log_file': str(context.log_file) if context.log_file else None,
-            'phases': context.phase_results
+            "success": True,
+            "project_dir": str(context.project_dir),
+            "project_name": context.project_name,
+            "test_passed": getattr(context, "test_passed", 0),
+            "test_failed": getattr(context, "test_failed", 0),
+            "test_total": getattr(context, "test_total", 0),
+            "test_skipped": test_skipped,
+            "test_status": test_status,
+            "test_summary": test_summary,
+            "log_file": str(context.log_file) if context.log_file else None,
+            "phases": context.phase_results,
         }
 
-    def _backfill_pre_logger_phases(self, context, current_phase: int, current_duration: float) -> None:
+    def _backfill_pre_logger_phases(
+        self, context, current_phase: int, current_duration: float
+    ) -> None:
         """Replay earlier phase records into the project logger so the on-disk log is complete."""
         if not context.logger:
             return
         for phase_num in range(1, current_phase):
             previous = context.get_phase_result(phase_num)
             if not previous:
-             continue
+                continue
             phase_name = self._phase_name_for(phase_num)
             context.logger.phase_start(phase_num, phase_name)
             context.logger.info("(backfilled) " + (previous.message or ""))
@@ -582,7 +697,9 @@ class EnhancedOpenSpecScheduler:
             phase_name = self._phase_name_for(current_phase)
             context.logger.phase_start(current_phase, phase_name)
             context.logger.info("(backfilled) " + (current_result.message or ""))
-            context.logger.phase_end(current_phase, current_result.success, current_duration)
+            context.logger.phase_end(
+                current_phase, current_result.success, current_duration
+            )
 
     def _phase_name_for(self, phase_num: int) -> str:
         return {
@@ -590,12 +707,12 @@ class EnhancedOpenSpecScheduler:
             2: "Create project structure",
             3: "Generate tech design",
             4: "Generate core code",
-        5: "Generate test documentation",
+            5: "Generate test documentation",
             6: "CMake config",
             7: "Test docs",
-         8: "README",
+            8: "README",
             9: "Code review",
-          10: "Compile and run tests",
+            10: "Compile and run tests",
             11: "Final report",
         }.get(phase_num, "Phase {}".format(phase_num))
 
@@ -640,7 +757,7 @@ class EnhancedOpenSpecScheduler:
                 #
                 if should_retry_error(result):
                     print(f"[RETRY] Phase {phase_num}  {attempt + 1}/{max_retries}")
-                    time.sleep(2) #  2
+                    time.sleep(2)  #  2
                     continue
                 else:
                     #
@@ -655,23 +772,25 @@ class EnhancedOpenSpecScheduler:
                 else:
                     #
                     from .base import PhaseResult
+
                     error_msg = f"Phase {phase_num}  ({timeout}s)"
                     return PhaseResult.fail(error_msg, errors=[str(e)]), timeout
 
         #
         from .base import PhaseResult
+
         return PhaseResult.fail(f"Phase {phase_num} "), 0
 
     def _build_failure_response(self, phase_num: int, phase, result) -> Dict:
         """"""
         context = self.context
         return {
-            'success': False,
-            'failed_phase': phase_num,
-            'failed_phase_name': phase.phase_name,
-            'error_message': result.message,
-            'errors': result.errors,
-            'project_dir': str(context.project_dir) if context.project_dir else None,
-            'log_file': str(context.log_file) if context.log_file else None,
-            'phases': context.phase_results
+            "success": False,
+            "failed_phase": phase_num,
+            "failed_phase_name": phase.phase_name,
+            "error_message": result.message,
+            "errors": result.errors,
+            "project_dir": str(context.project_dir) if context.project_dir else None,
+            "log_file": str(context.log_file) if context.log_file else None,
+            "phases": context.phase_results,
         }

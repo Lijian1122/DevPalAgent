@@ -107,6 +107,9 @@ class OpenSpecContext:
     llm_cache_read_tokens: int = 0
     llm_cache_creation_tokens: int = 0  # Prompt Caching: 缓存创建 tokens
 
+    # Critique Phase result (Phase 9.5)
+    critique_result: Optional[Dict[str, Any]] = None
+
     # 日志系统
     logger: Optional[Any] = None  # OpenSpecLogger 实例
     log_file: Optional[Path] = None  # 日志文件路径

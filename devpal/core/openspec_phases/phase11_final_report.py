@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 from typing import Dict, List
 
-from .base import PhaseInterface, PhaseResult, OpenSpecContext
 from ..cache_strategy import CacheMetrics
+from .base import OpenSpecContext, PhaseInterface, PhaseResult
 
 
 class Phase11FinalReport(PhaseInterface):
@@ -46,9 +46,7 @@ class Phase11FinalReport(PhaseInterface):
         self.log("  OpenSpec 11-phase pipeline complete")
         self.log("  project: {}".format(self.context.project_dir))
         self.log("  tests: {}".format(self._test_summary()))
-        self.log(
-            "  files generated: {}".format(len(set(self.context.generated_files)))
-        )
+        self.log("  files generated: {}".format(len(set(self.context.generated_files))))
         self.log(
             "  llm: {} calls, in={} out={} cache_read={} cache_create={}".format(
                 self.context.llm_calls,
@@ -78,7 +76,9 @@ class Phase11FinalReport(PhaseInterface):
             self_heal_attempts=self.context.self_heal_attempts,
         )
 
-    def _generate_final_report(self, artifact_graph_path: Path, cache_metrics: CacheMetrics) -> str:
+    def _generate_final_report(
+        self, artifact_graph_path: Path, cache_metrics: CacheMetrics
+    ) -> str:
         unique_files = sorted(set(self.context.generated_files))
         passed = self.context.test_passed
         total = self.context.test_total
@@ -96,6 +96,7 @@ class Phase11FinalReport(PhaseInterface):
             7: "Test docs",
             8: "README",
             9: "Code review",
+            9.5: "LLM Critique",
             10: "Compile and run tests",
             11: "Final report",
         }
@@ -108,7 +109,9 @@ class Phase11FinalReport(PhaseInterface):
             "- Project dir: `{}`".format(self.context.project_dir),
             "- Requirements: `{}`".format(self.context.requirements_file),
             "- Files generated: {}".format(len(unique_files)),
-            "- Artifact graph: `{}`".format(artifact_graph_path.relative_to(self.context.project_dir)),
+            "- Artifact graph: `{}`".format(
+                artifact_graph_path.relative_to(self.context.project_dir)
+            ),
             "",
             "## 2. AI Usage",
             "",
@@ -116,14 +119,16 @@ class Phase11FinalReport(PhaseInterface):
             "- Input tokens: {}".format(self.context.llm_input_tokens),
             "- Output tokens: {}".format(self.context.llm_output_tokens),
             "- Cache read tokens: {}".format(self.context.llm_cache_read_tokens),
-            "- Cache creation tokens: {}".format(self.context.llm_cache_creation_tokens),
+            "- Cache creation tokens: {}".format(
+                self.context.llm_cache_creation_tokens
+            ),
             "",
             "### Cache Performance",
             "",
-        "- Cache hit rate: {:.1%}".format(cache_metrics.cache_hit_rate),
+            "- Cache hit rate: {:.1%}".format(cache_metrics.cache_hit_rate),
             "- Cost reduction: {:.1%}".format(cache_metrics.cost_reduction_percentage),
             "- Total cache tokens: {:,}".format(cache_metrics.total_cache_tokens),
-        "",
+            "",
             "- Self-heal attempts: {}".format(self.context.self_heal_attempts),
             "- AI-generated files: {}".format(len(self.context.ai_generated_files)),
             "",
@@ -131,23 +136,80 @@ class Phase11FinalReport(PhaseInterface):
             "",
             "- Status: {}".format("skipped" if test_skipped else "completed"),
             "- Summary: {}".format(test_summary),
-            "- Passed: {}".format("not applicable" if test_skipped else "{}/{}".format(passed, total)),
+            "- Passed: {}".format(
+                "not applicable" if test_skipped else "{}/{}".format(passed, total)
+            ),
             "- Pass rate: {}".format("not applicable" if test_skipped else rate),
             "",
-            "### Requirement Status",
-            "",
-      ] + self._generate_status_summary() + [
-         "",
-            "### Test Output",
-            "",
-            "```",
-            self.context.test_output or "(no test output captured)",
-            "```",
-            "",
-            "## 4. Generated Files",
-            "",
-            "```",
         ]
+
+        # Add Critique section if available
+        if hasattr(self.context, "critique_result") and self.context.critique_result:
+            critique = self.context.critique_result
+            overall_score = critique.get("overall_score", "N/A")
+            dimensions = critique.get("dimensions", {})
+            critical_issues = critique.get("critical_issues", [])
+
+            lines.extend(
+                [
+                    "## 3.5. Code Quality Critique (LLM-as-a-Judge)",
+                    "",
+                    f"**Overall Score**: **{overall_score}/100**",
+                    "",
+                    "| Dimension | Score |",
+                    "|-----------|-------|",
+                ]
+            )
+
+            dim_name_map = {
+                "readability": "Code Readability",
+                "architecture": "Architecture",
+                "security": "Security",
+                "performance": "Performance",
+                "maintainability": "Maintainability",
+            }
+
+            for dim in [
+                "readability",
+                "architecture",
+                "security",
+                "performance",
+                "maintainability",
+            ]:
+                if dim in dimensions:
+                    score = dimensions[dim].get("score", 0)
+                    dim_name = dim_name_map.get(dim, dim)
+                    lines.append(f"| {dim_name} | {score}/100 |")
+
+            lines.extend(
+                [
+                    "",
+                    f"**Critical Issues**: {len(critical_issues)}",
+                    "",
+                    "Detailed report: [critique_report.md](critique_report.md)",
+                    "",
+                ]
+            )
+
+        lines.extend(
+            [
+                "### Requirement Status",
+                "",
+            ]
+            + self._generate_status_summary()
+            + [
+                "",
+                "### Test Output",
+                "",
+                "```",
+                self.context.test_output or "(no test output captured)",
+                "```",
+                "",
+                "## 4. Generated Files",
+                "",
+                "```",
+            ]
+        )
 
         # M2: Add change information
         if self.context.current_change_id:
@@ -155,7 +217,11 @@ class Phase11FinalReport(PhaseInterface):
             lines.append("## 1.1 OpenSpec Change")
             lines.append("")
             lines.append("- Change ID: `{}`".format(self.context.current_change_id))
-        lines.append("- Change directory: `openspec/changes/{}`".format(self.context.current_change_id))
+            lines.append(
+                "- Change directory: `openspec/changes/{}`".format(
+                    self.context.current_change_id
+                )
+            )
 
         for f in unique_files:
             try:
@@ -174,7 +240,9 @@ class Phase11FinalReport(PhaseInterface):
                 "|-------|------|--------|",
             ]
         )
-        for phase_num in range(1, 12):
+        # Include Phase 9.5 in the status table
+        phase_list = list(range(1, 10)) + [9.5, 10, 11]
+        for phase_num in phase_list:
             result = self.context.get_phase_result(phase_num)
             if phase_num == 11:
                 status = "OK"
@@ -213,17 +281,25 @@ class Phase11FinalReport(PhaseInterface):
         if graph is not None:
             # M2: Add change node to artifact graph
             if self.context.current_change_id and self.context.current_change_dir:
-                from ..schema.artifact_graph import ArtifactNode, ArtifactType, DependencyType
+                from ..schema.artifact_graph import (
+                    ArtifactNode,
+                    ArtifactType,
+                    DependencyType,
+                )
 
-                change_path = "openspec/changes/{}".format(self.context.current_change_id)
+                change_path = "openspec/changes/{}".format(
+                    self.context.current_change_id
+                )
 
                 change_node = ArtifactNode(
-           id="change:{}".format(self.context.current_change_id),
-                 type=ArtifactType.SPEC,
+                    id="change:{}".format(self.context.current_change_id),
+                    type=ArtifactType.SPEC,
                     path=change_path,
-               name=self.context.current_change_id,
-                description="OpenSpec change {}".format(self.context.current_change_id),
-            metadata={"change_type": "openspec_change"}
+                    name=self.context.current_change_id,
+                    description="OpenSpec change {}".format(
+                        self.context.current_change_id
+                    ),
+                    metadata={"change_type": "openspec_change"},
                 )
                 graph.add_node(change_node)
 
@@ -231,26 +307,29 @@ class Phase11FinalReport(PhaseInterface):
             for req in self.context.structured_requirements:
                 req_id = req.get("id")
                 if req_id:
-                   graph.add_dependency(
-                          "change:{}".format(self.context.current_change_id),
-                  "req:{}".format(req_id),
-                       DependencyType.REFERENCES
-                      )
+                    graph.add_dependency(
+                        "change:{}".format(self.context.current_change_id),
+                        "req:{}".format(req_id),
+                        DependencyType.REFERENCES,
+                    )
 
         try:
             graph.save_to_file(graph_path)
             self.context.artifact_graph_data = json.loads(
-                    graph_path.read_text(encoding="utf-8"))
+                graph_path.read_text(encoding="utf-8")
+            )
             self.context.generated_files.append(graph_path)
             self.log("  [OK] Saved using ArtifactGraph.save_to_file()")
             return graph_path
         except Exception as e:
-                self.log("  [WARN] ArtifactGraph.save_to_file() failed: {}".format(e))
+            self.log("  [WARN] ArtifactGraph.save_to_file() failed: {}".format(e))
 
         # Fallback: simple JSON
         simple_graph = self._build_artifact_graph_data()
         self.context.artifact_graph_data = simple_graph
-        graph_path.write_text(json.dumps(simple_graph, ensure_ascii=False, indent=2), encoding="utf-8")
+        graph_path.write_text(
+            json.dumps(simple_graph, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         self.context.generated_files.append(graph_path)
         self.log("  [OK] Saved using fallback JSON")
         return graph_path
@@ -265,21 +344,31 @@ class Phase11FinalReport(PhaseInterface):
 
         for requirement in requirements:
             req_id = str(requirement.get("id", "REQ-UNKNOWN"))
-            nodes.append({
-                "id": req_id,
-                "type": "requirement",
-                "label": requirement.get("title", req_id),
-                "description": requirement.get("description", ""),
-            })
+            nodes.append(
+                {
+                    "id": req_id,
+                    "type": "requirement",
+                    "label": requirement.get("title", req_id),
+                    "description": requirement.get("description", ""),
+                }
+            )
             for source_file in source_files:
-                edges.append({"from": req_id, "to": source_file, "relation": "implemented_by"})
+                edges.append(
+                    {"from": req_id, "to": source_file, "relation": "implemented_by"}
+                )
             for test_file in test_files:
-                edges.append({"from": req_id, "to": test_file, "relation": "verified_by"})
+                edges.append(
+                    {"from": req_id, "to": test_file, "relation": "verified_by"}
+                )
 
         for source_file in source_files:
-            nodes.append({"id": source_file, "type": "source", "label": Path(source_file).name})
+            nodes.append(
+                {"id": source_file, "type": "source", "label": Path(source_file).name}
+            )
         for test_file in test_files:
-            nodes.append({"id": test_file, "type": "test", "label": Path(test_file).name})
+            nodes.append(
+                {"id": test_file, "type": "test", "label": Path(test_file).name}
+            )
 
         return {"nodes": nodes, "edges": edges}
 
@@ -307,7 +396,11 @@ class Phase11FinalReport(PhaseInterface):
     def _acceptance_status(self) -> str:
         if self._is_test_skipped():
             return "Skipped"
-        return "Passed" if self.context.test_total > 0 and self.context.test_failed == 0 else "Failed"
+        return (
+            "Passed"
+            if self.context.test_total > 0 and self.context.test_failed == 0
+            else "Failed"
+        )
 
     def _generate_status_summary(self) -> list:
         """Return markdown lines showing requirement status distribution."""
@@ -317,8 +410,9 @@ class Phase11FinalReport(PhaseInterface):
         for req in reqs:
             req_id = req.get("id", "REQ-???")
             status = self.context.get_requirement_status(req_id)
-            icon = {"VERIFIED": "OK", "FAILED": "FAIL",
-                  "IN_PROGRESS": "WIP"}.get(status, "NEW")
+            icon = {"VERIFIED": "OK", "FAILED": "FAIL", "IN_PROGRESS": "WIP"}.get(
+                status, "NEW"
+            )
             lines.append("- [{}] `{}`: {}".format(icon, req_id, status))
         if summary:
             lines.append("")
@@ -327,9 +421,9 @@ class Phase11FinalReport(PhaseInterface):
         return lines if lines else ["- No status data available"]
 
     def _generate_acceptance_matrix(self) -> List[str]:
-         requirements = self.context.structured_requirements or []
+        requirements = self.context.structured_requirements or []
 
-         lines = [
+        lines = [
             "",
             "## 6. Acceptance Matrix",
             "",
@@ -337,14 +431,18 @@ class Phase11FinalReport(PhaseInterface):
             "|-------------|----------------|-------|--------|",
         ]
 
-         if not requirements:
+        if not requirements:
             lines.append("| (none) | (none) | (none) | Missing |")
             return lines
 
-         graph = self.context.artifact_graph
-         if graph is not None:
+        graph = self.context.artifact_graph
+        if graph is not None:
             try:
-                from devpal.core.schema.artifact_graph import ArtifactType, DependencyType
+                from devpal.core.schema.artifact_graph import (
+                    ArtifactType,
+                    DependencyType,
+                )
+
                 matrix = graph.get_traceability_matrix()
 
                 for requirement in requirements:
@@ -357,10 +455,22 @@ class Phase11FinalReport(PhaseInterface):
                     try:
                         dependents = graph.get_dependents(req_node_id)
                         for node, dep_type in dependents:
-                            if node and dep_type == DependencyType.IMPLEMENTS and node.type == ArtifactType.CODE:
-                                code_files.append(Path(node.path).name if node.path else node.id)
-                            elif node and dep_type == DependencyType.TESTS and node.type == ArtifactType.TEST:
-                                test_files.append(Path(node.path).name if node.path else node.id)
+                            if (
+                                node
+                                and dep_type == DependencyType.IMPLEMENTS
+                                and node.type == ArtifactType.CODE
+                            ):
+                                code_files.append(
+                                    Path(node.path).name if node.path else node.id
+                                )
+                            elif (
+                                node
+                                and dep_type == DependencyType.TESTS
+                                and node.type == ArtifactType.TEST
+                            ):
+                                test_files.append(
+                                    Path(node.path).name if node.path else node.id
+                                )
                     except Exception:
                         pass
 
@@ -369,50 +479,72 @@ class Phase11FinalReport(PhaseInterface):
                     status = self._acceptance_status()
 
                     lines.append(
-                        "| {} {} | {} | {} | {} |".format(req_id, title, implementation, tests, status)
+                        "| {} {} | {} | {} | {} |".format(
+                            req_id, title, implementation, tests, status
+                        )
                     )
 
                 coverage = matrix.get("coverage", {})
                 if coverage:
-                    lines.extend([
-                        "",
-                        "### Coverage Statistics",
-                        "",
-                        "- Requirements with code: {}/{}".format(
-                            coverage.get("requirements_with_code", 0),
-                            matrix.get("total_requirements", len(matrix.get("requirements", [])))
-                        ),
-                        "- Requirements with tests: {}/{}".format(
-                            coverage.get("requirements_with_tests", coverage.get("requirements_with_test", 0)),
-                            matrix.get("total_requirements", len(matrix.get("requirements", [])))
-                        ),
-                        "- Code files: {}".format(len(matrix.get("code_files", []))),
-                    ])
+                    lines.extend(
+                        [
+                            "",
+                            "### Coverage Statistics",
+                            "",
+                            "- Requirements with code: {}/{}".format(
+                                coverage.get("requirements_with_code", 0),
+                                matrix.get(
+                                    "total_requirements",
+                                    len(matrix.get("requirements", [])),
+                                ),
+                            ),
+                            "- Requirements with tests: {}/{}".format(
+                                coverage.get(
+                                    "requirements_with_tests",
+                                    coverage.get("requirements_with_test", 0),
+                                ),
+                                matrix.get(
+                                    "total_requirements",
+                                    len(matrix.get("requirements", [])),
+                                ),
+                            ),
+                            "- Code files: {}".format(
+                                len(matrix.get("code_files", []))
+                            ),
+                        ]
+                    )
 
                 return lines
             except Exception as e:
                 self.log("  [WARN] ArtifactGraph traceability failed: {}".format(e))
 
-         source_files = self._relative_files(self._source_file_patterns())
-         test_files = self._relative_files(self._test_file_patterns())
-         status = self._acceptance_status()
+        source_files = self._relative_files(self._source_file_patterns())
+        test_files = self._relative_files(self._test_file_patterns())
+        status = self._acceptance_status()
 
-         implementation = ", ".join(source_files) if source_files else "(none)"
-         tests = ", ".join(test_files) if test_files else "(none)"
-         for requirement in requirements:
+        implementation = ", ".join(source_files) if source_files else "(none)"
+        tests = ", ".join(test_files) if test_files else "(none)"
+        for requirement in requirements:
             req_id = str(requirement.get("id", "REQ-UNKNOWN"))
             title = str(requirement.get("title", req_id))
             lines.append(
-                "| {} {} | {} | {} | {} |".format(req_id, title, implementation, tests, status)
+                "| {} {} | {} | {} | {} |".format(
+                    req_id, title, implementation, tests, status
+                )
             )
-         return lines
-
+        return lines
 
     def _source_file_patterns(self) -> List[str]:
         language = getattr(self.context, "language", "cpp")
         project_type = getattr(self.context, "project_type", "")
         if language == "cpp" or self.context.is_cpp:
-            return ["src/*.cpp", "src/*.cc", "src/*.cxx", "include/*.h", "include/*.hpp"]
+            return [
+                "src/*.cpp",
+                "src/*.cc",
+                "src/*.cxx",
+                "include/*.h",
+                "include/*.hpp",
+            ]
         if language == "python":
             return ["src/*.py"]
         if language == "shell" or project_type in {"installer", "tooling"}:
@@ -431,7 +563,10 @@ class Phase11FinalReport(PhaseInterface):
 
     def _language_features(self):
         try:
-            from devpal.core.schema.languages.language_config import get_language_features
+            from devpal.core.schema.languages.language_config import (
+                get_language_features,
+            )
+
             return get_language_features(getattr(self.context, "language", "cpp"))
         except Exception:
             return None
@@ -447,7 +582,10 @@ class Phase11FinalReport(PhaseInterface):
                 ".spec/      # OpenSpec artifacts",
             ]
         if features:
-            return ["{:<11} # {}".format(name + "/", desc) for name, desc in features.project_structure.items()]
+            return [
+                "{:<11} # {}".format(name + "/", desc)
+                for name, desc in features.project_structure.items()
+            ]
         return [
             "src/        # Source files",
             "tests/      # Test files",
@@ -465,7 +603,9 @@ class Phase11FinalReport(PhaseInterface):
         lines.append("- Test framework: {}".format(features.test_framework))
         lines.append("- Build system: {}".format(features.build_system))
         if getattr(self.context, "project_type", "") in {"installer", "tooling"}:
-            lines.append("- Project type: installer/tooling; native build phases are not applicable")
+            lines.append(
+                "- Project type: installer/tooling; native build phases are not applicable"
+            )
         return lines
 
     def _relative_files(self, patterns: List[str]) -> List[str]:
@@ -482,7 +622,11 @@ class Phase11FinalReport(PhaseInterface):
             reqs = self.context.structured_requirements or []
             project_name = self.context.project_name or self.context.project_dir.name
             features = self._language_features()
-            lang = features.language_name if features else ("C++" if self.context.is_cpp else "Python")
+            lang = (
+                features.language_name
+                if features
+                else ("C++" if self.context.is_cpp else "Python")
+            )
             ns = project_name.lower().replace("-", "_").replace(" ", "_")
 
             lines = [
@@ -503,7 +647,9 @@ class Phase11FinalReport(PhaseInterface):
                 title = req.get("title", "")
                 priority = req.get("priority", "P1")
                 status = req.get("status", "PROPOSED")
-                lines.append("### {} {} [{}] [{}]".format(req_id, title, priority, status))
+                lines.append(
+                    "### {} {} [{}] [{}]".format(req_id, title, priority, status)
+                )
                 desc = req.get("description", "")
                 if desc:
                     lines.append("")
@@ -538,7 +684,9 @@ class Phase11FinalReport(PhaseInterface):
                 "",
                 "## Test Results",
                 "",
-                "- Status: {}".format("skipped" if self._is_test_skipped() else "completed"),
+                "- Status: {}".format(
+                    "skipped" if self._is_test_skipped() else "completed"
+                ),
                 "- Summary: {}".format(self._test_summary()),
                 "",
             ]
