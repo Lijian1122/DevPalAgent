@@ -1901,7 +1901,421 @@ python -m pytest tests/openspec/ tests/e2e/
 
 ---
 
-**文档版本**：v2.0（增加多LLM支持）  
+## 11. 后续规划（基于外部建议）
+
+### 11.1 背景和动机
+
+**外部建议来源**（TEST20260516.md）：
+1. **LLM-as-a-Judge**：增加 Critique Phase，用 LLM 评审代码质量、架构合理性
+2. **OpenSpec Changes 完善**：补齐 proposal/changes 目录自动生成，实现"提 MR"能力
+3. **Self-Correction 增强**：从简单 Retry 升级到基于 Traceability 的根因分析
+
+**问题分析**：
+- 当前验证是**规则驱动**（编译/测试通过），缺少**LLM 驱动的质量评估**
+- OpenSpec Changes 代码存在但未执行，导致项目像"单人工具"而非"团队协作平台"
+- Self-Healing 只修复表面症状，无根本原因分析和学习机制
+
+**面试价值**：
+- LLM-as-a-Judge 是 Agent Evaluation 的皇冠明珠，展示对评估体系的深度理解
+- OpenSpec Changes 证明适配真实企业研发流程（Proposal→Approval→Apply→Validation）
+- 根因分析展示 Self-Correction 的智能化水平
+
+---
+
+### 11.2 P1+：LLM-as-a-Judge Critique Phase（2-3天）
+
+**目标**：在 Phase 9/10 后增加独立的 Critique Phase，用 LLM 评审代码质量
+
+**优先级**：P1+（高优先级，面试核心亮点）
+
+#### 设计方案
+
+**Phase 9.5: Critique Phase**
+
+**位置**：在 Phase 9（Quality Gate）和 Phase 10（Run Tests）之间插入
+
+**评审维度**（5个）：
+1. **代码质量**（Readability）：命名规范性、注释充分性、代码结构清晰度
+2. **架构合理性**（Architecture）：设计模式使用、模块职责划分、依赖关系合理性
+3. **安全性**（Security）：内存泄漏风险、输入验证、权限控制
+4. **性能**（Performance）：算法复杂度、资源使用效率、潜在瓶颈
+5. **可维护性**（Maintainability）：代码复杂度、测试覆盖度、文档完整性
+
+**输出格式**：
+```json
+{
+  "overall_score": 85,
+  "dimensions": {
+    "readability": {"score": 90, "issues": [...], "suggestions": [...]},
+    "architecture": {"score": 80, "issues": [...], "suggestions": [...]},
+    "security": {"score": 85, "issues": [...], "suggestions": [...]},
+    "performance": {"score": 88, "issues": [...], "suggestions": [...]},
+    "maintainability": {"score": 82, "issues": [...], "suggestions": [...]}
+  },
+  "critical_issues": [...],
+  "recommendations": [...]
+}
+```
+
+#### 实施步骤
+
+**Task 1: 创建 Critique Phase 模块**（1天）
+- 新增文件：`devpal/core/openspec_phases/phase9_5_critique.py`
+- 实现 `Phase9_5Critique` 类
+- 定义评审维度和评分标准（0-100分）
+
+**Task 2: 实现 LLM 评审逻辑**（1天）
+- 为每个维度设计 LLM prompt
+- 调用 LLM 生成评审报告
+- 解析 LLM 输出，提取评分和建议
+- 使用 Prompt Caching 缓存代码内容
+
+**Task 3: 生成 Critique 报告**（0.5天）
+- 输出 `docs/critique_report.md`
+- 包含：总分、各维度评分、具体问题、改进建议
+- 集成到 final_report.md
+
+**Task 4: 集成到 Enhanced Scheduler**（0.5天）
+- 在 Phase 9 和 Phase 10 之间插入 Phase 9.5
+- 配置可选执行（默认开启）
+- 添加配置开关：`enable_critique_phase`
+
+#### Prompt 设计示例
+
+```python
+CRITIQUE_PROMPT = ""
+你是一位资深代码审查专家。请评审以下代码的质量：
+
+**评审维度**：
+1. 代码可读性（0-100分）
+2. 架构合理性（0-100分）
+3. 安全性（0-100分）
+4. 性能（0-100分）
+5. 可维护性（0-100分）
+
+**代码文件**：{file_path}
+
+**代码内容**：
+```{language}
+{code_content}
+```
+
+**需求上下文**：
+{requirements_summary}
+
+**技术设计**：
+{tech_design_summary}
+
+**输出格式**：JSON（包含 overall_score, dimensions, critical_issues, recommendations）
+
+**评审重点**：
+- 是否有内存泄漏风险？
+- 是否符合 Google C++ Style Guide？
+- 架构设计是否合理？
+- 性能是否有优化空间？
+""
+```
+
+#### 验收标准
+
+```bash
+python test_simple.py
+
+# 验证：
+# 1. docs/critique_report.md 存在
+# 2. 报告包含 5 个维度的评分
+# 3. 每个维度有具体问题和改进建议
+# 4. final_report.md 引用 critique 结果
+# 5. overall_score 在 0-100 之间
+```
+#### 关键文件
+
+- 新增：`devpal/core/openspec_phases/phase9_5_critique.py`
+- 修改：`devpal/core/openspec_phases/enhanced_scheduler.py`（插入 Phase 9.5）
+- 修改：`devpal/core/openspec_phases/phase11_final_report.py`（引用 critique）
+
+#### 面试价值
+
+**展示点**：
+1. **LLM Evaluation 深度理解**：不仅用 LLM 生成代码，还用 LLM 评审代码
+2. **多维度质量评估**：5 个维度全面覆盖代码质量
+3. **成本优化**：使用 Prompt Caching 缓存代码内容，降低评审成本
+4. **可配置性**：提供开关，允许禁用 Critique Phase
+
+**面试话术**：
+> "DevPalAgent 不仅有规则驱动的验证（编译/测试），还有 LLM-as-a-Judge 的质量评审。Phase 9.5 Critique 用 Claude 评审代码的 5 个维度：可读性、架构、安全、性能、可维护性。这展示了我对 Agent Evaluation 的深度理解，这是 Agent 领域的皇冠明珠。"
+
+---
+
+### 11.3 P1：OpenSpec Change 完整集成（1-2天）
+
+**目标**：让 OpenSpec Changes 真正工作，生成完整的 change 目录结构
+
+**优先级**：P1（已有代码但未执行，快速补齐）
+
+#### 当前问题
+
+- Phase 1 有 `_generate_change_directory()` 代码但未执行
+- 条件检查 `if not delta["changed"]` 可能导致提前返回
+- 实际文件系统中找不到 `openspec/changes/` 目录
+
+#### 实施步骤
+
+**Task 1: 调试 Phase 1 变更目录生成**（0.5天）
+- 文件：`devpal/core/openspec_phases/phase1_parse_requirements.py`
+- 检查为什么 `_generate_change_directory()` 未执行
+- 确保 `openspec/changes/{change-id}/` 目录正确创建
+- 验证 proposal.md / specs/spec.md / tasks.md 生成
+
+**Task 2: Phase 3 输出 design.md**（0.5天）
+- 文件：`devpal/core/openspec_phases/phase3_technical_design.py`
+- 在技术设计生成后，写入 `openspec/changes/{change-id}/design.md`
+- 从 `context.current_change_id` 获取 change-id
+
+**Task 3: Phase 4 读取 change artifacts**（0.5天）
+- 文件：`devpal/core/openspec_phases/phase4_generate_code.py`
+- 读取 `openspec/changes/{change-id}/specs/spec.md` 作为上下文
+- 读取 `openspec/changes/{change-id}/tasks.md` 作为任务清单
+- 在 LLM prompt 中引用这些内容
+
+**Task 4: Phase 11 引用 change-id 和文件路径**（0.5天）
+- 文件：`devpal/core/openspec_phases/phase11_final_report.py`
+- 在 final_report.md 中显示 change-id
+- 列出 `openspec/changes/{change-id}/` 下的所有文件
+- 添加 "Change Artifacts" 章节
+
+#### 验收标准
+
+```bash
+python test_simple.py
+
+# 验证：
+# 1. openspec/changes/feat-xxx-20260523_xxx/ 目录存在
+# 2. proposal.md / specs/spec.md / tasks.md / design.md 文件完整
+# 3. spec.md 采用 ADDED/MODIFIED/REMOVED 格式
+# 4. final_report.md 显示 change-id 和文件列表
+```
+
+#### 面试价值
+
+**展示点**：
+1. **OpenSpec 规范遵循**：完整实现 proposal/specs/tasks/design 结构
+2. **团队协作能力**：不是"单人工具"，而是"团队协作平台"
+3. **变更追踪**：change-id 生成 + ADDED/MODIFIED/REMOVED 格式
+4. **企业研发流程**：Proposal→Human Approval→Patch Apply→Validation 闭环
+
+**面试话术**：
+> "DevPalAgent 实现了 OpenSpec Changes 模型，每次运行生成独立的 change 目录，包含 proposal、specs、tasks、design。这证明它不是单人开发工具，而是适配真实企业研发流程的团队协作平台。"
+
+---
+
+### 11.4 P2：Self-Healing 根因分析增强（1-2天）
+
+**目标**：从简单 Retry 升级到基于 Traceability 的根因分析
+
+**优先级**：P2（增强现有能力，非紧急）
+
+#### 当前问题
+
+- TestSelfHealer 只修复表面症状（编译错误、测试失败）
+- 无根本原因分析（为什么会出现这个错误？）
+- 无学习机制（相同错误重复出现）
+
+#### 设计方案
+
+**根因分析引擎**
+
+**分析维度**：
+1. **错误分类**：语法错误 → 代码生成问题；逻辑错误 → 需求理解问题；环境错误 → 配置问题
+2. **追溯链路**：错误代码 → 生成该代码的 Phase → 使用的 Prompt → 引用的需求
+3. **影响范围**：使用 ArtifactGraph 分析影响的其他文件，识别可能受影响的测试用例
+
+#### 实施步骤
+
+**Task 1: 创建根因分析模块**（0.5天）
+- 新增文件：`devpal/core/root_cause_analyzer.py`
+- 实现错误分类逻辑
+- 实现追溯链路分析
+
+**Task 2: 集成到 TestSelfHealer**（0.5天）
+- 在修复前先进行根因分析
+- 根据根因选择修复策略
+- 记录分析结果到 metadata
+
+**Task 3: 实现修复历史学习**（0.5天）
+- 新增文件：`devpal/core/healing_history.py`
+- 记录：错误类型 → 修复策略 → 成功率
+- 对相似错误快速应用已知修复
+
+**Task 4: 生成根因分析报告**（0.5天）
+- 输出 `docs/root_cause_analysis.md`
+- 包含：错误分类、追溯链路、修复策略、学习记录
+
+#### 验收标准
+
+```bash
+python test_simple.py
+
+# 验证：
+# 1. 编译/测试失败时生成 root_cause_analysis.md
+# 2. 报告包含错误分类和追溯链路
+# 3. 相同错误第二次出现时快速修复
+# 4. final_report.md 显示根因分析统计
+```
+
+#### 面试价值
+
+**展示点**：
+1. **智能自愈**：不是简单 Retry，而是基于 Traceability 的根因分析
+2. **学习机制**：记录修复历史，对相似错误快速应用已知修复
+3. **可观测性**：生成根因分析报告，透明化修复过程
+
+**面试话术**：
+> "DevPalAgent 的 Self-Healing 不是简单 Retry，而是基于 Traceability 的根因分析。它会追溯错误代码 → Phase → Prompt → 需求，识别根本原因，并记录修复历史用于学习。这展示了 Self-Correction 的智能化水平。"
+
+---
+
+### 11.5 后续中长期规划
+
+#### P2：M3 Archive + Traceability（3-4天）
+
+**目标**：实现需求生命周期闭环
+
+**功能**：
+1. `archive_change(change_id)` 命令
+2. Delta merge 到 main spec
+3. ArtifactGraph 扩展（introduced_by/archived_at）
+4. Coverage matrix 生成
+
+#### P2：多维度质量评分系统（2-3天）
+
+**目标**：建立完整的质量评分体系
+
+**评分维度**：
+- Correctness（功能正确性）：0-100
+- Readability（代码可读性）：0-100
+- Maintainability（可维护性）：0-100
+- Performance（性能）：0-100
+- Security（安全性）：0-100
+- Test Coverage（测试覆盖率）：0-100
+
+**输出**：
+- Quality Scorecard（质量记分卡）
+- 趋势分析（多次运行的质量变化）
+- 对标基准（与行业标准对比）
+
+#### P2：LanguagePlugin 主流程化（3-5天）
+
+**目标**：新增语言只需实现插件接口
+
+**功能**：
+1. 统一 LanguagePlugin 接口
+2. Phase 2/4/9/10/11 迁移到插件
+3. 移除硬编码语言分支
+
+#### P3：EventBus 主流程接入（1-2天）
+
+**目标**：提升可观测性
+
+**功能**：
+1. 定义核心事件（RequirementParsed/PhaseStarted/FileGenerated）
+2. Phase 1-11 发布事件
+3. 输出 `.spec/events.jsonl`
+
+#### P4：AI-agnostic 协作模式（5-7天）
+
+**目标**：服务 Claude Code / Cursor / Cline
+
+**功能**：
+1. CLAUDE.md 模板完善
+2. changes 目录文档化
+3. propose-only / apply-only 模式
+4. Cursor/Cline 集成文档
+
+---
+
+### 11.6 更新后的时间线
+
+#### Week 3（Day 7-9）✅ **已完成 + 新增**
+
+**Day 7: OpenSpec Change 完整集成**（1-2天）
+- 调试 Phase 1 变更目录生成
+- Phase 3 输出 design.md
+- Phase 4 读取 change artifacts
+- Phase 11 引用 change-id
+
+**Day 8-9: LLM-as-a-Judge Critique Phase**（2-3天）
+- 创建 Critique Phase 模块
+- 实现 LLM 评审逻辑
+- 生成 Critique 报告
+- 集成到 Enhanced Scheduler
+
+#### Week 4（Day 10-12）
+
+**Day 10-11: Self-Healing 根因分析**（1-2天）
+- 创建根因分析模块
+- 集成到 TestSelfHealer
+- 实现修复历史学习
+- 生成根因分析报告
+
+**Day 12: 面试准备**（1天）
+- 演示脚本准备（5 个演示场景）
+- 面试 Q&A 文档（Critique/OpenSpec Change/根因分析）
+- README 架构图更新
+
+#### Week 5+（后续）
+
+- M3 Archive + Traceability
+- 多维度质量评分系统
+- LanguagePlugin 主流程化
+- EventBus 主流程接入
+- AI-agnostic 协作模式
+
+---
+
+### 11.7 更新后的成功指标
+
+| 指标 | 当前 | 目标 | 验证方式 |
+|------|------|------|----------|
+| OpenSpec Change 覆盖率 | 0% | 100% | 每次运行生成 change 目录 |
+| LLM 评审维度 | 0 | 5 | critique_report.md 包含 5 个维度 |
+| Critique 评分准确性 | N/A | >80% | 人工验证评分合理性 |
+| 根因分析准确率 | N/A | >80% | 人工验证分析结果 |
+| 自愈成功率 | ~60% | >80% | 统计修复成功次数 |
+| 面试准备完成度 | 80% | 100% | 7 个演示脚本可运行 |
+
+---
+
+### 11.8 面试故事完整性（更新）
+
+**已具备的核心能力**（8/8）：
+- ✅ Agent Workflow Orchestration（11 阶段 + Skills）
+- ✅ Tool Use（Phase 4 tool loop）
+- ✅ State Management（OpenSpecContext + checkpoint）
+- ✅ Prompt Engineering（PromptEngine + Caching）
+- ✅ Multi-Agent Collaboration（Skills 系统）
+- ✅ Evaluation（Phase 9/10/11 + **Critique Phase**）
+- ✅ Memory System（三层架构）
+- ✅ Reliability（retry/checkpoint/self-healing + **根因分析**）
+
+**新增亮点**：
+- 🌟 **LLM-as-a-Judge**：5 维度代码质量评审（皇冠明珠）
+- 🌟 **OpenSpec Changes**：完整的变更管理流程（团队协作平台）
+- 🌟 **根因分析**：基于 Traceability 的智能自愈（非简单 Retry）
+
+**面试演示更新**（7 个）：
+1. **Demo 1**：端到端生成（展示 OpenSpec Change）
+2. **Demo 2**：Critique Phase（展示 LLM 评审）
+3. **Demo 3**：Self-Healing（展示根因分析）
+4. **Demo 4**：Skills 系统（展示意图识别）
+5. **Demo 5**：Prompt Caching（展示成本优化）
+6. **Demo 6**：多LLM Provider（展示 Fallback）
+7. **Demo 7**：Quality Gate（展示四层验证）
+
+---
+
+**文档版本**：v3.0（增加 LLM-as-a-Judge + OpenSpec Change + 根因分析）  
 **创建日期**：2026-05-22  
-**预计完成**：2026-05-31（9 天）  
+**更新日期**：2026-05-23  
+**预计完成**：2026-06-05（2 周）  
 **负责人**：DevPalAgent Team
