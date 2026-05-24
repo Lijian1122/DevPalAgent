@@ -5,9 +5,13 @@
 """
 
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from .models import ErrorContext, ErrorType, RootCause
+
+if TYPE_CHECKING:
+    from ..openspec_phases.base import OpenSpecContext
+    from ..schema.artifact_graph import ArtifactGraph
 
 
 class RootCauseAnalyzer:
