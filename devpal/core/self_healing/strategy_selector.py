@@ -5,9 +5,12 @@
 """
 
 import logging
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from .models import HealingStrategy, RootCause, StrategyType
+
+if TYPE_CHECKING:
+    from .healing_history import HealingHistory
 
 
 class HealingStrategySelector:
