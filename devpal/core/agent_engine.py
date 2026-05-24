@@ -4,7 +4,6 @@ Agent Core Engine - Plan-Act-Reflect Architecture
 Supports Plan-Act-Reflect loop, 3-tier memory system, multi-round tool calls
 """
 
-import os
 import re
 import sys
 from dataclasses import dataclass
@@ -23,133 +22,11 @@ from devpal.skills.builtin import (
 )
 from devpal.tools.registry import ToolRegistry, registry
 
-from .compiler_detector import find_visual_studio_compiler
 from .openspec_workflow import OpenSpecWorkflowExecutor
 from .planner import Planner
 from .reflector import Reflector
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-
-def find_visual_studio_compiler() -> Tuple[bool, str, Dict[str, str]]:
-    """规范化查找 Visual Studio MSVC 编译器
-
-    使用 vswhere 工具查找最新的 Visual Studio 安装路径，
-    然后定位 vcvarsall.bat 并获取编译器环境变量。
-
-    Returns:
-        (found: bool, message: str, env: dict)
-        - found: 是否找到可用编译器
-        - message: 状态信息
-        - env: 编译器环境变量字典（可用于 subprocess env）
-    """
-    if os.name != "nt":
-        return False, "非 Windows 平台", {}
-
-    import subprocess
-
-    # 常见 vswhere 路径
-    vswhere_paths = [
-        os.path.join(
-            os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"),
-            "Microsoft Visual Studio",
-            "Installer",
-            "vswhere.exe",
-        ),
-        os.path.join(
-            os.environ.get("ProgramFiles", "C:\\Program Files"),
-            "Microsoft Visual Studio",
-            "Installer",
-            "vswhere.exe",
-        ),
-    ]
-
-    vswhere_path = None
-    for path in vswhere_paths:
-        if os.path.exists(path):
-            vswhere_path = path
-            break
-
-    if not vswhere_path:
-        return False, "未找到 vswhere.exe，请安装 Visual Studio 2017 或更高版本", {}
-
-    # 使用 vswhere 查找最新的 VS 安装
-    try:
-        result = subprocess.run(
-            [
-                vswhere_path,
-                "-latest",
-                "-property",
-                "installationPath",
-                "-products",
-                "*",
-                "-requires",
-                "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        vs_install_path = result.stdout.strip()
-        if not vs_install_path or result.returncode != 0:
-            return False, "未找到包含 C++ 工具的 Visual Studio 安装", {}
-    except Exception as e:
-        return False, f"vswhere 执行失败: {str(e)}", {}
-
-    # 查找 vcvarsall.bat
-    vcvarsall_candidates = [
-        os.path.join(vs_install_path, "VC", "Auxiliary", "Build", "vcvarsall.bat"),
-        os.path.join(vs_install_path, "VC", "Auxiliary", "Build", "vcvars64.bat"),
-        os.path.join(vs_install_path, "Common7", "Tools", "VsDevCmd.bat"),
-    ]
-
-    vcvars_path = None
-    for candidate in vcvarsall_candidates:
-        if os.path.exists(candidate):
-            vcvars_path = candidate
-            break
-
-    if not vcvars_path:
-        return False, f"未找到 vcvarsall.bat，请检查 VS 安装: {vs_install_path}", {}
-
-    # 执行 vcvarsall 并捕获环境变量
-    try:
-        # 使用 set 命令输出所有环境变量，然后解析
-        arch = "x64"  # 默认使用 x64
-        result = subprocess.run(
-            f'cmd /c ""{vcvars_path}" {arch} && set"',
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        if result.returncode != 0:
-            return False, f"vcvarsall.bat 执行失败: {result.stderr[:200]}", {}
-
-        # 解析环境变量
-        new_env = dict(os.environ)
-        for line in result.stdout.splitlines():
-            if "=" in line:
-                key, value = line.split("=", 1)
-                new_env[key.upper()] = value  # Windows 环境变量不区分大小写
-
-        # 验证 cl.exe 是否在 PATH 中
-        path_env = new_env.get("PATH", "")
-        cl_found = False
-        for path_dir in path_env.split(os.pathsep):
-            cl_path = os.path.join(path_dir, "cl.exe")
-            if os.path.exists(cl_path):
-                cl_found = True
-                break
-
-        if cl_found:
-            vs_version = os.path.basename(vs_install_path)
-            return True, f"MSVC 编译器已就绪 (VS {vs_version}, {arch})", new_env
-        else:
-            return False, "vcvarsall 已执行，但 PATH 中未找到 cl.exe", {}
-
-    except Exception as e:
-        return False, f"配置 MSVC 环境失败: {str(e)}", {}
 
 
 def check_mingw_compiler() -> Tuple[bool, str]:
@@ -888,8 +765,6 @@ REMEMBER:
                 print(f" Best confidence: {confidence:.2f} (< 0.8)")
                 print(f"{'=' * 60}\n")
 
-        enhanced_system_prompt = self._build_system_prompt(user_query)
-
         if self.config.verbose:
             print(f"\n{'=' * 60}")
             print(f" DevPal received task: {user_query}")
@@ -963,7 +838,6 @@ REMEMBER:
             self.message_history.add_user(user_query)
 
             current_step_idx = 0
-            final_result = ""
             all_tool_results = []  # Collect all tool results for final answer
 
         for iteration in range(self.config.max_iterations):

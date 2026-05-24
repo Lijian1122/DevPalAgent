@@ -691,7 +691,7 @@ class Phase10RunTests(PhaseInterface):
 """
 
         # 测试输出日志（截取前30行）
-        output_lines = [l.strip() for l in output.split("\n") if l.strip()][:30]
+        output_lines = [line.strip() for line in output.split("\n") if line.strip()][:30]
         if output_lines:
             section += "### 测试输出日志\n\n"
             section += "```\n"

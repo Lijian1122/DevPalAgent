@@ -3,7 +3,7 @@
 Reflector
 Post-execution reflection, error analysis, and experience capture
 """
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from dataclasses import dataclass
 
 
@@ -314,7 +314,7 @@ class Reflector:
                 lines.append(f"  {i}. {lesson}")
 
         if reflection.need_plan_adjustment:
-            lines.append(f"\n[!] Plan adjustment needed")
+            lines.append("\n[!] Plan adjustment needed")
             lines.append(f"  Suggestion: {reflection.adjustment_suggestion}")
 
         lines.append("=" * 50 + "\n")

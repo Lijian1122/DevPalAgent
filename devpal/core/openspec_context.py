@@ -24,28 +24,27 @@ OpenSpec 统一上下文管理器 - Phase 4: 闭环集成
     所有组件响应 → 状态自动更新
 """
 
-from typing import Any, Dict, List, Optional, Callable, Union
-from dataclasses import dataclass, field
-from pathlib import Path
-import json
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from devpal.core.schema import (
+    ArtifactGraph,
     EventBus,
     EventBusAdapter,
-    ArtifactGraph,
+    SpecContext,
     SpecEngine,
     ValidationEngine,
     WorkflowEngine,
-    SpecContext,
 )
-
 from devpal.core.schema.spec import SpecStateManager
 
 
 @dataclass
 class OpenSpecConfig:
     """OpenSpec 配置"""
+
     workspace: Path
     spec_dir: Optional[Path] = None
     enable_event_bus: bool = True
@@ -102,11 +101,13 @@ class OpenSpecContext:
         self._spec_state_manager: Optional[SpecStateManager] = None
 
     @classmethod
-    def create(cls,
-               workspace: Union[str, Path],
-               spec_dir: Optional[Union[str, Path]] = None,
-               enable_event_bus: bool = True,
-               auto_initialize: bool = True) -> 'OpenSpecContext':
+    def create(
+        cls,
+        workspace: Union[str, Path],
+        spec_dir: Optional[Union[str, Path]] = None,
+        enable_event_bus: bool = True,
+        auto_initialize: bool = True,
+    ) -> "OpenSpecContext":
         """创建 OpenSpec 上下文
 
         Args:
@@ -156,6 +157,7 @@ class OpenSpecContext:
             self._event_adapter = EventBusAdapter(self._event_bus, "OpenSpecContext")
 
             from devpal.core.schema import set_global_event_bus
+
             set_global_event_bus(self._event_bus)
 
         # 2. SpecStateManager
@@ -289,7 +291,7 @@ class OpenSpecContext:
             metadata={
                 "snapshot_message": message,
                 "created_at": datetime.now().isoformat(),
-            }
+            },
         )
 
         snapshot_id = self.spec_state_manager.create_snapshot(context, message)
@@ -364,28 +366,32 @@ class OpenSpecContext:
 
         # 通过 ArtifactGraph 分析每个变更文件的影响
         for file_path in changed_files:
-            node_id = f"file:{Path(file_path).name}"
-
             # 查找文件关联的需求
             for req_id, req in self.spec_engine.requirements.items():
                 for artifact in req.artifacts:
-                    if artifact.file_path == file_path or file_path in str(artifact.file_path):
-                        result["affected_requirements"].append({
-                            "req_id": req_id,
-                            "title": req.title,
-                            "artifact_id": artifact.artifact_id,
-                        })
+                    if artifact.file_path == file_path or file_path in str(
+                        artifact.file_path
+                    ):
+                        result["affected_requirements"].append(
+                            {
+                                "req_id": req_id,
+                                "title": req.title,
+                                "artifact_id": artifact.artifact_id,
+                            }
+                        )
 
             # 查找受影响的测试（测试依赖于变更文件）
             # （简化实现）
             for test_file in self.workspace.rglob("test_*"):
-                if test_file.suffix in ('.py', '.cpp', '.h'):
-                    content = test_file.read_text(encoding='utf-8', errors='ignore')
+                if test_file.suffix in (".py", ".cpp", ".h"):
+                    content = test_file.read_text(encoding="utf-8", errors="ignore")
                     if Path(file_path).stem in content:
                         result["affected_tests"].append(str(test_file))
 
         # 计算影响分数
-        total_affected = len(result["affected_requirements"]) + len(result["affected_tests"])
+        total_affected = len(result["affected_requirements"]) + len(
+            result["affected_tests"]
+        )
         result["impact_score"] = min(1.0, total_affected / 10.0)
 
         # 生成建议
@@ -397,7 +403,9 @@ class OpenSpecContext:
             result["recommendations"].append("低影响，可快速验证")
 
         if result["affected_requirements"]:
-            result["recommendations"].append(f"需要验证 {len(result['affected_requirements'])} 个需求")
+            result["recommendations"].append(
+                f"需要验证 {len(result['affected_requirements'])} 个需求"
+            )
 
         if self.config.auto_publish_events:
             self.event_adapter.publish_impact_analysis(
@@ -409,8 +417,9 @@ class OpenSpecContext:
 
         return result
 
-    def validate_change(self, content: str, file_path: str,
-                       context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def validate_change(
+        self, content: str, file_path: str, context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """验证变更（使用 ValidationEngine）
 
         这是闭环的质量闸门：变更 → 验证 → 通过/拒绝
@@ -420,8 +429,8 @@ class OpenSpecContext:
             context={
                 "file_path": file_path,
                 "workspace": str(self.workspace),
-                **(context or {})
-            }
+                **(context or {}),
+            },
         )
 
         return {
@@ -433,7 +442,7 @@ class OpenSpecContext:
                     "severity": issue.severity.value,
                     "message": issue.message,
                     "location": issue.location,
-                    "suggestion": issue.suggestion
+                    "suggestion": issue.suggestion,
                 }
                 for issue in validation_result.all_issues
             ],

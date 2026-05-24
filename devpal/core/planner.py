@@ -497,14 +497,6 @@ Return JSON format:
 
     def _generate_plan_with_llm(self, query: str, context: str) -> Plan:
         """Generate detailed plan using LLM"""
-        prompt = f"""
-User requirement: {query}
-
-Context information:
-{context if context else "(no additional context)"}
-
-Please generate a detailed execution plan in JSON format as specified.
-"""
         # TODO: Implement actual LLM call here
         # For now, return heuristic plan but with recommended_skill support
         plan = self._generate_heuristic_plan(query)
