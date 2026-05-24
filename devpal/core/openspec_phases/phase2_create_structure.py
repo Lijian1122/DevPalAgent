@@ -8,7 +8,7 @@ Phase 2: 创建项目目录结构
 import json
 from pathlib import Path
 
-from .base import PhaseInterface, PhaseResult, OpenSpecContext
+from .base import OpenSpecContext, PhaseInterface, PhaseResult
 
 
 class Phase2CreateStructure(PhaseInterface):
@@ -40,14 +40,14 @@ class Phase2CreateStructure(PhaseInterface):
             (project_dir / subdir).mkdir(exist_ok=True)
             self.log(f"  [OK] 创建子目录: {subdir}/")
 
-        requirements_json = project_dir / '.spec' / 'requirements.json'
+        requirements_json = project_dir / ".spec" / "requirements.json"
         requirements_json.write_text(
             json.dumps(
                 {"requirements": self.context.structured_requirements},
                 ensure_ascii=False,
                 indent=2,
             ),
-            encoding='utf-8',
+            encoding="utf-8",
         )
         self.context.generated_files.append(requirements_json)
         self.log(f"  [OK] 写入结构化需求: {requirements_json}")
@@ -56,26 +56,47 @@ class Phase2CreateStructure(PhaseInterface):
             "项目结构创建成功",
             project_dir=str(project_dir),
             project_name=project_name,
-            subdirs=subdirs
+            subdirs=subdirs,
         )
 
     def _get_project_subdirs(self) -> list:
-        project_type = getattr(self.context, 'project_type', '')
-        language = getattr(self.context, 'language', 'cpp')
+        """获取项目子目录列表（使用 LanguagePlugin）"""
+        project_type = getattr(self.context, "project_type", "")
+        language = getattr(self.context, "language", "cpp")
 
-        if project_type in {'installer', 'tooling'}:
-            return ['scripts', 'tests', 'docs', '.spec']
+        # 特殊项目类型的目录结构
+        if project_type in {"installer", "tooling"}:
+            return ["scripts", "tests", "docs", ".spec"]
 
+        # 使用 LanguagePlugin 获取目录结构
         try:
-            from devpal.core.schema.languages.language_config import get_language_features
-            subdirs = list(get_language_features(language).project_structure.keys())
-        except Exception:
-            subdirs = ['src', 'tests', 'include', 'docs'] if self.context.is_cpp else ['src', 'tests', 'docs', 'data']
+            from devpal.core.schema.languages.cpp_plugin import CppLanguagePlugin
+            from devpal.core.schema.languages.python_plugin import PythonLanguagePlugin
+            from devpal.core.schema.languages.shell_plugin import ShellLanguagePlugin
 
-        if '.spec' not in subdirs:
-            subdirs.append('.spec')
-        if not self.context.is_cpp:
-            subdirs = [subdir for subdir in subdirs if subdir != 'include']
+            # 根据语言选择插件
+            if language == "python":
+                plugin = PythonLanguagePlugin()
+            elif language == "shell":
+                plugin = ShellLanguagePlugin()
+            else:  # cpp
+                plugin = CppLanguagePlugin()
+
+            subdirs = list(plugin.get_project_structure().keys())
+        except Exception as e:
+            # 降级到默认结构
+            self.log(f"[WARNING] Failed to get structure from plugin: {e}")
+            if language == "cpp":
+                subdirs = ["src", "tests", "include", "docs"]
+            elif language == "python":
+                subdirs = ["src", "tests", "docs", "data"]
+            else:  # shell
+                subdirs = ["scripts", "tests", "docs", "lib"]
+
+        # 确保 .spec 目录存在
+        if ".spec" not in subdirs:
+            subdirs.append(".spec")
+
         return subdirs
 
     def _infer_project_name(self) -> str:
@@ -84,13 +105,13 @@ class Phase2CreateStructure(PhaseInterface):
         project_name = req_file_path.stem
 
         # 清理常见后缀
-        if project_name.endswith('_requirements'):
-            project_name = project_name.replace('_requirements', '')
-        if project_name.startswith('req_'):
-            project_name = project_name.replace('req_', '')
+        if project_name.endswith("_requirements"):
+            project_name = project_name.replace("_requirements", "")
+        if project_name.startswith("req_"):
+            project_name = project_name.replace("req_", "")
 
         # C++ 项目前缀
-        if self.context.is_cpp and not project_name.startswith('cpp_'):
-            project_name = f'cpp_{project_name}'
+        if self.context.is_cpp and not project_name.startswith("cpp_"):
+            project_name = f"cpp_{project_name}"
 
         return project_name
