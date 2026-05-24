@@ -294,6 +294,69 @@ class LanguagePlugin(abc.ABC):
         """检测代码异味（可选实现）"""
         return []
 
+    # ======================
+    # Phase 集成方法（任务 2 新增）
+    # ================================
+
+    @abc.abstractmethod
+    def get_required_files_template(self) -> Dict[str, str]:
+        """
+     获取必需文件模板（Phase 4 使用）
+        
+        Returns:
+            Dict[文件名, 文件内容模板]
+            例如：{"main.py": "# Python main entry", "requirements.txt": ""}
+        """
+        pass
+
+    @abc.abstractmethod
+    def get_test_command(self, project_dir: Path) -> List[str]:
+        """
+      获取测试命令（Phase 10 使用）
+      
+        Args:
+            project_dir: 项目根目录
+        
+        Returns:
+          测试命令列表，例如：["python", "-m", "pytest", "tests/", "-v"]
+        """
+        pass
+
+    @abc.abstractmethod
+    def get_build_command(self, project_dir: Path) -> List[str]:
+        """
+        获取构建命令（Phase 10 使用）
+        
+        Args:
+            project_dir: 项目根目录
+        
+        Returns:
+        构建命令列表，例如：["cmake", "--build", "build"]
+        """
+    pass
+
+    @abc.abstractmethod
+    def get_quality_checks(self) -> List[Callable]:
+        """
+        获取质量检查函数列表（Phase 9 使用）
+        
+        Returns:
+            质量检查函数列表，每个函数签名为：
+            func(content: str, context: Dict) -> List[ValidationIssue]
+        """
+        pass
+
+    @abc.abstractmethod
+    def get_project_structure(self) -> Dict[str, List[str]]:
+        """
+        获取项目目录结构（Phase 2 使用）
+        
+        Returns:
+          Dict[目录名, 子目录列表]
+        例如：{"src": [], "tests": [], "docs": []}
+        """
+        pass
+
 
 class LanguagePluginManager:
     """语言插件管理器"""

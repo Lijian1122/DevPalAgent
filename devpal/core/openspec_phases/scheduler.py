@@ -51,8 +51,8 @@ class OpenSpecPhaseScheduler:
 
         # 检测编程语言
         content = Path(requirements_file).read_text(encoding='utf-8', errors='ignore')
-        self.context.is_cpp = "c++" in content.lower() or "cpp" in content.lower()
-        self.context.language = "cpp" if self.context.is_cpp else "python"
+        is_cpp_project = "c++" in content.lower() or "cpp" in content.lower()
+        self.context.language = "cpp" if is_cpp_project else "python"
 
     def run_all_phases(self) -> Dict[str, any]:
         """

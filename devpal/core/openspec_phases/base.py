@@ -24,6 +24,7 @@ def _json_safe(value: Any) -> Any:
 @dataclass
 class PhaseResult:
     """阶段执行结果"""
+
     success: bool
     message: str = ""
     data: Dict[str, Any] = field(default_factory=dict)
@@ -31,11 +32,11 @@ class PhaseResult:
     warnings: List[str] = field(default_factory=list)
 
     @classmethod
-    def ok(cls, message: str = "", **kwargs) -> 'PhaseResult':
+    def ok(cls, message: str = "", **kwargs) -> "PhaseResult":
         return cls(success=True, message=message, data=kwargs)
 
     @classmethod
-    def fail(cls, message: str, errors: List[str] = None) -> 'PhaseResult':
+    def fail(cls, message: str, errors: List[str] = None) -> "PhaseResult":
         return cls(success=False, message=message, errors=errors or [])
 
     def to_dict(self) -> Dict[str, Any]:
@@ -48,7 +49,7 @@ class PhaseResult:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'PhaseResult':
+    def from_dict(cls, data: Dict[str, Any]) -> "PhaseResult":
         return cls(
             success=bool(data.get("success", False)),
             message=str(data.get("message", "")),
@@ -61,20 +62,24 @@ class PhaseResult:
 @dataclass
 class OpenSpecContext:
     """OpenSpec 全局上下文"""
+
     project_dir: Path
     requirements_file: Path
     requirements_content: str = ""
     structured_requirements: List[Dict[str, Any]] = field(default_factory=list)
     requirements_delta: Dict[str, Any] = field(default_factory=dict)
     artifact_graph_data: Dict[str, Any] = field(default_factory=dict)
-    artifact_graph: Any = field(default=None, repr=False)  # ArtifactGraph instance, not serialized
+    artifact_graph: Any = field(
+        default=None, repr=False
+    )  # ArtifactGraph instance, not serialized
 
     # 项目配置
     project_name: str = ""
-    language: str = "cpp"  # cpp / python
-    is_cpp: bool = True
+    language: str = "cpp"  # cpp / python / shell
     project_type: str = ""  # 项目类型：installer, cli_tool, library, application 等
-    features: List[str] = field(default_factory=list)  # 项目特性：install, auth, database 等
+    features: List[str] = field(
+        default_factory=list
+    )  # 项目特性：install, auth, database 等
 
     # 各阶段输出
     phase_results: Dict[int, PhaseResult] = field(default_factory=dict)
@@ -144,6 +149,11 @@ class OpenSpecContext:
             summary[status] = summary.get(status, 0) + 1
         return summary
 
+    @property
+    def is_cpp(self) -> bool:
+        """向后兼容的属性：判断是否为 C++ 项目"""
+        return self.language == "cpp"
+
     def to_checkpoint_dict(self) -> Dict[str, Any]:
         return {
             "requirements_file": self.requirements_file.as_posix(),
@@ -154,12 +164,10 @@ class OpenSpecContext:
             "artifact_graph_data": _json_safe(self.artifact_graph_data),
             "project_name": self.project_name,
             "language": self.language,
-            "is_cpp": self.is_cpp,
             "project_type": self.project_type,
             "features": list(self.features),
             "phase_results": {
-                str(num): result.to_dict()
-                for num, result in self.phase_results.items()
+                str(num): result.to_dict() for num, result in self.phase_results.items()
             },
             "generated_files": [path.as_posix() for path in self.generated_files],
             "build_dir": self.build_dir.as_posix() if self.build_dir else None,
@@ -178,7 +186,9 @@ class OpenSpecContext:
             "llm_cache_read_tokens": self.llm_cache_read_tokens,
             "log_file": self.log_file.as_posix() if self.log_file else None,
             "current_change_id": self.current_change_id,
-            "current_change_dir": self.current_change_dir.as_posix() if self.current_change_dir else None,
+            "current_change_dir": self.current_change_dir.as_posix()
+            if self.current_change_dir
+            else None,
             "abort_on_critical_failure": self.abort_on_critical_failure,
             "force_regenerate_code": self.force_regenerate_code,
         }
@@ -186,20 +196,31 @@ class OpenSpecContext:
     def restore_from_checkpoint(self, data: Dict[str, Any]) -> None:
         if not data:
             return
-        self.requirements_file = Path(data.get("requirements_file", self.requirements_file))
+        self.requirements_file = Path(
+            data.get("requirements_file", self.requirements_file)
+        )
         self.project_dir = Path(data.get("project_dir", self.project_dir))
-        self.requirements_content = data.get("requirements_content", self.requirements_content)
-        self.structured_requirements = list(data.get("structured_requirements", self.structured_requirements) or [])
-        self.requirements_delta = dict(data.get("requirements_delta", self.requirements_delta) or {})
-        self.artifact_graph_data = dict(data.get("artifact_graph_data", self.artifact_graph_data) or {})
+        self.requirements_content = data.get(
+            "requirements_content", self.requirements_content
+        )
+        self.structured_requirements = list(
+            data.get("structured_requirements", self.structured_requirements) or []
+        )
+        self.requirements_delta = dict(
+            data.get("requirements_delta", self.requirements_delta) or {}
+        )
+        self.artifact_graph_data = dict(
+            data.get("artifact_graph_data", self.artifact_graph_data) or {}
+        )
         self.project_name = data.get("project_name", self.project_name)
         self.language = data.get("language", self.language)
-        self.is_cpp = bool(data.get("is_cpp", self.is_cpp))
         self.phase_results = {
             int(num): PhaseResult.from_dict(result)
             for num, result in (data.get("phase_results", {}) or {}).items()
         }
-        self.generated_files = [Path(path) for path in data.get("generated_files", []) or []]
+        self.generated_files = [
+            Path(path) for path in data.get("generated_files", []) or []
+        ]
         build_dir = data.get("build_dir")
         self.build_dir = Path(build_dir) if build_dir else self.build_dir
         self.compiler_path = data.get("compiler_path", self.compiler_path)
@@ -208,20 +229,36 @@ class OpenSpecContext:
         self.test_total = int(data.get("test_total", self.test_total) or 0)
         self.test_output = data.get("test_output", self.test_output)
         self.test_docs = list(data.get("test_docs", self.test_docs) or [])
-        self.tech_design_content = data.get("tech_design_content", self.tech_design_content)
-        self.ai_generated_files = [Path(path) for path in data.get("ai_generated_files", []) or []]
-        self.self_heal_attempts = int(data.get("self_heal_attempts", self.self_heal_attempts) or 0)
+        self.tech_design_content = data.get(
+            "tech_design_content", self.tech_design_content
+        )
+        self.ai_generated_files = [
+            Path(path) for path in data.get("ai_generated_files", []) or []
+        ]
+        self.self_heal_attempts = int(
+            data.get("self_heal_attempts", self.self_heal_attempts) or 0
+        )
         self.llm_calls = int(data.get("llm_calls", self.llm_calls) or 0)
-        self.llm_input_tokens = int(data.get("llm_input_tokens", self.llm_input_tokens) or 0)
-        self.llm_output_tokens = int(data.get("llm_output_tokens", self.llm_output_tokens) or 0)
-        self.llm_cache_read_tokens = int(data.get("llm_cache_read_tokens", self.llm_cache_read_tokens) or 0)
+        self.llm_input_tokens = int(
+            data.get("llm_input_tokens", self.llm_input_tokens) or 0
+        )
+        self.llm_output_tokens = int(
+            data.get("llm_output_tokens", self.llm_output_tokens) or 0
+        )
+        self.llm_cache_read_tokens = int(
+            data.get("llm_cache_read_tokens", self.llm_cache_read_tokens) or 0
+        )
         log_file = data.get("log_file")
         self.log_file = Path(log_file) if log_file else self.log_file
         self.current_change_id = data.get("current_change_id")
         change_dir = data.get("current_change_dir")
         self.current_change_dir = Path(change_dir) if change_dir else None
-        self.abort_on_critical_failure = bool(data.get("abort_on_critical_failure", self.abort_on_critical_failure))
-        self.force_regenerate_code = bool(data.get("force_regenerate_code", self.force_regenerate_code))
+        self.abort_on_critical_failure = bool(
+            data.get("abort_on_critical_failure", self.abort_on_critical_failure)
+        )
+        self.force_regenerate_code = bool(
+            data.get("force_regenerate_code", self.force_regenerate_code)
+        )
 
 
 def validate_phase_success(phase_num: int, result: PhaseResult) -> List[str]:
@@ -272,6 +309,7 @@ class PhaseInterface(ABC):
             (PhaseResult, duration): 执行结果和耗时（秒）
         """
         import time
+
         start_time = time.time()
 
         try:
@@ -280,8 +318,7 @@ class PhaseInterface(ABC):
             duration = time.time() - start_time
             self.log_error(f"Phase {self.phase_number} 异常: {exc}", exc)
             return PhaseResult.fail(
-                f"Phase {self.phase_number} 执行异常",
-                errors=[str(exc)]
+                f"Phase {self.phase_number} 执行异常", errors=[str(exc)]
             ), duration
 
         duration = time.time() - start_time
@@ -289,14 +326,14 @@ class PhaseInterface(ABC):
 
     def log(self, message: str) -> None:
         """输出阶段日志"""
-        if hasattr(self.context, 'logger') and self.context.logger:
+        if hasattr(self.context, "logger") and self.context.logger:
             self.context.logger.info(f"[Phase {self.phase_number}/11] {message}")
         else:
             print(f"[Phase {self.phase_number}/11] {message}")
 
     def log_error(self, message: str, exc: Optional[Exception] = None) -> None:
         """输出错误日志"""
-        if hasattr(self.context, 'logger') and self.context.logger:
+        if hasattr(self.context, "logger") and self.context.logger:
             self.context.logger.error(f"[Phase {self.phase_number}/11] {message}", exc)
         else:
             print(f"[Phase {self.phase_number}/11] ERROR: {message}")

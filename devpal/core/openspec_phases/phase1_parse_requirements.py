@@ -53,16 +53,13 @@ class Phase1ParseRequirements(PhaseInterface):
         self.context.features = self._detect_features(result.content)
         self.context.project_type = self._detect_project_type(result.content)
 
-        # 根据项目类型更新 is_cpp 和 language
+        # 根据项目类型更新 language
         if self.context.project_type in ['installer', 'tooling']:
-            self.context.is_cpp = False
             self.context.language = 'shell'
         elif self.context.project_type == 'cli_tool':
-            self.context.is_cpp = False
             if self.context.language == 'cpp':
                 self.context.language = 'python'
         elif self._is_shell_project(result.content):
-            self.context.is_cpp = False
             self.context.language = 'shell'
 
         if self.context.features:
