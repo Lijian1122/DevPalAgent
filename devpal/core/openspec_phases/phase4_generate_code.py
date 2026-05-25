@@ -252,23 +252,52 @@ class Phase4GenerateCode(PhaseInterface):
         )
         # Build user message based on language and whether tech design exists
         language = self.context.language
+
+        # Try to use LanguagePlugin for language-specific instructions
+        infra_files_list = None
+        try:
+            from devpal.core.schema.languages.cpp_plugin import CppLanguagePlugin
+            from devpal.core.schema.languages.python_plugin import PythonLanguagePlugin
+            from devpal.core.schema.languages.shell_plugin import ShellLanguagePlugin
+
+            if language == "python":
+                plugin = PythonLanguagePlugin()
+            elif language == "shell":
+                plugin = ShellLanguagePlugin()
+            else:  # cpp
+                plugin = CppLanguagePlugin()
+
+            # Get required files from plugin
+            required_files = plugin.get_required_files_template()
+            infra_files_list = ", ".join(required_files.keys())
+            self.log(
+                f"  [LanguagePlugin] Using {language} plugin for infrastructure files"
+            )
+        except Exception as e:
+            self.log(f"  [WARNING] Failed to load language plugin: {e}, using fallback")
+
+        # Language-specific file instructions and fallback
         if language == "cpp":
             file_instruction = "Use write_file for each .h/.cpp."
-            infra_files_list = (
-                "CMakeLists.txt, README.md, tests/test_base.h, include/<project>.h"
-            )
+            if not infra_files_list:
+                infra_files_list = (
+                    "CMakeLists.txt, README.md, tests/test_base.h, include/<project>.h"
+                )
             test_framework_note = "Do not invent test framework APIs; test_base.h provides ASSERT_TRUE, ASSERT_EQ, RUN_TEST, TEST_MAIN_BEGIN, TEST_MAIN_END.\n"
         elif language == "python":
             file_instruction = "Use write_file for each .py file."
-            infra_files_list = "README.md, requirements.txt, .gitignore, src/__init__.py, tests/__init__.py"
+            if not infra_files_list:
+                infra_files_list = "README.md, requirements.txt, .gitignore, src/__init__.py, tests/__init__.py"
             test_framework_note = ""
         elif language == "shell":
             file_instruction = "Use write_file for each shell script."
-            infra_files_list = "README.md"
+            if not infra_files_list:
+                infra_files_list = "README.md"
             test_framework_note = ""
         else:
             file_instruction = "Use write_file for each source file."
-            infra_files_list = "README.md"
+            if not infra_files_list:
+                infra_files_list = "README.md"
             test_framework_note = ""
 
         if self.context.tech_design_content:

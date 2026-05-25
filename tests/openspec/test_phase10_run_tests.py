@@ -23,7 +23,7 @@ def test_phase10_runs_python_pytest_and_sets_canonical_counts(tmp_path):
     )
 
     context = OpenSpecContext(project_dir=project_dir, requirements_file=tmp_path / "requirements.md")
-    context.is_cpp = False
+    # 设置为 Python 项目（is_cpp 是只读属性，基于 language 字段）
     context.language = "python"
     context.project_type = "application"
 

@@ -68,7 +68,6 @@ def test_phase1_keeps_python_project_with_install_feature_on_python(tmp_path):
 - Use pytest for tests.
 """
     context = OpenSpecContext(project_dir=tmp_path / "out", requirements_file=tmp_path / "requirements.md")
-    context.is_cpp = False
     context.language = "python"
     phase = Phase1ParseRequirements(context, _FileReaderRegistry(content))
 
@@ -120,7 +119,7 @@ def test_phase1_classifies_installer_as_shell_project(tmp_path):
 def test_phase2_creates_cpp_structure(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = OpenSpecContext(project_dir=Path("."), requirements_file=Path("simple_login.md"))
-    context.is_cpp = True
+    context.language = "cpp"
     context.language = "cpp"
 
     result = Phase2CreateStructure(context, _DummyRegistry()).execute()
@@ -134,7 +133,6 @@ def test_phase2_creates_cpp_structure(tmp_path, monkeypatch):
 def test_phase2_creates_python_structure_without_include(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = OpenSpecContext(project_dir=Path("."), requirements_file=Path("python_app.md"))
-    context.is_cpp = False
     context.language = "python"
 
     result = Phase2CreateStructure(context, _DummyRegistry()).execute()
@@ -149,7 +147,6 @@ def test_phase2_creates_python_structure_without_include(tmp_path, monkeypatch):
 def test_phase2_creates_installer_structure_without_cpp_prefix_or_include(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = OpenSpecContext(project_dir=Path("."), requirements_file=Path("test_phase_skip.md"))
-    context.is_cpp = False
     context.language = "shell"
     context.project_type = "installer"
 
@@ -165,7 +162,6 @@ def test_phase2_creates_installer_structure_without_cpp_prefix_or_include(tmp_pa
 def test_phase2_creates_plain_shell_structure_with_lib(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = OpenSpecContext(project_dir=Path("."), requirements_file=Path("backup_job.md"))
-    context.is_cpp = False
     context.language = "shell"
 
     result = Phase2CreateStructure(context, _DummyRegistry()).execute()
@@ -180,7 +176,7 @@ def test_phase2_creates_plain_shell_structure_with_lib(tmp_path, monkeypatch):
 def test_phase2_writes_requirements_json(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = OpenSpecContext(project_dir=Path("."), requirements_file=Path("simple_login.md"))
-    context.is_cpp = True
+    context.language = "cpp"
     context.structured_requirements = [{"id": "REQ-001", "title": "用户登录", "description": "", "acceptance_criteria": []}]
 
     result = Phase2CreateStructure(context, _DummyRegistry()).execute()
@@ -231,7 +227,6 @@ def test_phase11_python_claude_md_uses_python_conventions(tmp_path):
     (project_dir / "tests" / "test_main.py").write_text("def test_main():\n    assert True\n", encoding="utf-8")
 
     context = OpenSpecContext(project_dir=project_dir, requirements_file=tmp_path / "requirements.md")
-    context.is_cpp = False
     context.language = "python"
     context.project_name = "python_app"
     context.structured_requirements = [
@@ -264,7 +259,6 @@ def test_phase11_reports_skipped_phase10_without_zero_of_zero_passed(tmp_path):
     (project_dir / "scripts" / "install_claude_cli.bat").write_text("@echo off\n", encoding="utf-8")
 
     context = OpenSpecContext(project_dir=project_dir, requirements_file=tmp_path / "requirements.md")
-    context.is_cpp = False
     context.language = "shell"
     context.project_type = "installer"
     context.structured_requirements = [

@@ -15,6 +15,10 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from devpal.core.schema.languages.cpp_plugin import CppLanguagePlugin
+from devpal.core.schema.languages.python_plugin import PythonLanguagePlugin
+from devpal.core.schema.languages.shell_plugin import ShellLanguagePlugin
+
 from ..compiledb import CompileDB
 from ..compiler_detector import check_mingw_compiler, find_visual_studio_compiler
 from ..llm_client import get_llm_client
@@ -55,21 +59,41 @@ class Phase10RunTests(PhaseInterface):
                 "No tests to run", errors=["tests/ directory not found"]
             )
 
-        # Check for test files based on language
+        # Check for test files based on language using LanguagePlugin
         language = self.context.language
-        if language == "cpp":
-            test_files = list(tests_dir.glob("test_*.cpp"))
-            test_pattern = "test_*.cpp"
-        elif language == "python":
-            test_files = list(tests_dir.glob("test_*.py"))
-            test_pattern = "test_*.py"
-        elif language == "shell":
-            test_files = list(tests_dir.glob("test_*.sh"))
-            test_pattern = "test_*.sh"
-        else:
-            test_files = []
-            test_pattern = "test_*"
 
+        # Try to use LanguagePlugin to get test file patterns
+        try:
+            if language == "python":
+                plugin = PythonLanguagePlugin()
+            elif language == "shell":
+                plugin = ShellLanguagePlugin()
+            else:  # cpp
+                plugin = CppLanguagePlugin()
+
+            # Get test file extension from plugin
+            extensions = plugin.get_supported_extensions()
+            test_pattern = f"test_*{extensions[0]}" if extensions else "test_*"
+            test_files = list(tests_dir.glob(test_pattern))
+
+            self.log(
+                f"  [LanguagePlugin] Using {language} plugin, pattern: {test_pattern}"
+            )
+        except Exception as e:
+            self.log(f"  [WARNING] Failed to use LanguagePlugin: {e}, using fallback")
+            # Fallback to hardcoded patterns
+            if language == "cpp":
+                test_files = list(tests_dir.glob("test_*.cpp"))
+                test_pattern = "test_*.cpp"
+            elif language == "python":
+                test_files = list(tests_dir.glob("test_*.py"))
+                test_pattern = "test_*.py"
+            elif language == "shell":
+                test_files = list(tests_dir.glob("test_*.sh"))
+                test_pattern = "test_*.sh"
+            else:
+                test_files = []
+                test_pattern = "test_*"
         if not test_files:
             self.log(f"  [FAIL] no test files found (pattern: {test_pattern})")
             return PhaseResult.fail(
@@ -77,8 +101,6 @@ class Phase10RunTests(PhaseInterface):
             )
 
         # Branch based on language
-        language = self.context.language
-
         if language == "python":
             return self._run_python_tests(project_dir, tests_dir, test_files)
         elif language == "cpp":
@@ -691,7 +713,9 @@ class Phase10RunTests(PhaseInterface):
 """
 
         # 测试输出日志（截取前30行）
-        output_lines = [line.strip() for line in output.split("\n") if line.strip()][:30]
+        output_lines = [line.strip() for line in output.split("\n") if line.strip()][
+            :30
+        ]
         if output_lines:
             section += "### 测试输出日志\n\n"
             section += "```\n"

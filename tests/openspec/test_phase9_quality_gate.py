@@ -2,30 +2,62 @@
 """Tests for Phase 9 Quality Gate"""
 
 from pathlib import Path
+
 import pytest
-from devpal.core.openspec_phases.phase9_quality_gate import Phase9QualityGate
+
 from devpal.core.openspec_phases.base import OpenSpecContext
+from devpal.core.openspec_phases.phase9_quality_gate import Phase9QualityGate
 
 
 class _DummyRegistry:
     """Dummy tool registry for testing"""
+
     pass
+
+
+class _FakeUsage:
+    """Fake usage object to match LLMClient.usage interface"""
+
+    def __init__(self):
+        self.calls = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.cache_read_tokens = 0
+        self.cache_creation_tokens = 0
 
 
 class _FakeLLMClient:
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = []
+        self.usage = _FakeUsage()
 
     def generate(self, system, user_message, **kwargs):
-        self.calls.append({
-            "system": system,
-            "user_message": user_message,
-            "kwargs": kwargs,
-        })
+        self.calls.append(
+            {
+                "system": system,
+                "user_message": user_message,
+                "kwargs": kwargs,
+            }
+        )
         if not self.responses:
             raise AssertionError("No fake LLM response left")
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        self.usage.calls += 1
+        self.usage.input_tokens += 100
+        self.usage.output_tokens += 50
+        return response
+
+
+class _FakeUsage:
+    """Fake usage object to match LLMClient.usage interface"""
+
+    def __init__(self):
+        self.calls = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.cache_read_tokens = 0
+        self.cache_creation_tokens = 0
 
 
 @pytest.fixture
@@ -55,7 +87,7 @@ def context(temp_project):
     ctx = OpenSpecContext(
         project_dir=temp_project,
         requirements_file=Path("requirements.md"),
-        project_name="test_project"
+        project_name="test_project",
     )
     ctx.test_total = 5
     ctx.test_passed = 5
@@ -123,7 +155,9 @@ def test_quality_gate_fails_missing_main_cpp(context, temp_project, tool_registr
     assert any("src/main.cpp" in err for err in result.errors)
 
 
-def test_quality_gate_fails_main_cpp_no_main_function(context, temp_project, tool_registry):
+def test_quality_gate_fails_main_cpp_no_main_function(
+    context, temp_project, tool_registry
+):
     """Test that quality gate fails when main.cpp has no main() function"""
     (temp_project / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.10)")
     (temp_project / "src" / "main.cpp").write_text("void foo() {}")
@@ -148,7 +182,9 @@ def test_quality_gate_fails_missing_test_base_h(context, temp_project, tool_regi
     assert any("test_base.h" in err for err in result.errors)
 
 
-def test_quality_gate_fails_test_base_missing_macros(context, temp_project, tool_registry):
+def test_quality_gate_fails_test_base_missing_macros(
+    context, temp_project, tool_registry
+):
     """Test that quality gate fails when test_base.h is missing required macros"""
     (temp_project / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.10)")
     (temp_project / "src" / "main.cpp").write_text("int main() { return 0; }")
@@ -188,20 +224,26 @@ def test_quality_gate_fails_zero_tests(context, temp_project, tool_registry):
     assert any("No test files" in err for err in result.errors)
 
 
-def test_quality_gate_shell_installer_does_not_run_cpp_validation(context, temp_project, tool_registry):
-    context.is_cpp = False
+def test_quality_gate_shell_installer_does_not_run_cpp_validation(
+    context, temp_project, tool_registry
+):
+    # 设置为 shell 项目（is_cpp 是只读属性，基于 language 字段）
     context.language = "shell"
     context.project_type = "installer"
     scripts_dir = temp_project / "scripts"
     scripts_dir.mkdir(exist_ok=True)
-    (scripts_dir / "install_claude_cli.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    (scripts_dir / "install_claude_cli.sh").write_text(
+        "#!/usr/bin/env bash\n", encoding="utf-8"
+    )
     (scripts_dir / "install_claude_cli.bat").write_text("@echo off\n", encoding="utf-8")
 
     phase = Phase9QualityGate(context, tool_registry)
     result = phase.execute()
 
     assert result.success is True
-    report = (temp_project / "docs" / "quality_gate_report.md").read_text(encoding="utf-8")
+    report = (temp_project / "docs" / "quality_gate_report.md").read_text(
+        encoding="utf-8"
+    )
     assert "CMakeLists.txt not found" not in report
     assert "src/main.cpp not found" not in report
     assert "tests/test_base.h not found" not in report
@@ -210,12 +252,16 @@ def test_quality_gate_shell_installer_does_not_run_cpp_validation(context, temp_
     assert "BUSINESS layer: 0 error(s)" in report
 
 
-def test_quality_gate_report_includes_validation_details(context, temp_project, tool_registry):
+def test_quality_gate_report_includes_validation_details(
+    context, temp_project, tool_registry
+):
     phase = Phase9QualityGate(context, tool_registry)
     result = phase.execute()
 
     assert result.success is False
-    report = (temp_project / "docs" / "quality_gate_report.md").read_text(encoding="utf-8")
+    report = (temp_project / "docs" / "quality_gate_report.md").read_text(
+        encoding="utf-8"
+    )
     assert "#### Validation Details" in report
     assert "CMakeLists.txt not found" in report
     assert "src/main.cpp not found" in report
@@ -242,7 +288,7 @@ def test_quality_gate_report_generation(context, temp_project, tool_registry):
     assert report_path.exists()
 
     # Check report content
-    report_content = report_path.read_text(encoding='utf-8')
+    report_content = report_path.read_text(encoding="utf-8")
     assert "Quality Gate Report" in report_content
     assert "PASSED" in report_content or "FAILED" in report_content
 
@@ -260,7 +306,9 @@ def _write_valid_quality_gate_project(project_dir):
 """)
 
 
-def test_quality_gate_self_heal_fixes_critical_review_issue(context, temp_project, tool_registry):
+def test_quality_gate_self_heal_fixes_critical_review_issue(
+    context, temp_project, tool_registry
+):
     _write_valid_quality_gate_project(temp_project)
     unsafe_file = temp_project / "src" / "unsafe.cpp"
     unsafe_file.write_text("""
@@ -313,7 +361,7 @@ void copy_user(char *buffer, const char *input) {
     result = phase.execute()
 
     assert result.success is True
-    content = unsafe_file.read_text(encoding='utf-8')
+    content = unsafe_file.read_text(encoding="utf-8")
     assert "std::strncpy" in content
     assert "strcpy(buffer, input)" not in content
     assert fake_llm.calls
@@ -321,7 +369,9 @@ void copy_user(char *buffer, const char *input) {
     assert phase.heal_success == 1
 
 
-def test_quality_gate_self_heal_uses_fallback_client_without_switch_model(context, temp_project, tool_registry):
+def test_quality_gate_self_heal_uses_fallback_client_without_switch_model(
+    context, temp_project, tool_registry
+):
     _write_valid_quality_gate_project(temp_project)
     unsafe_file = temp_project / "src" / "unsafe.cpp"
     unsafe_file.write_text("""
@@ -388,4 +438,4 @@ void copy_user(char *buffer, const char *input) {
     assert phase.model_switches == 1
     assert phase.heal_attempts == 2
     assert phase.heal_success == 1
-    assert "std::strncpy" in unsafe_file.read_text(encoding='utf-8')
+    assert "std::strncpy" in unsafe_file.read_text(encoding="utf-8")

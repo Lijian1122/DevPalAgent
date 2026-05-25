@@ -1,5 +1,9 @@
 # OpenSpec 与开源差距分析及后续规划
 
+> **⚠️ 本文档已过期**  
+> **最新版本**：[gap_analysis_vs_openspec_2026-05-24.md](gap_analysis_vs_openspec_2026-05-24.md)  
+> **更新日期**：2026-05-24
+
 **日期**：2026-05-16  
 **参考**：`docs/README_2026-05-15_openspec_architecture_plan.md`  
 **对标**：[OpenSpec (Fission-AI)](https://github.com/Fission-AI/OpenSpec) — YC 支持，27k+ GitHub Stars
