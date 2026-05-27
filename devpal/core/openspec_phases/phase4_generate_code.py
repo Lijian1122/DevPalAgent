@@ -85,6 +85,7 @@ class Phase4GenerateCode(PhaseInterface):
 
     def execute(self) -> PhaseResult:
         self.log("Phase 4 start: infrastructure templates + AI code generation")
+        self.skipped_files = []  # Reset for each execution (important for retries)
         project_dir = self.context.project_dir
         project_name = self.context.project_name or "myproject"
         project_dir.mkdir(parents=True, exist_ok=True)
@@ -216,6 +217,12 @@ class Phase4GenerateCode(PhaseInterface):
             if not rel or not content:
                 return "[error] path and content are required"
             target = (project_dir / rel).resolve()
+
+            # PRE-CHECK: Block retry attempts for already-skipped files
+            if target in self.skipped_files:
+                return "[ERROR] File {} was already skipped. This file CANNOT be generated. You MUST generate OTHER required files instead.".format(
+                    rel
+                )
             try:
                 target.relative_to(project_dir.resolve())
             except ValueError:
@@ -230,10 +237,17 @@ class Phase4GenerateCode(PhaseInterface):
             normalized_rel = rel.replace("\\", "/")
             if target.exists() and normalized_rel in infrastructure_files:
                 self.log("    [SKIP] {} already exists, not overwriting".format(rel))
-                return "[skipped] {} already exists".format(rel)
+                self.skipped_files.append(target)
+                return "[SKIP] Infrastructure file {} already exists. Do NOT retry this file. Generate other required files instead.".format(
+                    rel
+                )
             if target.exists() and not force_regenerate:
                 self.log("    [SKIP] {} already exists, not overwriting".format(rel))
-                return "[skipped] {} already exists".format(rel)
+                self.skipped_files.append(target)
+                return "[SKIP] File {} already exists. Do NOT retry this file. Generate other required files instead.".format(
+                    rel
+                )
+
             if target.exists():
                 self.log("    [OVERWRITE] {} already exists, overwriting".format(rel))
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -283,7 +297,7 @@ class Phase4GenerateCode(PhaseInterface):
                 infra_files_list = (
                     "CMakeLists.txt, README.md, tests/test_base.h, include/<project>.h"
                 )
-            test_framework_note = "Do not invent test framework APIs; test_base.h provides ASSERT_TRUE, ASSERT_EQ, RUN_TEST, TEST_MAIN_BEGIN, TEST_MAIN_END.\n"
+            test_framework_note = "Do not invent test framework APIs; test_base.h provides ASSERT_TRUE, ASSERT_EQ, RUN_TEST, TEST_MAIN_BEGIN, TEST_MAIN_END. You MUST include tests/test_base.h and generate test entry code that is fully compatible with those macros. Emit the test main section exactly as standalone macro statements on separate lines: TEST_MAIN_BEGIN, then one RUN_TEST(...) per line with a trailing semicolon, then TEST_MAIN_END. Do not mix gtest/doctest/Catch2 syntax. Do not wrap these macros in extra control flow, streams, or expressions.\n"
         elif language == "python":
             file_instruction = "Use write_file for each .py file."
             if not infra_files_list:
@@ -325,6 +339,11 @@ class Phase4GenerateCode(PhaseInterface):
             "IMPORTANT INSTRUCTIONS:\n"
             f"{design_instruction}"
             "- This run was explicitly configured to regenerate business files; overwrite existing business files when needed.\n"
+            "- Generate BOTH source files (.cpp in src/) AND header files (.h in include/) for each class.\n"
+            "- Generate main.cpp if required by the specification.\n"
+            "- Generate test files (.cpp in tests/) for each module.\n"
+            "- YOU MUST GENERATE ALL FILES. Do not stop until you have generated: headers (.h), implementations (.cpp in src/), main.cpp, and tests."
+            "- If you have only generated headers or only tests, you are NOT done. Continue generating the missing files."
             f"- ONLY skip infrastructure files: {infra_files_list}.\n"
             f"{test_framework_note}"
             f"{change_context_section}"
@@ -355,6 +374,10 @@ class Phase4GenerateCode(PhaseInterface):
             )
 
         self._update_usage_stats(client)
+        # Log LLM result for debugging
+        self.log(
+            f"  [DEBUG] LLM stop_reason: {result.stop_reason}, turns: {result.turns}/{15}"
+        )
 
         # Check if no AI files were generated
         if not ai_files:
@@ -597,6 +620,12 @@ class Phase4GenerateCode(PhaseInterface):
 
         affected_files = set()
 
+        # Ensure project_dir is absolute for relative_to() comparison
+        project_dir_abs = (
+            self.context.project_dir.resolve()
+            if self.context.project_dir
+            else Path.cwd()
+        )
         for req_id in changed_req_ids:
             req_node_id = f"req:{req_id}"
 
@@ -604,9 +633,7 @@ class Phase4GenerateCode(PhaseInterface):
             for node, dep_type in graph.get_dependents(req_node_id):
                 if node.type in (ArtifactType.CODE, ArtifactType.TEST):
                     if node.path:
-                        rel_path = node.path.relative_to(
-                            self.context.project_dir
-                        ).as_posix()
+                        rel_path = node.path.relative_to(project_dir_abs).as_posix()
                         affected_files.add(rel_path)
 
         return sorted(list(affected_files))

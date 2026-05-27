@@ -5,6 +5,7 @@ Test Self-Healer: AI-powered test failure auto-fix
 
 from pathlib import Path
 from typing import Dict, List, Optional
+from ...config import get_config
 from ..llm_client import LLMClient
 import re
 import os  # 导入 os 模块以处理文件路径
@@ -45,12 +46,40 @@ class TestSelfHealer:
 
         return None
 
+    def _get_client_for_attempt(self, use_fallback: bool) -> LLMClient:
+        if not use_fallback:
+            return self.llm_client
+
+        config = get_config()
+        provider = (
+            getattr(self.llm_client, "provider_name", None)
+            or config.llm_default_provider
+        )
+        fallback_providers = (
+            getattr(self.llm_client, "fallback_providers", None)
+            or config.llm_fallback_providers
+        )
+        provider_config = dict(
+            getattr(self.llm_client, "kwargs", {})
+            or config.get_provider_config(provider)
+        )
+        client = LLMClient(
+            provider=provider,
+            model=self.fallback_model,
+            fallback_providers=fallback_providers,
+            **provider_config,
+        )
+        if not self.model_switched:
+            self.model_switched = True
+            self.model_switches += 1
+            self.log(f" [HEAL] Switched to fallback model: {self.fallback_model}")
+        return client
+
     def heal_compile_error(self, test_file: Path, error_output: str, use_fallback: bool = False) -> bool:
         self.heal_attempts += 1
         model_label = f" (using {self.fallback_model})" if use_fallback else ""
         self.log(f"  [HEAL] Attempting to fix compile error in {test_file.name} (attempt #{self.heal_attempts}){model_label}")
 
-        # 先检测是否是依赖问题
         dependency_issue = self._detect_dependency_error(error_output)
         if dependency_issue:
             self.log(f" [HEAL] Detected dependency issue: {dependency_issue}")
@@ -69,29 +98,18 @@ class TestSelfHealer:
             prompt = self._build_compile_error_fix_prompt(test_file.name, test_code, source_code_context, error_output)
             self.log(f" [HEAL] Calling AI to analyze and fix...")
 
-            # Select model
-            if use_fallback and not self.model_switched:
-                client = LLMClient(model=self.fallback_model)
-                self.model_switched = True
-                self.model_switches += 1
-                self.log(f" [HEAL] Switched to fallback model: {self.fallback_model}")
-            elif use_fallback:
-                client = LLMClient(model=self.fallback_model)
-            else:
-                client = self.llm_client
-
-            # Generate fix
+            client = self._get_client_for_attempt(use_fallback)
+            self.current_file = test_file.name
             response = client.generate(
                 system="You are a C++ expert helping fix code issues.",
-                user_message=prompt)
+                user_message=prompt,
+            )
             fixed_code = self._extract_code_from_response(response)
-        
-            # 验证返回的代码
+
             if not fixed_code:
                 self.log(f" [HEAL] Failed: AI did not return valid code")
                 return False
 
-            # Additional validation before writing
             if len(fixed_code) < 50:
                 self.log(f" [HEAL] Failed: Fixed code too short ({len(fixed_code)} chars)")
                 return False
@@ -110,70 +128,62 @@ class TestSelfHealer:
             return False
 
     def heal_test_failure(self, test_file: Path, test_output: str, passed: int, total: int, use_fallback: bool = False) -> bool:
-            self.heal_attempts += 1
-            model_label = f" (using {self.fallback_model})" if use_fallback else ""
-            self.log(f" [HEAL] Attempting to fix test failures in {test_file.name} ({passed}/{total} passed, attempt #{self.heal_attempts}){model_label}")
-            try:
-                test_code = test_file.read_text(encoding='utf-8')
-                source_files = self._find_related_source_files(test_file)
-                impl_code = ""
-                header_code = ""
-                impl_file = None
-                header_file = None
+        self.heal_attempts += 1
+        model_label = f" (using {self.fallback_model})" if use_fallback else ""
+        self.log(f" [HEAL] Attempting to fix test failures in {test_file.name} ({passed}/{total} passed, attempt #{self.heal_attempts}){model_label}")
+        try:
+            test_code = test_file.read_text(encoding='utf-8')
+            source_files = self._find_related_source_files(test_file)
+            impl_code = ""
+            header_code = ""
+            impl_file = None
+            header_file = None
 
-                for src_file in source_files:
-                    if src_file.exists():
-                        if src_file.suffix == '.cpp':
-                            impl_code = src_file.read_text(encoding='utf-8')
-                            impl_file = src_file
-                        elif src_file.suffix == '.h':
-                            header_code = src_file.read_text(encoding='utf-8')
-                            header_file = src_file
+            for src_file in source_files:
+                if src_file.exists():
+                    if src_file.suffix == '.cpp':
+                        impl_code = src_file.read_text(encoding='utf-8')
+                        impl_file = src_file
+                    elif src_file.suffix == '.h':
+                        header_code = src_file.read_text(encoding='utf-8')
+                        header_file = src_file
 
-                prompt = self._build_test_failure_fix_prompt(test_file.name, test_code, impl_code, header_code, test_output, passed, total)
-                self.log(f" [HEAL] Calling AI to analyze test failures...")
+            prompt = self._build_test_failure_fix_prompt(test_file.name, test_code, impl_code, header_code, test_output, passed, total)
+            self.log(f" [HEAL] Calling AI to analyze test failures...")
 
-                if use_fallback and not self.model_switched:
-                    client = LLMClient(model=self.fallback_model)
-                    self.model_switched = True
-                    self.model_switches += 1
-                    self.log(f" [HEAL] Switched to fallback model: {self.fallback_model}")
-                elif use_fallback:
-                    client = LLMClient(model=self.fallback_model)
+            client = self._get_client_for_attempt(use_fallback)
+            self.current_file = test_file.name
+            response = client.generate(
+                system="You are a C++ expert helping fix code issues.",
+                user_message=prompt,
+            )
+            fixed_impl = self._extract_code_from_response(response, marker="// IMPLEMENTATION")
+            fixed_header = self._extract_code_from_response(response, marker="// HEADER")
+
+            success = False
+            if fixed_impl and impl_file:
+                if len(fixed_impl) < 50 or '```' in fixed_impl or '**' in fixed_impl:
+                    self.log(f" [HEAL] Failed: Invalid implementation code")
                 else:
-                    client = self.llm_client
-                    response = client.generate(
-                    system="You are a C++ expert helping fix code issues.",
-                    user_message=prompt
-                )
-                fixed_impl = self._extract_code_from_response(response, marker="// IMPLEMENTATION")
-                fixed_header = self._extract_code_from_response(response, marker="// HEADER")
-
-                success = False
-                if fixed_impl and impl_file:
-                    # Validate before writing
-                    if len(fixed_impl) < 50 or '```' in fixed_impl or '**' in fixed_impl:
-                        self.log(f" [HEAL] Failed: Invalid implementation code")
-                    else:
-                        impl_file.write_text(fixed_impl, encoding='utf-8')
-                        self.log(f" [HEAL] Fixed implementation written to {impl_file.name}")
-                        success = True
-
-                if fixed_header and header_file:
-                    header_file.write_text(fixed_header, encoding='utf-8')
-                    self.log(f" [HEAL] Fixed header written to {header_file.name}")
+                    impl_file.write_text(fixed_impl, encoding='utf-8')
+                    self.log(f" [HEAL] Fixed implementation written to {impl_file.name}")
                     success = True
 
-                if success:
-                    self.heal_success += 1
-                    return True
-                else:
-                    self.log(f" [HEAL] Failed: AI did not return valid fixes")
-                    return False
+            if fixed_header and header_file:
+                header_file.write_text(fixed_header, encoding='utf-8')
+                self.log(f" [HEAL] Fixed header written to {header_file.name}")
+                success = True
 
-            except Exception as e:
-                self.log(f" [HEAL] Exception during healing: {e}")
-                return False
+            if success:
+                self.heal_success += 1
+                return True
+
+            self.log(f" [HEAL] Failed: AI did not return valid fixes")
+            return False
+
+        except Exception as e:
+            self.log(f" [HEAL] Exception during healing: {e}")
+            return False
 
     def _find_related_source_files(self, test_file: Path) -> List[Path]:
             base_name = test_file.stem.replace('test_', '')
@@ -418,22 +428,14 @@ class TestSelfHealer:
             # 这里我们假设有一个方式获取当前文件名，例如通过实例变量 self.current_file
             # 如果没有，可以考虑将此逻辑移至调用处，或者通过参数传入
             current_file_name = getattr(self, 'current_file', None)
-            if current_file_name is None:
-                # 如果无法获取文件名，则回退到基于内容的检查
-                # 但基于内容的检查容易误判，因此最好传入文件名
-                pass
-            else:
-                # 2. 判断是否为测试文件（基于文件名）
+            if current_file_name is not None:
                 is_test_file = 'test_' in current_file_name.lower() or 'TEST' in current_file_name
                 if is_test_file:
-                    # 3. 统计行数（使用 splitlines() 更准确）
-                    line_count = len(code.splitlines())
-                    # 4. 只有当代码较长（>= 100行）时才强制要求 main 函数
-                    if line_count >= 100:
-                        if 'int main(' not in code and 'int main (' not in code:
-                            self.log(f" [HEAL] Test file missing main() function")
-                            return False
-                    # 如果代码较短，则跳过 main 检查
+                    has_main = 'int main(' in code or 'int main (' in code
+                    uses_test_macros = 'TEST_MAIN_BEGIN' in code and 'TEST_MAIN_END' in code
+                    if not has_main and not uses_test_macros:
+                        self.log(" [HEAL] Test file missing test entry point")
+                        return False
                     return True
 
             # --- 修复结束 ---

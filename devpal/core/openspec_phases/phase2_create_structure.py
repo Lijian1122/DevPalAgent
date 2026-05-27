@@ -8,7 +8,12 @@ Phase 2: 创建项目目录结构
 import json
 from pathlib import Path
 
-from .base import OpenSpecContext, PhaseInterface, PhaseResult
+from .base import (
+    OpenSpecContext,
+    PhaseInterface,
+    PhaseResult,
+    infer_openspec_project_name,
+)
 
 
 class Phase2CreateStructure(PhaseInterface):
@@ -101,17 +106,7 @@ class Phase2CreateStructure(PhaseInterface):
 
     def _infer_project_name(self) -> str:
         """从需求文件路径推断项目名称（和 Phase4 模板系统一致）"""
-        req_file_path = Path(self.context.requirements_file)
-        project_name = req_file_path.stem
-
-        # 清理常见后缀
-        if project_name.endswith("_requirements"):
-            project_name = project_name.replace("_requirements", "")
-        if project_name.startswith("req_"):
-            project_name = project_name.replace("req_", "")
-
-        # C++ 项目前缀
-        if self.context.is_cpp and not project_name.startswith("cpp_"):
-            project_name = f"cpp_{project_name}"
-
-        return project_name
+        return infer_openspec_project_name(
+            self.context.requirements_file,
+            language=self.context.language,
+        )

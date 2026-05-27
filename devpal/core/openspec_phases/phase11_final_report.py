@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from ..cache_strategy import CacheMetrics
+from ..schema.artifact_graph import ArtifactNode, ArtifactType, DependencyType
 from .base import OpenSpecContext, PhaseInterface, PhaseResult
 
 
@@ -110,7 +111,7 @@ class Phase11FinalReport(PhaseInterface):
             "- Requirements: `{}`".format(self.context.requirements_file),
             "- Files generated: {}".format(len(unique_files)),
             "- Artifact graph: `{}`".format(
-                artifact_graph_path.relative_to(self.context.project_dir)
+                (artifact_graph_path.resolve() if not artifact_graph_path.is_absolute() else artifact_graph_path).relative_to(self.context.project_dir.resolve())
             ),
             "",
             "## 2. AI Usage",
@@ -280,12 +281,6 @@ class Phase11FinalReport(PhaseInterface):
         if graph is not None:
             # M2: Add change node to artifact graph
             if self.context.current_change_id and self.context.current_change_dir:
-                from ..schema.artifact_graph import (
-                    ArtifactNode,
-                    ArtifactType,
-                    DependencyType,
-                )
-
                 change_path = "openspec/changes/{}".format(
                     self.context.current_change_id
                 )
@@ -303,25 +298,25 @@ class Phase11FinalReport(PhaseInterface):
                 graph.add_node(change_node)
 
                 # Link change to affected requirements
-            for req in self.context.structured_requirements:
-                req_id = req.get("id")
-                if req_id:
-                    graph.add_dependency(
-                        "change:{}".format(self.context.current_change_id),
-                        "req:{}".format(req_id),
-                        DependencyType.REFERENCES,
-                    )
+                for req in self.context.structured_requirements:
+                    req_id = req.get("id")
+                    if req_id:
+                        graph.add_dependency(
+                            "change:{}".format(self.context.current_change_id),
+                            "req:{}".format(req_id),
+                            DependencyType.REFERENCES,
+                        )
 
-        try:
-            graph.save_to_file(graph_path)
-            self.context.artifact_graph_data = json.loads(
-                graph_path.read_text(encoding="utf-8")
-            )
-            self.context.generated_files.append(graph_path)
-            self.log("  [OK] Saved using ArtifactGraph.save_to_file()")
-            return graph_path
-        except Exception as e:
-            self.log("  [WARN] ArtifactGraph.save_to_file() failed: {}".format(e))
+            try:
+                graph.save_to_file(graph_path)
+                self.context.artifact_graph_data = json.loads(
+                    graph_path.read_text(encoding="utf-8")
+                )
+                self.context.generated_files.append(graph_path)
+                self.log("  [OK] Saved using ArtifactGraph.save_to_file()")
+                return graph_path
+            except Exception as e:
+                self.log("  [WARN] ArtifactGraph.save_to_file() failed: {}".format(e))
 
         # Fallback: simple JSON
         simple_graph = self._build_artifact_graph_data()
@@ -437,11 +432,6 @@ class Phase11FinalReport(PhaseInterface):
         graph = self.context.artifact_graph
         if graph is not None:
             try:
-                from devpal.core.schema.artifact_graph import (
-                    ArtifactType,
-                    DependencyType,
-                )
-
                 matrix = graph.get_traceability_matrix()
 
                 for requirement in requirements:
@@ -612,7 +602,8 @@ class Phase11FinalReport(PhaseInterface):
         for pattern in patterns:
             for path in sorted(self.context.project_dir.glob(pattern)):
                 if path.is_file():
-                    files.append(path.relative_to(self.context.project_dir).as_posix())
+                    resolved_path = path.resolve() if not path.is_absolute() else path
+                    files.append(resolved_path.relative_to(self.context.project_dir.resolve()).as_posix())
         return files
 
     def _generate_claude_md(self) -> "Path | None":
@@ -728,12 +719,24 @@ class Phase11FinalReport(PhaseInterface):
 
                 for file_name in artifact_files:
                     file_path = change_dir / file_name
-            if file_path.exists():
-                rel_path = file_path.relative_to(self.context.project_dir)
-                file_size = file_path.stat().st_size
-                lines.append(f"- [{file_name}]({rel_path}) ({file_size} bytes)")
-            else:
-                lines.append(f"- {file_name} (not generated)")
+                    if file_path.exists():
+                        resolved_file_path = (
+                            file_path.resolve()
+                            if not file_path.is_absolute()
+                            else file_path
+                        )
+                        try:
+                            rel_path = resolved_file_path.relative_to(
+                                self.context.project_dir.resolve()
+                            ).as_posix()
+                        except ValueError:
+                            rel_path = resolved_file_path.as_posix()
+                        file_size = resolved_file_path.stat().st_size
+                        lines.append(
+                            f"- [{file_name}]({rel_path}) ({file_size} bytes)"
+                        )
+                    else:
+                        lines.append(f"- {file_name} (not generated)")
 
             lines.extend(
                 [

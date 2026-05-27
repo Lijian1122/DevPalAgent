@@ -3,7 +3,15 @@
 from pathlib import Path
 
 from devpal.core.openspec_phases.base import OpenSpecContext, PhaseResult
-from devpal.core.openspec_phases.enhanced_scheduler import CheckpointManager
+from devpal.core.openspec_phases.enhanced_scheduler import (
+    CheckpointManager,
+    EnhancedOpenSpecScheduler,
+)
+from devpal.core.openspec_phases.phase11_final_report import Phase11FinalReport
+
+
+class _DummyRegistry:
+    pass
 
 
 def _populate_phase4_state(context: OpenSpecContext) -> None:
@@ -44,3 +52,81 @@ def test_resume_after_phase4_restores_required_context(tmp_path):
     assert fresh.structured_requirements[0]["id"] == "REQ-001"
     assert fresh.project_dir == project_dir
     assert fresh.phase_results[4].data.get("ai_count") == 5
+
+
+def test_resume_after_completed_workflow_returns_noop_success(tmp_path, monkeypatch):
+    project_dir = tmp_path / "cpp_simple_login"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    requirements_file = tmp_path / "simple_login.md"
+    requirements_file.write_text("cpp login requirement", encoding="utf-8")
+
+    context = OpenSpecContext(project_dir=project_dir, requirements_file=requirements_file)
+    context.project_name = "cpp_simple_login"
+    context.test_passed = 4
+    context.test_total = 4
+    context.set_phase_result(
+        10,
+        PhaseResult.ok(
+            "phase 10",
+            test_status="completed",
+            test_summary="4/4 passed",
+        ),
+    )
+    context.set_phase_result(11, PhaseResult.ok("phase 11"))
+
+    checkpoint_path = project_dir / ".spec" / "checkpoint.json"
+    checkpoint = CheckpointManager(checkpoint_path, requirements_file)
+    checkpoint.save(11, True, context)
+
+    monkeypatch.chdir(tmp_path)
+    scheduler = EnhancedOpenSpecScheduler(
+        str(requirements_file),
+        _DummyRegistry(),
+        enable_progress=False,
+    )
+    result = scheduler.run_all_phases(resume=True)
+
+    assert result["success"] is True
+    assert result["project_dir"] == str(project_dir)
+    assert result["project_name"] == "cpp_simple_login"
+    assert result["test_summary"] == "4/4 passed"
+    assert result["phases"][11].success is True
+
+
+def test_phase11_artifact_graph_falls_back_cleanly_when_graph_missing(tmp_path):
+    project_dir = tmp_path / "cpp_simple_login"
+    docs_dir = project_dir / "docs"
+    spec_dir = project_dir / ".spec"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    requirements_file = tmp_path / "simple_login.md"
+    requirements_file.write_text("cpp login requirement", encoding="utf-8")
+
+    context = OpenSpecContext(project_dir=project_dir, requirements_file=requirements_file)
+    context.project_name = "cpp_simple_login"
+    context.structured_requirements = [
+        {"id": "REQ-001", "title": "login", "description": "", "acceptance_criteria": []}
+    ]
+    context.test_passed = 1
+    context.test_total = 1
+    context.llm_calls = 0
+    context.llm_input_tokens = 0
+    context.llm_output_tokens = 0
+    context.llm_cache_read_tokens = 0
+    context.llm_cache_creation_tokens = 0
+    context.generated_files = []
+    context.artifact_graph = None
+    context.current_change_id = None
+    context.current_change_dir = None
+    context.set_phase_result(
+        10,
+        PhaseResult.ok("phase 10", test_status="completed", test_summary="1/1 passed"),
+    )
+
+    phase = Phase11FinalReport(context)
+    result = phase.execute()
+
+    assert result.success is True
+    artifact_graph_path = project_dir / ".spec" / "artifact_graph.json"
+    assert artifact_graph_path.exists()
+    assert context.artifact_graph_data

@@ -22,6 +22,12 @@ from devpal.core.schema.languages.shell_plugin import ShellLanguagePlugin
 from ..compiledb import CompileDB
 from ..compiler_detector import check_mingw_compiler, find_visual_studio_compiler
 from ..llm_client import get_llm_client
+from ..schema.event_bus import get_global_event_bus
+from ..schema.workflow_events import (
+    ToolCalledEvent,
+    ToolCompletedEvent,
+    ToolFailedEvent,
+)
 from .base import OpenSpecContext, PhaseInterface, PhaseResult
 from .enhanced_test_self_healer import EnhancedTestSelfHealer
 from .test_self_healer import TestSelfHealer
@@ -38,6 +44,9 @@ class Phase10RunTests(PhaseInterface):
         self.compiledb = CompileDB()
         # 新增：初始化自愈器
         self.self_healer = None  # 延迟初始化，需要 LLM client
+        # EventBus integration
+        self.event_bus = get_global_event_bus()
+        self.workflow_id = getattr(context, "workflow_id", "")
 
     def should_skip(self) -> tuple:
         """判断是否应该跳过当前阶段"""
@@ -196,7 +205,6 @@ class Phase10RunTests(PhaseInterface):
                     "  [INFO] Initializing Enhanced Self-Healer (with Root Cause Analysis)"
                 )
                 try:
-                    # 尝试使用增强版本
                     self.self_healer = EnhancedTestSelfHealer(
                         project_dir=project_dir,
                         llm_client=llm_client,
@@ -213,9 +221,9 @@ class Phase10RunTests(PhaseInterface):
                     )
             else:
                 self.log("  [INFO] Initializing standard Self-Healer")
-            self.self_healer = TestSelfHealer(
-                project_dir=project_dir, llm_client=llm_client, logger=self.log
-            )
+                self.self_healer = TestSelfHealer(
+                    project_dir=project_dir, llm_client=llm_client, logger=self.log
+                )
         except Exception as exc:
             self.log(f"  [WARN] Failed to initialize self-healer: {exc}")
             self.log("  [INFO] Self-healing will be disabled for this run")
@@ -829,9 +837,13 @@ class Phase10RunTests(PhaseInterface):
         except ImportError:
             return
 
+        project_dir_abs = self.context.project_dir.resolve()
+
         for result in test_results:
             test_file_path = Path(result["test_file"])
-            rel_path = test_file_path.relative_to(self.context.project_dir).as_posix()
+            if not test_file_path.is_absolute():
+                test_file_path = (project_dir_abs / test_file_path).resolve()
+            rel_path = test_file_path.relative_to(project_dir_abs).as_posix()
             file_node_id = f"file:{rel_path}"
 
             node = graph.get_node(file_node_id)
@@ -868,11 +880,14 @@ class Phase10RunTests(PhaseInterface):
 
         affected_tests = set()
 
+        project_dir_abs = self.context.project_dir.resolve()
+
         for file_path in changed_files:
             try:
-                rel_path = (
-                    Path(file_path).relative_to(self.context.project_dir).as_posix()
-                )
+                changed_path = Path(file_path)
+                if not changed_path.is_absolute():
+                    changed_path = (project_dir_abs / changed_path).resolve()
+                rel_path = changed_path.relative_to(project_dir_abs).as_posix()
                 file_node_id = f"file:{rel_path}"
 
                 # 查找测试该文件的所有测试
@@ -887,3 +902,38 @@ class Phase10RunTests(PhaseInterface):
                 continue
 
             return sorted(list(affected_tests))
+
+    def _emit_tool_event(
+        self, tool_name: str, success: bool, duration_ms: int = 0, error: str = ""
+    ) -> None:
+        """Emit tool execution event to EventBus"""
+        if not self.workflow_id:
+            return
+
+        try:
+            # Emit tool called event
+            called_event = ToolCalledEvent(
+                workflow_id=self.workflow_id,
+                tool_name=tool_name,
+                tool_params={},
+                caller=f"phase{self.phase_number}",
+            )
+            self.event_bus.publish(called_event)
+
+            # Emit completion or failure event
+            if success:
+                completed_event = ToolCompletedEvent(
+                    workflow_id=self.workflow_id,
+                    tool_name=tool_name,
+                    success=True,
+                    duration_ms=duration_ms,
+                    result_summary="Tool executed successfully",
+                )
+                self.event_bus.publish(completed_event)
+            else:
+                failed_event = ToolFailedEvent(
+                    workflow_id=self.workflow_id, tool_name=tool_name, error=error
+                )
+                self.event_bus.publish(failed_event)
+        except Exception as e:
+            self.log(f"  [WARN] Failed to emit tool event: {e}")

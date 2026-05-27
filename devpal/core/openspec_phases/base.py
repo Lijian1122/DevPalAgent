@@ -21,6 +21,17 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def infer_openspec_project_name(requirements_file: Path, language: str = "cpp") -> str:
+    project_name = Path(requirements_file).stem
+    if project_name.endswith("_requirements"):
+        project_name = project_name.replace("_requirements", "")
+    if project_name.startswith("req_"):
+        project_name = project_name.replace("req_", "")
+    if language == "cpp" and not project_name.startswith("cpp_"):
+        project_name = f"cpp_{project_name}"
+    return project_name
+
+
 @dataclass
 class PhaseResult:
     """阶段执行结果"""
