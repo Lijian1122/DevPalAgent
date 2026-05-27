@@ -20,6 +20,8 @@ ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
 from devpal.core.openspec_executor import OpenSpecRunOptions, OpenSpecWorkflowExecutor
+from devpal.core.schema.performance_analyzer import PerformanceAnalyzer
+from devpal.core.schema.progress_monitor import ProgressMonitor
 from devpal.tools.registry import registry as tool_registry
 
 
@@ -226,6 +228,19 @@ def main() -> int:
         print("[WARNING] ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY 未设置")
         print("          请设置环境变量或填充 config/config.yaml 后再运行")
         print()
+
+    # Initialize EventBus monitoring (if not in quiet mode)
+    progress_monitor = None
+    performance_analyzer = None
+    if not args.debug:  # Only show monitors in normal mode
+        try:
+            progress_monitor = ProgressMonitor(total_phases=11)
+            performance_analyzer = PerformanceAnalyzer()
+            print("[EventBus] Monitoring enabled: ProgressMonitor + PerformanceAnalyzer")
+            print()
+        except Exception as e:
+            print(f"[WARNING] Failed to initialize EventBus monitors: {e}")
+            print()
 
     executor = OpenSpecWorkflowExecutor(tool_registry)
     result = executor.run(
