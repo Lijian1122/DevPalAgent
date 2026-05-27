@@ -77,47 +77,62 @@ class AnthropicProvider(BaseLLMProvider):
         **kwargs
     ) -> ToolUseResult:
         """Multi-turn tool_use loop"""
-        max_tokens = kwargs.get('max_tokens', DEFAULT_MAX_TOKENS)
-        
+        max_tokens = kwargs.get("max_tokens", DEFAULT_MAX_TOKENS)
+
         system_blocks = self._build_system_blocks(system)
         user_content = self._build_user_content(cached_context, user_message)
         messages = [{"role": "user", "content": user_content}]
-        
+
         result = ToolUseResult()
         text_parts = []
-        
+
         for turn in range(max_iterations):
             result.turns = turn + 1
-            response = self._call(system_blocks, messages, tools=tools, max_tokens=max_tokens)
+            response = self._call(
+                system_blocks,
+                messages,
+                tools=tools,
+                max_tokens=max_tokens,
+            )
             result.stop_reason = response.stop_reason or ""
-            
+
+            assistant_content = []
             for block in response.content:
-                if getattr(block, "type", None) == "text" and block.text:
+                assistant_content.append(block)
+                if getattr(block, "type", None) == "text" and getattr(block, "text", None):
                     text_parts.append(block.text)
-                    messages.append({"role": "assistant", "content": response.content})
-                if response.stop_reason != "tool_use":
-                 break
-            
+
+            messages.append({"role": "assistant", "content": assistant_content})
+
+            if response.stop_reason != "tool_use":
+                break
+
             tool_results = []
             for block in response.content:
                 if getattr(block, "type", None) != "tool_use":
-                 continue
-            try:
-                output = tool_handler(block.name, block.input or {})
-                is_error = False
-            except Exception as exc:
-                output = f"[tool_error] {exc}"
-                is_error = True
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": output,
-                    "is_error": is_error,})
+                    continue
+                try:
+                    output = tool_handler(block.name, block.input or {})
+                    is_error = False
+                except Exception as exc:
+                    output = f"[tool_error] {exc}"
+                    is_error = True
+
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": output,
+                        "is_error": is_error,
+                    }
+                )
                 result.tool_calls_handled += 1
-            
+
             if tool_results:
                 messages.append({"role": "user", "content": tool_results})
-        
+            else:
+                break
+
         result.text_output = "".join(text_parts)
         return result
 
