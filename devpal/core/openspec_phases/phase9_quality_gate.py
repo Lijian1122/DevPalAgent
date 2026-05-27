@@ -7,6 +7,12 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..llm_client import LLMClient, get_llm_client
+from ..schema.event_bus import get_global_event_bus
+from ..schema.workflow_events import (
+    ValidationCompletedEvent,
+    ValidationIssueFoundEvent,
+    ValidationStartedEvent,
+)
 from .base import OpenSpecContext, PhaseInterface, PhaseResult
 
 try:
@@ -20,43 +26,6 @@ try:
     _HAS_VALIDATION_ENGINE = True
 except ImportError:
     _HAS_VALIDATION_ENGINE = False
-
-
-# 添加一个 Usage 类
-class _FakeUsage:
-    """Fake usage object to match LLMClient.usage interface"""
-
-    def __init__(self):
-        self.calls = 0
-        self.input_tokens = 0
-        self.output_tokens = 0
-        self.cache_read_tokens = 0
-        self.cache_creation_tokens = 0
-
-
-class _FakeLLMClient:
-    def __init__(self, responses):
-        self.responses = list(responses)
-        self.calls = []
-        # 改为使用对象而不是字典
-        self.usage = _FakeUsage()  # 之前是字典
-
-    def generate(self, system, user_message, **kwargs):
-        self.calls.append(
-            {
-                "system": system,
-                "user_message": user_message,
-                "kwargs": kwargs,
-            }
-        )
-        if not self.responses:
-            raise AssertionError("No fake LLM response left")
-        response = self.responses.pop(0)
-        # 更新 usage 统计
-        self.usage.calls += 1  # 之前是 self.usage["calls"]
-        self.usage.input_tokens += 100
-        self.usage.output_tokens += 50
-        return response
 
 
 class Phase9QualityGate(PhaseInterface):
@@ -77,6 +46,10 @@ class Phase9QualityGate(PhaseInterface):
 
         # 配置：从 context 或使用默认值
         self.config = self._load_config()
+
+        # EventBus integration
+        self.event_bus = get_global_event_bus()
+        self.workflow_id = getattr(context, "workflow_id", "")
 
         # LLM client for self-healing. Resolve lazily so normal quality gate
         # checks do not require an Anthropic key.
@@ -291,6 +264,7 @@ class Phase9QualityGate(PhaseInterface):
         review_issues = []
         if self._should_run_code_review():
             self.log("  [CODE REVIEW] Starting code quality review...")
+            self._emit_validation_started_event()
             try:
                 review_issues = self._run_code_review()
                 self.log("  [CODE REVIEW] Found {} issues".format(len(review_issues)))
@@ -320,6 +294,8 @@ class Phase9QualityGate(PhaseInterface):
                     self.log("  [SELF-HEAL] Failed to fix all issues")
             except Exception as e:
                 self.log("  [WARN] Self-heal failed: {}".format(e))
+
+        self._emit_validation_completed_event(review_issues)
 
         # ========== Layer 3: 决策逻辑 ==========
         # 生成完整报告
@@ -1642,3 +1618,65 @@ class Phase9QualityGate(PhaseInterface):
         ctx.llm_output_tokens += client.usage.output_tokens
         ctx.llm_cache_read_tokens += client.usage.cache_read_tokens
         ctx.llm_cache_creation_tokens += client.usage.cache_creation_tokens
+
+    def _emit_validation_started_event(self) -> None:
+        """Emit validation started event to EventBus"""
+        if not self.workflow_id:
+            return
+        try:
+            files_to_validate = len(self._collect_review_targets())
+            event = ValidationStartedEvent(
+                workflow_id=self.workflow_id,
+                phase_num=self.phase_number,
+                validation_layers=self.config["code_review"]["check_types"],
+                files_to_validate=files_to_validate,
+            )
+            self.event_bus.publish(event)
+        except Exception as e:
+            self.log(f"  [WARN] Failed to emit validation started event: {e}")
+
+    def _emit_validation_completed_event(self, review_issues: List[Dict]) -> None:
+        """Emit validation completed event to EventBus"""
+        if not self.workflow_id:
+            return
+        try:
+            issues_by_layer = {}
+            for issue in review_issues:
+                category = issue.get("category", "other")
+                issues_by_layer[category] = issues_by_layer.get(category, 0) + 1
+                total_issues = len(review_issues)
+                critical_issues = sum(
+                    1 for i in review_issues if i["severity"] == "error"
+                )
+                passed = critical_issues == 0
+                event = ValidationCompletedEvent(
+                    workflow_id=self.workflow_id,
+                    phase_num=self.phase_number,
+                    total_issues=total_issues,
+                    issues_by_layer=issues_by_layer,
+                    passed=passed,
+                )
+            self.event_bus.publish(event)
+            for issue in review_issues:
+                if issue["severity"] == "error":
+                    self._emit_validation_issue_event(issue)
+        except Exception as e:
+            self.log(f"  [WARN] Failed to emit validation completed event: {e}")
+
+    def _emit_validation_issue_event(self, issue: Dict) -> None:
+        """Emit validation issue found event to EventBus"""
+        if not self.workflow_id:
+            return
+        try:
+            event = ValidationIssueFoundEvent(
+                workflow_id=self.workflow_id,
+                phase_num=self.phase_number,
+                layer=issue.get("category", "other").upper(),
+                severity=issue.get("severity", "info"),
+                file_path=issue.get("file", ""),
+                line_number=issue.get("line"),
+                message=issue.get("message", ""),
+            )
+            self.event_bus.publish(event)
+        except Exception as e:
+            self.log(f"  [WARN] Failed to emit validation issue event: {e}")
