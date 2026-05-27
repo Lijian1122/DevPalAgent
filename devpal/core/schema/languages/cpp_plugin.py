@@ -9,28 +9,27 @@ OpenSpec C/C++ 语言插件 - Phase 6: 多语言支持
 自动检测可用的后端并使用最佳方案。
 """
 
-from typing import Any, Dict, List, Optional, Set, Tuple
-from dataclasses import dataclass
-from pathlib import Path
-import re
 import json
+import re
 import subprocess
 import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from .base import (
-    LanguagePlugin,
-    FileAnalysisResult,
-    SymbolInfo,
-    SymbolKind,
+    AccessSpecifier,
+    ASTNode,
+    ASTNodeType,
     DependencyInfo,
     Diagnostic,
     DiagnosticSeverity,
+    FileAnalysisResult,
+    LanguagePlugin,
     SourceLocation,
     SourceRange,
-    ASTNode,
-    ASTNodeType,
+    SymbolInfo,
+    SymbolKind,
     TypeInfo,
-    AccessSpecifier,
 )
 
 
@@ -44,22 +43,28 @@ class CppLanguagePlugin(LanguagePlugin):
 
         # 正则表达式模式
         self._patterns = {
-            'include': re.compile(r'#\s*include\s*([<"])([^>"]+)[>"]'),
-            'define': re.compile(r'#\s*define\s+(\w+)(?:\s*\(([^)]*)\))?'),
-            'class': re.compile(r'\bclass\s+(\w+)(?:\s*:\s*(public|protected|private)\s*(\w+))?'),
-            'struct': re.compile(r'\bstruct\s+(\w+)(?:\s*:\s*(public|protected|private)\s*(\w+))?'),
-            'union': re.compile(r'\bunion\s+(\w+)'),
-            'enum': re.compile(r'\benum\s+(?:class|struct)?\s*(\w+)'),
-            'typedef': re.compile(r'\btypedef\s+(.+?)\s+(\w+)\s*;'),
-            'function': re.compile(
-                r'\b(?:(inline|static|virtual|constexpr|explicit)\s+)*'
-                r'([\w:<>,\s&*]+?)\s+'
-                r'(\w+)\s*\(([^)]*)\)\s*'
-                r'(?:\s*(const|override|final|noexcept|=0|=default|=delete))*\s*'
-                r'(?:\s*:\s*\w+\([^)]*\))?\s*[;{]'
+            "include": re.compile(r'#\s*include\s*([<"])([^>"]+)[>"]'),
+            "define": re.compile(r"#\s*define\s+(\w+)(?:\s*\(([^)]*)\))?"),
+            "class": re.compile(
+                r"\bclass\s+(\w+)(?:\s*:\s*(public|protected|private)\s*(\w+))?"
             ),
-            'namespace': re.compile(r'\bnamespace\s+(\w+)'),
-            'member_var': re.compile(r'\b(\w+(?:\s*[*&])?)\s+(\w+)\s*(?:\[[^\]]*\])?\s*;'),
+            "struct": re.compile(
+                r"\bstruct\s+(\w+)(?:\s*:\s*(public|protected|private)\s*(\w+))?"
+            ),
+            "union": re.compile(r"\bunion\s+(\w+)"),
+            "enum": re.compile(r"\benum\s+(?:class|struct)?\s*(\w+)"),
+            "typedef": re.compile(r"\btypedef\s+(.+?)\s+(\w+)\s*;"),
+            "function": re.compile(
+                r"\b(?:(inline|static|virtual|constexpr|explicit)\s+)*"
+                r"([\w:<>,\s&*]+?)\s+"
+                r"(\w+)\s*\(([^)]*)\)\s*"
+                r"(?:\s*(const|override|final|noexcept|=0|=default|=delete))*\s*"
+                r"(?:\s*:\s*\w+\([^)]*\))?\s*[;{]"
+            ),
+            "namespace": re.compile(r"\bnamespace\s+(\w+)"),
+            "member_var": re.compile(
+                r"\b(\w+(?:\s*[*&])?)\s+(\w+)\s*(?:\[[^\]]*\])?\s*;"
+            ),
         }
 
     def _init_clang(self):
@@ -72,10 +77,10 @@ class CppLanguagePlugin(LanguagePlugin):
             # 尝试设置库路径（常见位置）
             try:
                 # Windows 常见路径
-                if sys.platform == 'win32':
+                if sys.platform == "win32":
                     possible_paths = [
-                        r'C:\Program Files\LLVM\bin\libclang.dll',
-                        r'C:\Program Files (x86)\LLVM\bin\libclang.dll',
+                        r"C:\Program Files\LLVM\bin\libclang.dll",
+                        r"C:\Program Files (x86)\LLVM\bin\libclang.dll",
                     ]
                     for path in possible_paths:
                         if Path(path).exists():
@@ -99,7 +104,7 @@ class CppLanguagePlugin(LanguagePlugin):
         return "C/C++"
 
     def get_supported_extensions(self) -> List[str]:
-        return ['.cpp', '.cxx', '.cc', '.c', '.h', '.hpp', '.hxx', '.hh', '.inl']
+        return [".cpp", ".cxx", ".cc", ".c", ".h", ".hpp", ".hxx", ".hh", ".inl"]
 
     def is_available(self) -> bool:
         # 基础版本总是可用
@@ -109,12 +114,14 @@ class CppLanguagePlugin(LanguagePlugin):
         """检查 Clang 绑定是否可用"""
         return self._use_clang
 
-    def analyze_file(self, file_path: Path, options: Optional[Dict[str, Any]] = None) -> FileAnalysisResult:
+    def analyze_file(
+        self, file_path: Path, options: Optional[Dict[str, Any]] = None
+    ) -> FileAnalysisResult:
         """分析 C/C++ 文件"""
         options = options or {}
 
         # 如果可用且启用，使用 Clang 分析
-        if self._use_clang and options.get('use_clang', True):
+        if self._use_clang and options.get("use_clang", True):
             return self._analyze_with_clang(file_path, options)
 
         # 否则使用正则表达式基础分析
@@ -125,8 +132,8 @@ class CppLanguagePlugin(LanguagePlugin):
         result = FileAnalysisResult(file_path=file_path, language="cpp")
 
         try:
-            content = file_path.read_text(encoding='utf-8', errors='ignore')
-            lines = content.split('\n')
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+            lines = content.split("\n")
             result.line_count = len(lines)
 
             # 分析 includes
@@ -136,9 +143,15 @@ class CppLanguagePlugin(LanguagePlugin):
             self._parse_symbols(content, lines, result)
 
             # 基础统计
-            result.function_count = sum(1 for s in result.symbols if s.kind == SymbolKind.FUNCTION)
-            result.class_count = sum(1 for s in result.symbols if s.kind in {SymbolKind.CLASS, SymbolKind.STRUCT})
-            result.comment_count = content.count('//') + content.count('/*')
+            result.function_count = sum(
+                1 for s in result.symbols if s.kind == SymbolKind.FUNCTION
+            )
+            result.class_count = sum(
+                1
+                for s in result.symbols
+                if s.kind in {SymbolKind.CLASS, SymbolKind.STRUCT}
+            )
+            result.comment_count = content.count("//") + content.count("/*")
 
             # 构建简单的 AST 根节点
             result.ast_root = ASTNode(
@@ -147,7 +160,9 @@ class CppLanguagePlugin(LanguagePlugin):
                 location=SourceLocation(file_path=str(file_path), line=1, column=1),
                 range=SourceRange(
                     start=SourceLocation(file_path=str(file_path), line=1, column=1),
-                    end=SourceLocation(file_path=str(file_path), line=len(lines), column=1),
+                    end=SourceLocation(
+                        file_path=str(file_path), line=len(lines), column=1
+                    ),
                 ),
                 text=file_path.name,
             )
@@ -160,23 +175,23 @@ class CppLanguagePlugin(LanguagePlugin):
 
     def _parse_includes(self, content: str, result: FileAnalysisResult):
         """解析 #include 指令"""
-        for match in self._patterns['include'].finditer(content):
+        for match in self._patterns["include"].finditer(content):
             quote_type = match.group(1)
             include_path = match.group(2).strip()
 
             # 计算行号
-            line_num = content.count('\n', 0, match.start()) + 1
+            line_num = content.count("\n", 0, match.start()) + 1
 
             dep = DependencyInfo(
                 kind="include",
                 target=include_path,
-                is_system=(quote_type == '<'),
+                is_system=(quote_type == "<"),
                 is_relative=(quote_type == '"'),
                 location=SourceLocation(
                     file_path=str(result.file_path),
                     line=line_num,
-                    column=match.start() - content.rfind('\n', 0, match.start())
-                )
+                    column=match.start() - content.rfind("\n", 0, match.start()),
+                ),
             )
 
             # 尝试解析路径
@@ -189,13 +204,15 @@ class CppLanguagePlugin(LanguagePlugin):
 
             result.dependencies.append(dep)
 
-    def _parse_symbols(self, content: str, lines: List[str], result: FileAnalysisResult):
+    def _parse_symbols(
+        self, content: str, lines: List[str], result: FileAnalysisResult
+    ):
         """解析符号"""
         # Class
         for line_num, line in enumerate(lines, 1):
-            for match in self._patterns['class'].finditer(line):
+            for match in self._patterns["class"].finditer(line):
                 class_name = match.group(1)
-                access = match.group(2) or 'public'
+                access = match.group(2) or "public"
                 parent = match.group(3)
 
                 symbol = SymbolInfo(
@@ -204,17 +221,17 @@ class CppLanguagePlugin(LanguagePlugin):
                     location=SourceLocation(
                         file_path=str(result.file_path),
                         line=line_num,
-                        column=match.start() + 1
+                        column=match.start() + 1,
                     ),
                     qualified_name=class_name,
-                    metadata={'parent_class': parent} if parent else {}
+                    metadata={"parent_class": parent} if parent else {},
                 )
                 result.symbols.append(symbol)
                 result.symbol_map[class_name] = symbol
 
         # Struct
         for line_num, line in enumerate(lines, 1):
-            for match in self._patterns['struct'].finditer(line):
+            for match in self._patterns["struct"].finditer(line):
                 struct_name = match.group(1)
                 symbol = SymbolInfo(
                     name=struct_name,
@@ -222,7 +239,7 @@ class CppLanguagePlugin(LanguagePlugin):
                     location=SourceLocation(
                         file_path=str(result.file_path),
                         line=line_num,
-                        column=match.start() + 1
+                        column=match.start() + 1,
                     ),
                     qualified_name=struct_name,
                 )
@@ -231,7 +248,7 @@ class CppLanguagePlugin(LanguagePlugin):
 
         # Enum
         for line_num, line in enumerate(lines, 1):
-            for match in self._patterns['enum'].finditer(line):
+            for match in self._patterns["enum"].finditer(line):
                 enum_name = match.group(1)
                 symbol = SymbolInfo(
                     name=enum_name,
@@ -239,7 +256,7 @@ class CppLanguagePlugin(LanguagePlugin):
                     location=SourceLocation(
                         file_path=str(result.file_path),
                         line=line_num,
-                        column=match.start() + 1
+                        column=match.start() + 1,
                     ),
                     qualified_name=enum_name,
                 )
@@ -248,15 +265,15 @@ class CppLanguagePlugin(LanguagePlugin):
 
         # Function (简化)
         for line_num, line in enumerate(lines, 1):
-            for match in self._patterns['function'].finditer(line):
-                modifiers = match.group(1) or ''
+            for match in self._patterns["function"].finditer(line):
+                modifiers = match.group(1) or ""
                 return_type = match.group(2).strip()
                 func_name = match.group(3)
                 params = match.group(4)
-                qualifiers = match.group(5) or ''
+                qualifiers = match.group(5) or ""
 
                 # 跳过常见的非函数
-                if func_name in {'if', 'for', 'while', 'switch', 'return', 'sizeof'}:
+                if func_name in {"if", "for", "while", "switch", "return", "sizeof"}:
                     continue
 
                 # 跳过看起来不像函数的模式
@@ -269,23 +286,25 @@ class CppLanguagePlugin(LanguagePlugin):
                     location=SourceLocation(
                         file_path=str(result.file_path),
                         line=line_num,
-                        column=match.start() + 1
+                        column=match.start() + 1,
                     ),
                     qualified_name=func_name,
                     type_info=TypeInfo(name=return_type),
-                    is_static=('static' in modifiers),
-                    is_virtual=('virtual' in modifiers),
-                    is_override=('override' in qualifiers),
-                    is_final=('final' in qualifiers),
-                    is_const=('const' in qualifiers),
-                    is_pure_virtual=('=0' in qualifiers),
-                    is_inline=('inline' in modifiers),
-                    metadata={'parameters': params} if params else {}
+                    is_static=("static" in modifiers),
+                    is_virtual=("virtual" in modifiers),
+                    is_override=("override" in qualifiers),
+                    is_final=("final" in qualifiers),
+                    is_const=("const" in qualifiers),
+                    is_pure_virtual=("=0" in qualifiers),
+                    is_inline=("inline" in modifiers),
+                    metadata={"parameters": params} if params else {},
                 )
                 result.symbols.append(symbol)
                 result.symbol_map[func_name] = symbol
 
-    def _analyze_with_clang(self, file_path: Path, options: Dict[str, Any]) -> FileAnalysisResult:
+    def _analyze_with_clang(
+        self, file_path: Path, options: Dict[str, Any]
+    ) -> FileAnalysisResult:
         """使用 Clang AST 进行深度分析"""
         from clang import cindex
 
@@ -293,39 +312,51 @@ class CppLanguagePlugin(LanguagePlugin):
 
         try:
             # 编译参数
-            args = options.get('compile_args', [])
+            args = options.get("compile_args", [])
 
             # 尝试加载编译数据库
-            compdb_path = options.get('compilation_database')
+            compdb_path = options.get("compilation_database")
             if not compdb_path:
                 # 尝试在当前目录或父目录查找
                 for parent in [file_path.parent] + list(file_path.parents):
-                    candidate = parent / 'compile_commands.json'
+                    candidate = parent / "compile_commands.json"
                     if candidate.exists():
                         compdb_path = candidate
                         break
 
             if compdb_path and Path(compdb_path).exists():
                 try:
-                    compdb = cindex.CompilationDatabase.fromDirectory(str(Path(compdb_path).parent))
+                    compdb = cindex.CompilationDatabase.fromDirectory(
+                        str(Path(compdb_path).parent)
+                    )
                     commands = compdb.getCompileCommands(str(file_path))
                     if commands:
                         cmd = list(commands)[0]
-                        args = [a for a in cmd.arguments if not a.endswith(('.cpp', '.c', '.cc'))]
+                        args = [
+                            a
+                            for a in cmd.arguments
+                            if not a.endswith((".cpp", ".c", ".cc"))
+                        ]
                 except Exception:
                     pass
 
             # 默认参数
             if not args:
-                args = ['-x', 'c++' if file_path.suffix in {'.cpp', '.cxx', '.cc'} else 'c',
-                        '-std=c++17', '-I.', '-I/usr/include', '-I/usr/local/include']
+                args = [
+                    "-x",
+                    "c++" if file_path.suffix in {".cpp", ".cxx", ".cc"} else "c",
+                    "-std=c++17",
+                    "-I.",
+                    "-I/usr/include",
+                    "-I/usr/local/include",
+                ]
 
             # 解析文件
             tu = self._clang_index.parse(
                 str(file_path),
                 args=args,
-                options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_REMARKS |
-                        cindex.TranslationUnit.PARSE_SKIP_FUNCTION_BODIES
+                options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_REMARKS
+                | cindex.TranslationUnit.PARSE_SKIP_FUNCTION_BODIES,
             )
 
             # 收集诊断
@@ -337,36 +368,50 @@ class CppLanguagePlugin(LanguagePlugin):
                     cindex.Diagnostic.Error: DiagnosticSeverity.ERROR,
                     cindex.Diagnostic.Fatal: DiagnosticSeverity.ERROR,
                 }
-                result.diagnostics.append(Diagnostic(
-                    severity=severity_map.get(diag.severity, DiagnosticSeverity.NOTE),
-                    message=diag.spelling,
-                    location=SourceLocation(
-                        file_path=str(diag.location.file.name) if diag.location.file else None,
-                        line=diag.location.line,
-                        column=diag.location.column,
-                        offset=diag.location.offset,
-                    ),
-                    diagnostic_id=diag.option or '',
-                ))
+                result.diagnostics.append(
+                    Diagnostic(
+                        severity=severity_map.get(
+                            diag.severity, DiagnosticSeverity.NOTE
+                        ),
+                        message=diag.spelling,
+                        location=SourceLocation(
+                            file_path=str(diag.location.file.name)
+                            if diag.location.file
+                            else None,
+                            line=diag.location.line,
+                            column=diag.location.column,
+                            offset=diag.location.offset,
+                        ),
+                        diagnostic_id=diag.option or "",
+                    )
+                )
 
             # 遍历 AST 收集符号
             self._visit_clang_cursor(tu.cursor, result)
 
             # 统计
-            result.line_count = sum(1 for _ in file_path.open('rb'))
-            result.function_count = sum(1 for s in result.symbols if s.kind == SymbolKind.FUNCTION)
-            result.class_count = sum(1 for s in result.symbols if s.kind in {SymbolKind.CLASS, SymbolKind.STRUCT})
+            result.line_count = sum(1 for _ in file_path.open("rb"))
+            result.function_count = sum(
+                1 for s in result.symbols if s.kind == SymbolKind.FUNCTION
+            )
+            result.class_count = sum(
+                1
+                for s in result.symbols
+                if s.kind in {SymbolKind.CLASS, SymbolKind.STRUCT}
+            )
 
         except Exception as e:
             # Clang 分析失败，降级到正则
-            if options.get('fallback_to_regex', True):
+            if options.get("fallback_to_regex", True):
                 return self._analyze_with_regex(file_path)
             result.success = False
             result.error_message = str(e)
 
         return result
 
-    def _visit_clang_cursor(self, cursor, result: FileAnalysisResult, parent_name: str = ""):
+    def _visit_clang_cursor(
+        self, cursor, result: FileAnalysisResult, parent_name: str = ""
+    ):
         """遍历 Clang AST 收集符号"""
         from clang import cindex
 
@@ -375,7 +420,10 @@ class CppLanguagePlugin(LanguagePlugin):
 
         if not spelling:
             # 跳过匿名符号
-            if kind not in {cindex.CursorKind.UNION_DECL, cindex.CursorKind.STRUCT_DECL}:
+            if kind not in {
+                cindex.CursorKind.UNION_DECL,
+                cindex.CursorKind.STRUCT_DECL,
+            }:
                 for child in cursor.get_children():
                     self._visit_clang_cursor(child, result, parent_name)
                 return
@@ -542,7 +590,7 @@ class CppLanguagePlugin(LanguagePlugin):
                     kind="include",
                     target=include_file.name,
                     path=Path(include_file.name) if include_file.name else None,
-                    is_system=cursor.displayname.startswith('<'),
+                    is_system=cursor.displayname.startswith("<"),
                     location=location,
                     resolved=True,
                 )
@@ -550,11 +598,16 @@ class CppLanguagePlugin(LanguagePlugin):
 
         # 递归遍历子节点
         # 注意：对于类/命名空间，传递其名称作为父级
-        new_parent = qualified_name if kind in {
-            cindex.CursorKind.CLASS_DECL,
-            cindex.CursorKind.STRUCT_DECL,
-            cindex.CursorKind.NAMESPACE,
-        } else parent_name
+        new_parent = (
+            qualified_name
+            if kind
+            in {
+                cindex.CursorKind.CLASS_DECL,
+                cindex.CursorKind.STRUCT_DECL,
+                cindex.CursorKind.NAMESPACE,
+            }
+            else parent_name
+        )
 
         for child in cursor.get_children():
             self._visit_clang_cursor(child, result, new_parent)
@@ -562,6 +615,7 @@ class CppLanguagePlugin(LanguagePlugin):
     def _get_access_specifier(self, clang_access) -> AccessSpecifier:
         """转换 Clang 访问修饰符"""
         from clang import cindex
+
         access_map = {
             cindex.AccessSpecifier.PUBLIC: AccessSpecifier.PUBLIC,
             cindex.AccessSpecifier.PROTECTED: AccessSpecifier.PROTECTED,
@@ -584,35 +638,39 @@ class CppLanguagePlugin(LanguagePlugin):
         diagnostics = []
         try:
             proc = subprocess.run(
-                ['cppcheck', '--enable=all', '--output-format=json', str(file_path)],
+                ["cppcheck", "--enable=all", "--output-format=json", str(file_path)],
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=60,
             )
 
-            for line in proc.stdout.split('\n'):
+            for line in proc.stdout.split("\n"):
                 if line.strip():
                     try:
                         data = json.loads(line)
-                        if data.get('type') == 'error':
+                        if data.get("type") == "error":
                             sev_map = {
-                                'error': DiagnosticSeverity.ERROR,
-                                'warning': DiagnosticSeverity.WARNING,
-                                'style': DiagnosticSeverity.NOTE,
-                                'performance': DiagnosticSeverity.WARNING,
-                                'portability': DiagnosticSeverity.NOTE,
-                                'information': DiagnosticSeverity.NOTE,
+                                "error": DiagnosticSeverity.ERROR,
+                                "warning": DiagnosticSeverity.WARNING,
+                                "style": DiagnosticSeverity.NOTE,
+                                "performance": DiagnosticSeverity.WARNING,
+                                "portability": DiagnosticSeverity.NOTE,
+                                "information": DiagnosticSeverity.NOTE,
                             }
-                            diagnostics.append(Diagnostic(
-                                severity=sev_map.get(data.get('severity'), DiagnosticSeverity.NOTE),
-                                message=data.get('message', ''),
-                                location=SourceLocation(
-                                    file_path=data.get('file'),
-                                    line=data.get('line', 0),
-                                    column=0,
-                                ),
-                                diagnostic_id=data.get('id', ''),
-                            ))
+                            diagnostics.append(
+                                Diagnostic(
+                                    severity=sev_map.get(
+                                        data.get("severity"), DiagnosticSeverity.NOTE
+                                    ),
+                                    message=data.get("message", ""),
+                                    location=SourceLocation(
+                                        file_path=data.get("file"),
+                                        line=data.get("line", 0),
+                                        column=0,
+                                    ),
+                                    diagnostic_id=data.get("id", ""),
+                                )
+                            )
                     except json.JSONDecodeError:
                         pass
 
@@ -628,52 +686,56 @@ class CppLanguagePlugin(LanguagePlugin):
             return []
 
         smells = []
-        content = file_path.read_text(encoding='utf-8', errors='ignore')
+        content = file_path.read_text(encoding="utf-8", errors="ignore")
 
         # 检测过长函数
         for symbol in result.symbols:
             if symbol.kind == SymbolKind.FUNCTION and symbol.location.line > 0:
                 # 简单估算函数长度（不精确）
                 patterns = [
-                    (rf'\b{symbol.name}\s*\([^)]*\)\s*\{{', 1),  # 定义
+                    (rf"\b{symbol.name}\s*\([^)]*\)\s*\{{", 1),  # 定义
                 ]
                 for pattern, offset in patterns:
                     match = re.search(pattern, content)
                     if match:
-                        start = content.count('\n', 0, match.start())
+                        start = content.count("\n", 0, match.start())
                         # 查找匹配的 }
                         brace_count = 0
                         in_string = False
-                        for i, c in enumerate(content[match.start():]):
-                            if c == '"' and content[match.start() + i - 1] != '\\':
+                        for i, c in enumerate(content[match.start() :]):
+                            if c == '"' and content[match.start() + i - 1] != "\\":
                                 in_string = not in_string
-                            if not in_string and c == '{':
+                            if not in_string and c == "{":
                                 brace_count += 1
-                            elif not in_string and c == '}' and brace_count > 0:
+                            elif not in_string and c == "}" and brace_count > 0:
                                 brace_count -= 1
                                 if brace_count == 0:
-                                    end_line = content.count('\n', 0, match.start() + i)
+                                    end_line = content.count("\n", 0, match.start() + i)
                                     length = end_line - start
                                     if length > 50:
-                                        smells.append({
-                                            'kind': 'long_function',
-                                            'severity': 'warning',
-                                            'message': f'函数 "{symbol.name}" 过长 ({length} 行)',
-                                            'location': symbol.location,
-                                            'threshold': 50,
-                                        })
+                                        smells.append(
+                                            {
+                                                "kind": "long_function",
+                                                "severity": "warning",
+                                                "message": f'函数 "{symbol.name}" 过长 ({length} 行)',
+                                                "location": symbol.location,
+                                                "threshold": 50,
+                                            }
+                                        )
                                     break
 
         # 检测魔法数字
-        magic_numbers = set(re.findall(r'\b\d{4,}\b', content))
+        magic_numbers = set(re.findall(r"\b\d{4,}\b", content))
         for num in magic_numbers:
             if int(num) not in {2020, 2021, 2022, 2023, 2024, 2025, 1000, 1024}:
-                smells.append({
-                    'kind': 'magic_number',
-                    'severity': 'info',
-                    'message': f'魔法数字: {num}',
-                    'threshold': 3,
-                })
+                smells.append(
+                    {
+                        "kind": "magic_number",
+                        "severity": "info",
+                        "message": f"魔法数字: {num}",
+                        "threshold": 3,
+                    }
+                )
 
         # 检测嵌套过深
         max_nesting = 0
@@ -681,36 +743,90 @@ class CppLanguagePlugin(LanguagePlugin):
         in_comment = False
         in_string = False
 
-        for i, line in enumerate(content.split('\n'), 1):
+        for i, line in enumerate(content.split("\n"), 1):
             # 简单的注释/字符串处理
             j = 0
             while j < len(line):
                 c = line[j]
-                if c == '"' and (j == 0 or line[j-1] != '\\'):
+                if c == '"' and (j == 0 or line[j - 1] != "\\"):
                     in_string = not in_string
-                elif c == '/' and not in_string:
-                    if j + 1 < len(line) and line[j+1] == '/':
+                elif c == "/" and not in_string:
+                    if j + 1 < len(line) and line[j + 1] == "/":
                         break
-                    if j + 1 < len(line) and line[j+1] == '*':
+                    if j + 1 < len(line) and line[j + 1] == "*":
                         in_comment = True
                         j += 1
-                elif c == '*' and j + 1 < len(line) and line[j+1] == '/':
+                elif c == "*" and j + 1 < len(line) and line[j + 1] == "/":
                     in_comment = False
                     j += 1
                 elif not in_string and not in_comment:
-                    if c in '{(':
+                    if c in "{(":
                         current_nesting += 1
                         max_nesting = max(max_nesting, current_nesting)
-                    elif c in ')}':
+                    elif c in ")}":
                         current_nesting -= 1
                 j += 1
 
         if max_nesting > 4:
-            smells.append({
-                'kind': 'deep_nesting',
-                'severity': 'warning',
-                'message': f'代码嵌套过深 (深度: {max_nesting})',
-                'threshold': 4,
-            })
+            smells.append(
+                {
+                    "kind": "deep_nesting",
+                    "severity": "warning",
+                    "message": f"代码嵌套过深 (深度: {max_nesting})",
+                    "threshold": 4,
+                }
+            )
 
         return smells
+
+    def get_required_files_template(self) -> Dict[str, str]:
+        """Get required C++ file templates"""
+        return {
+            "CMakeLists.txt": """cmake_minimum_required(VERSION 3.10)
+project(${PROJECT_NAME})
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+file(GLOB_RECURSE SOURCES "src/*.cpp")
+file(GLOB_RECURSE HEADERS "include/*.h" "include/*.hpp")
+
+add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
+target_include_directories(${PROJECT_NAME} PRIVATE include)
+
+option(BUILD_TESTS "Build tests" ON)
+if(BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
+""",
+            "README.md": "# ${PROJECT_NAME}\\n\\nC++ Project\\n",
+        }
+
+    def get_test_command(self, project_dir: Path) -> List[str]:
+        """Get C++ test command"""
+        build_dir = project_dir / "build"
+        if build_dir.exists():
+            return ["ctest", "--test-dir", str(build_dir), "--output-on-failure"]
+        return []
+
+    def get_build_command(self, project_dir: Path) -> List[str]:
+        """Get C++ build command"""
+        build_dir = project_dir / "build"
+        if not build_dir.exists():
+            return ["cmake", "-B", str(build_dir), "-S", str(project_dir)]
+        return ["cmake", "--build", str(build_dir)]
+
+    def get_quality_checks(self) -> List:
+        """Get C++ quality check functions"""
+        return []
+
+    def get_project_structure(self) -> Dict[str, List[str]]:
+        """Get C++ project directory structure"""
+        return {
+            "include": [],
+            "src": [],
+            "tests": [],
+            "docs": [],
+            "build": [],
+        }
