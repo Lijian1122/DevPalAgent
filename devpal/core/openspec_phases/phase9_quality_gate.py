@@ -1644,18 +1644,18 @@ class Phase9QualityGate(PhaseInterface):
             for issue in review_issues:
                 category = issue.get("category", "other")
                 issues_by_layer[category] = issues_by_layer.get(category, 0) + 1
-                total_issues = len(review_issues)
-                critical_issues = sum(
-                    1 for i in review_issues if i["severity"] == "error"
-                )
-                passed = critical_issues == 0
-                event = ValidationCompletedEvent(
-                    workflow_id=self.workflow_id,
-                    phase_num=self.phase_number,
-                    total_issues=total_issues,
-                    issues_by_layer=issues_by_layer,
-                    passed=passed,
-                )
+            total_issues = len(review_issues)
+            critical_issues = sum(
+                1 for issue in review_issues if issue.get("severity") == "error"
+            )
+            passed = critical_issues == 0
+            event = ValidationCompletedEvent(
+                workflow_id=self.workflow_id,
+                phase_num=self.phase_number,
+                total_issues=total_issues,
+                issues_by_layer=issues_by_layer,
+                passed=passed,
+            )
             self.event_bus.publish(event)
             for issue in review_issues:
                 if issue["severity"] == "error":

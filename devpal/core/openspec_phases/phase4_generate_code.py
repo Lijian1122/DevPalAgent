@@ -15,6 +15,8 @@ from ..prompts import get_prompt_engine
 from ..templates import TemplateContext, registry
 from ..templates.install_script_generator import InstallScriptGenerator
 from .base import OpenSpecContext, PhaseInterface, PhaseResult
+from .parallel_executor import ParallelTask, ParallelTaskResult, PhaseParallelExecutor
+from .phase4_file_plan import Phase4FilePlanner
 
 _WRITE_FILE_TOOL: Dict[str, Any] = {
     "name": "write_file",
@@ -206,6 +208,10 @@ class Phase4GenerateCode(PhaseInterface):
                 errors=[str(exc)],
             )
 
+        file_plan = Phase4FilePlanner().build_plan(self.context, project_name)
+        self.context.phase4_file_plan = [item.to_dict() for item in file_plan]
+        self.log("  [PLAN] prepared {} file generation tasks".format(len(file_plan)))
+
         ai_files: List[Path] = []
         ai_errors: List[str] = []
 
@@ -241,7 +247,7 @@ class Phase4GenerateCode(PhaseInterface):
                 return "[SKIP] Infrastructure file {} already exists. Do NOT retry this file. Generate other required files instead.".format(
                     rel
                 )
-            if target.exists() and not force_regenerate:
+            if target.exists() and not force_regenerate and not delta_changed:
                 self.log("    [SKIP] {} already exists, not overwriting".format(rel))
                 self.skipped_files.append(target)
                 return "[SKIP] File {} already exists. Do NOT retry this file. Generate other required files instead.".format(
@@ -319,6 +325,21 @@ class Phase4GenerateCode(PhaseInterface):
         else:
             design_instruction = "- You MUST generate ALL business code files based on the requirements document.\n"
 
+        file_plan_section = ""
+        if file_plan:
+            file_plan_lines = [
+                "\n=== FILE GENERATION PLAN (planned Phase 4 parallelization unit) ==="
+            ]
+            for item in file_plan:
+                deps = ", ".join(item.dependencies) if item.dependencies else "none"
+                file_plan_lines.append(
+                    f"- {item.path} | stage={item.stage} | deps={deps} | purpose={item.purpose}"
+                )
+            file_plan_lines.append(
+                "Use this plan as guidance for required business files, but still use write_file for each generated file.\n"
+            )
+            file_plan_section = "\n".join(file_plan_lines)
+
         # M2: Read change artifacts if available
         change_artifacts = self._read_change_artifacts()
         change_context_section = ""
@@ -346,6 +367,7 @@ class Phase4GenerateCode(PhaseInterface):
             "- If you have only generated headers or only tests, you are NOT done. Continue generating the missing files."
             f"- ONLY skip infrastructure files: {infra_files_list}.\n"
             f"{test_framework_note}"
+            f"{file_plan_section}"
             f"{change_context_section}"
             "=== EXISTING FILES (regenerate business, skip infrastructure) ===\n"
             f"Current Time: 2026-05-15 10:00:00 (Beijing, China)\n\n"
@@ -355,6 +377,25 @@ class Phase4GenerateCode(PhaseInterface):
         cached_context = [self.context.requirements_content]
         if self.context.tech_design_content:
             cached_context.append(self.context.tech_design_content)
+
+        parallel_enabled = bool(getattr(self.context, "phase4_parallel_enabled", True))
+        parallel_safe = self._is_parallel_file_plan_safe(file_plan)
+        if parallel_enabled and file_plan and not parallel_safe:
+            self.log("  [PARALLEL] disabled for dependency-coupled file plan; using serial tool loop")
+        if parallel_enabled and file_plan and parallel_safe:
+            parallel_result = self._try_generate_files_parallel(
+                file_plan=file_plan,
+                project_dir=project_dir,
+                infra_files=infra_files,
+                infra_errors=infra_errors,
+                system_prompt=system_prompt,
+                base_user_message=user_message,
+                cached_context=cached_context,
+                client=client,
+            )
+            if parallel_result.success:
+                return parallel_result
+            self.log("  [PARALLEL] fallback to serial tool loop after parallel failure")
 
         try:
             result = client.generate_with_tool_loop(
@@ -395,6 +436,7 @@ class Phase4GenerateCode(PhaseInterface):
                     skipped_count=len(self.skipped_files),
                     infra_files=len(infra_files),
                     ai_files_generated=0,
+                    skipped_ai_generation=True,
                 )
             else:
                 # True failure: AI didn't generate files and nothing was skipped
@@ -438,11 +480,208 @@ class Phase4GenerateCode(PhaseInterface):
             infra_count=len(infra_files),
             ai_count=len(ai_files),
             total_files=len(infra_files) + len(ai_files),
+            file_plan=[item.to_dict() for item in file_plan],
+            file_plan_count=len(file_plan),
             llm_calls=client.usage.calls,
             llm_input_tokens=client.usage.input_tokens,
             llm_output_tokens=client.usage.output_tokens,
             turns=result.turns,
         )
+
+    def _is_parallel_file_plan_safe(self, file_plan) -> bool:
+        return bool(file_plan) and not any(item.dependencies for item in file_plan)
+
+    def _try_generate_files_parallel(
+        self,
+        file_plan,
+        project_dir: Path,
+        infra_files: List[Path],
+        infra_errors: List[str],
+        system_prompt: str,
+        base_user_message: str,
+        cached_context: List[str],
+        client,
+    ) -> PhaseResult:
+        tasks = [
+            ParallelTask(
+                task_id=f"phase4:{item.path}",
+                phase_number=self.phase_number,
+                task_type="code_file",
+                input_payload={
+                    "plan_item": item,
+                    "project_dir": project_dir,
+                    "system_prompt": system_prompt,
+                    "base_user_message": base_user_message,
+                    "cached_context": cached_context,
+                },
+                dependencies=[f"phase4:{dep}" for dep in item.dependencies],
+            )
+            for item in file_plan
+        ]
+        snapshots = self._snapshot_parallel_targets(file_plan, project_dir)
+        executor = PhaseParallelExecutor(
+            max_concurrency=getattr(self.context, "phase4_max_concurrency", 2),
+            retry_limit=0,
+            serial_fallback=False,
+            log=self.log,
+        )
+        try:
+            results = executor.execute(tasks, self._generate_single_file_task)
+        except Exception as exc:
+            self._restore_parallel_targets(snapshots)
+            return PhaseResult.fail(
+                "Phase 4 parallel generation failed",
+                errors=[str(exc)],
+            )
+
+        summary = executor.aggregate(results)
+        ai_files = [result.artifact_path for result in results if result.success and result.artifact_path]
+        errors = infra_errors + [
+            result.error for result in results if not result.success and result.error
+        ]
+        if errors:
+            self._restore_parallel_targets(snapshots)
+            return PhaseResult.fail(
+                "Phase 4 parallel generation failed",
+                errors=errors,
+            )
+
+        self.context.ai_generated_files.extend(ai_files)
+        for req in self.context.structured_requirements or []:
+            self.context.update_requirement_status(req.get("id", ""), "IN_PROGRESS")
+        self.context.generated_files.extend(infra_files + ai_files)
+        self._update_artifact_graph(project_dir, ai_files)
+        self.compiledb.index_project(project_dir, use_cache=False)
+        self.compiledb.save_cache(project_dir)
+        self._update_parallel_usage_stats(results)
+        self.log(f"  [PARALLEL] generated {len(ai_files)} files")
+        return PhaseResult.ok(
+            "Phase 4 complete (parallel)",
+            infra_count=len(infra_files),
+            ai_count=len(ai_files),
+            total_files=len(infra_files) + len(ai_files),
+            file_plan=[item.to_dict() for item in file_plan],
+            file_plan_count=len(file_plan),
+            parallel_summary=summary,
+            llm_calls=self.context.llm_calls,
+            llm_input_tokens=self.context.llm_input_tokens,
+            llm_output_tokens=self.context.llm_output_tokens,
+        )
+
+    def _snapshot_parallel_targets(self, file_plan, project_dir: Path) -> Dict[Path, str]:
+        snapshots: Dict[Path, str] = {}
+        for item in file_plan:
+            target = (project_dir / item.path).resolve()
+            if target.exists():
+                snapshots[target] = target.read_text(encoding="utf-8")
+        return snapshots
+
+    def _restore_parallel_targets(self, snapshots: Dict[Path, str]) -> None:
+        for target, content in snapshots.items():
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+            except Exception as exc:
+                self.log(f"  [WARN] Failed to restore {target}: {exc}")
+
+    def _generate_single_file_task(self, task: ParallelTask) -> ParallelTaskResult:
+        item = task.input_payload["plan_item"]
+        project_dir = task.input_payload["project_dir"]
+        target = (project_dir / item.path).resolve()
+        try:
+            target.relative_to(project_dir.resolve())
+        except ValueError:
+            return ParallelTaskResult(
+                task_id=task.task_id,
+                success=False,
+                error=f"path escapes project root: {item.path}",
+            )
+
+        single_file_content = []
+        def single_file_tool_handler(tool_name, tool_input):
+            if tool_name != "write_file":
+                return "[error] unknown tool {}".format(tool_name)
+            rel = (tool_input.get("path") or "").strip()
+            content = tool_input.get("content") or ""
+            if rel.replace("\\", "/") != item.path:
+                return "[error] this task may only write {}".format(item.path)
+            if not content:
+                return "[error] content is required"
+            single_file_content.append(content)
+            return "accepted {}".format(rel)
+
+        user_message = (
+            task.input_payload["base_user_message"]
+            + "\n\n=== SINGLE FILE TASK ===\n"
+            + f"Generate exactly one file: {item.path}\n"
+            + f"Purpose: {item.purpose}\n"
+            + f"Stage: {item.stage}\n"
+            + "Call write_file exactly once for this path and do not write any other file.\n"
+        )
+
+        task_client = self._create_parallel_llm_client()
+        try:
+            result = task_client.generate_with_tool_loop(
+                system=task.input_payload["system_prompt"],
+                user_message=user_message,
+                tools=[_WRITE_FILE_TOOL],
+                tool_handler=single_file_tool_handler,
+                cached_context=task.input_payload["cached_context"],
+                max_turns=5,
+                max_tokens=4096,
+            )
+        except Exception as exc:
+            return ParallelTaskResult(
+                task_id=task.task_id,
+                success=False,
+                error=str(exc),
+                metadata={"path": item.path},
+            )
+
+        if not single_file_content:
+            return ParallelTaskResult(
+                task_id=task.task_id,
+                success=False,
+                error=f"LLM did not produce {item.path}: stop_reason={result.stop_reason}",
+                metadata={"path": item.path, "turns": result.turns},
+            )
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(single_file_content[-1], encoding="utf-8")
+        self.log("    [PARALLEL AI] wrote {} ({} chars)".format(item.path, len(single_file_content[-1])))
+        return ParallelTaskResult(
+            task_id=task.task_id,
+            success=True,
+            artifact_path=target,
+            metadata={
+                "path": item.path,
+                "turns": result.turns,
+                "llm_calls": task_client.usage.calls,
+                "llm_input_tokens": task_client.usage.input_tokens,
+                "llm_output_tokens": task_client.usage.output_tokens,
+                "llm_cache_read_tokens": task_client.usage.cache_read_tokens,
+                "llm_cache_creation_tokens": task_client.usage.cache_creation_tokens,
+            },
+        )
+
+    def _create_parallel_llm_client(self):
+        from devpal.config import get_config
+
+        config = get_config()
+        provider = getattr(self.context, "phase4_parallel_provider", None) or config.llm_default_provider
+        provider_config = config.get_provider_config(provider)
+        return get_llm_client(
+            provider=provider,
+            fallback_providers=list(config.llm_fallback_providers),
+            **provider_config,
+        )
+
+    def _update_parallel_usage_stats(self, results: List[ParallelTaskResult]) -> None:
+        self.context.llm_calls = sum(int(result.metadata.get("llm_calls", 0)) for result in results)
+        self.context.llm_input_tokens = sum(int(result.metadata.get("llm_input_tokens", 0)) for result in results)
+        self.context.llm_output_tokens = sum(int(result.metadata.get("llm_output_tokens", 0)) for result in results)
+        self.context.llm_cache_read_tokens = sum(int(result.metadata.get("llm_cache_read_tokens", 0)) for result in results)
+        self.context.llm_cache_creation_tokens = sum(int(result.metadata.get("llm_cache_creation_tokens", 0)) for result in results)
 
     def _is_installer_project(self) -> bool:
         project_type = getattr(self.context, "project_type", "")

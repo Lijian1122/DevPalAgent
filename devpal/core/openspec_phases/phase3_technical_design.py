@@ -5,6 +5,9 @@
 输出: docs/技术实现文档.md  +  context.tech_design_content (供 Phase 4/10 复用)
 """
 
+import hashlib
+import json
+
 from .base import PhaseInterface, PhaseResult, OpenSpecContext
 from ..llm_client import get_llm_client
 from ..prompts import get_prompt_engine
@@ -30,6 +33,21 @@ class Phase3TechnicalDesign(PhaseInterface):
             return PhaseResult.fail(
                 "requirements_content 为空,Phase 1 是否成功?",
                 errors=["context.requirements_content is empty"],
+            )
+
+        cached = self._load_cached_design()
+        if cached:
+            tech_design, tech_doc_path = cached
+            self.context.tech_design_content = tech_design
+            self.context.generated_files.append(tech_doc_path)
+            self._write_design_to_change_dir(tech_design)
+            self.log(f"  [CACHE] reused technical design: {tech_doc_path} ({len(tech_design)} chars)")
+            return PhaseResult.ok(
+                "技术设计文档复用成功",
+                file_path=str(tech_doc_path),
+                content_length=len(tech_design),
+                llm_calls=0,
+                cache_hit=True,
             )
 
         try:
@@ -79,6 +97,7 @@ class Phase3TechnicalDesign(PhaseInterface):
         tech_doc_path = self.context.project_dir / "docs" / "技术实现文档.md"
         tech_doc_path.parent.mkdir(parents=True, exist_ok=True)
         tech_doc_path.write_text(tech_design, encoding="utf-8")
+        self._write_design_cache_metadata(tech_doc_path, tech_design)
 
         self.context.tech_design_content = tech_design
         self.context.generated_files.append(tech_doc_path)
@@ -93,6 +112,50 @@ class Phase3TechnicalDesign(PhaseInterface):
             content_length=len(tech_design),
             llm_calls=client.usage.calls,
         )
+
+    def _load_cached_design(self):
+        if getattr(self.context, "force_regenerate_design", False):
+            return None
+        tech_doc_path = self.context.project_dir / "docs" / "技术实现文档.md"
+        metadata_path = self._design_cache_metadata_path()
+        if not tech_doc_path.exists() or not metadata_path.exists():
+            return None
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if metadata.get("requirements_hash") != self._requirements_hash():
+            return None
+        if metadata.get("language") != self.context.language:
+            return None
+        if metadata.get("project_type") != self.context.project_type:
+            return None
+        if metadata.get("features") != list(self.context.features or []):
+            return None
+        tech_design = tech_doc_path.read_text(encoding="utf-8")
+        if not tech_design.strip():
+            return None
+        return tech_design, tech_doc_path
+
+    def _write_design_cache_metadata(self, tech_doc_path, tech_design: str) -> None:
+        metadata_path = self._design_cache_metadata_path()
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        metadata = {
+            "requirements_hash": self._requirements_hash(),
+            "language": self.context.language,
+            "project_type": self.context.project_type,
+            "features": list(self.context.features or []),
+            "design_path": tech_doc_path.as_posix(),
+            "content_hash": hashlib.sha256(tech_design.encode("utf-8")).hexdigest(),
+            "content_length": len(tech_design),
+        }
+        metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _design_cache_metadata_path(self):
+        return self.context.project_dir / ".spec" / "tech_design_cache.json"
+
+    def _requirements_hash(self) -> str:
+        return hashlib.sha256(self.context.requirements_content.encode("utf-8")).hexdigest()
 
     def _update_usage_stats(self, client) -> None:
         """Sync LLM usage stats from client to context."""

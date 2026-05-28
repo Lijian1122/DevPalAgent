@@ -10,6 +10,7 @@
 
 from pathlib import Path
 from .base import PhaseInterface, PhaseResult, OpenSpecContext
+from .parallel_executor import ParallelTask, ParallelTaskResult, PhaseParallelExecutor
 
 class Phase5GenerateTests(PhaseInterface):
     """Phase 5: 验证测试文件并生成测试文档"""
@@ -62,45 +63,31 @@ class Phase5GenerateTests(PhaseInterface):
         for tf in test_files:
             self.log("    - {} ({} bytes)".format(tf.name, tf.stat().st_size))
 
-        # 生成测试文档
         docs_dir = self.context.project_dir / "docs"
         docs_dir.mkdir(exist_ok=True)
 
-        test_docs_generated = []
-        errors = []
+        tasks = [self._build_test_doc_task(test_file, docs_dir) for test_file in test_files]
+        max_concurrency = getattr(self.context, "phase5_max_concurrency", 3)
+        executor = PhaseParallelExecutor(
+            max_concurrency=max_concurrency,
+            retry_limit=1,
+            serial_fallback=True,
+            log=self.log,
+        )
+        results = executor.execute(tasks, self._generate_test_doc_task)
+        parallel_summary = executor.aggregate(results)
 
-        for test_file in test_files:
-            try:
-                # 找到对应的源文件
-                source_file = self._find_source_file(test_file)
+        test_docs_generated = [
+            str(result.artifact_path)
+            for result in results
+            if result.success and result.artifact_path
+        ]
+        errors = [
+            result.error or f"Failed to generate doc for {result.task_id}"
+            for result in results
+            if not result.success
+        ]
 
-                # 生成测试文档
-                doc_file = docs_dir / f"test_{test_file.stem}_doc.md"
-
-                self.log(f"  [DOC] Generating test documentation for {test_file.name}...")
-
-                # 使用 test_doc_generator 工具
-                result = self.tool_registry.execute_tool('test_doc_generator', {
-                    'file_path': str(source_file) if source_file else str(test_file),
-                    'output_doc': str(doc_file),
-                    'test_file': str(test_file)
-                })
-
-                if result.success:
-                    test_docs_generated.append(str(doc_file))
-                    test_cases_count = result.metadata.get('test_cases_generated', 0)
-                    self.log(f"    [OK] Test doc generated: {doc_file.name} ({test_cases_count} test cases)")
-                else:
-                    errors.append(f"Failed to generate doc for {test_file.name}: {result.content}")
-                    self.log(f"    [FAIL] {result.content}")
-
-            except Exception as exc:
-                error_msg = f"Error generating doc for {test_file.name}: {exc}"
-                errors.append(error_msg)
-                self.log(f"    [ERROR] {error_msg}")
-
-        # 保存测试文档路径到 context，供 Phase 10 使用
-        # 保存测试文档路径到 context，供 Phase 10 使用
         self.context.test_docs = test_docs_generated
 
         if errors:
@@ -109,14 +96,64 @@ class Phase5GenerateTests(PhaseInterface):
                 test_count=len(test_files),
                 files=[tf.name for tf in test_files],
                 test_docs=test_docs_generated,
-                errors=errors
+                errors=errors,
+                parallel_summary=parallel_summary,
             )
 
         return PhaseResult.ok(
             f"Test files verified and {len(test_docs_generated)} test docs generated",
             test_count=len(test_files),
             files=[tf.name for tf in test_files],
-            test_docs=test_docs_generated
+            test_docs=test_docs_generated,
+            parallel_summary=parallel_summary,
+        )
+
+    def _build_test_doc_task(self, test_file: Path, docs_dir: Path) -> ParallelTask:
+        source_file = self._find_source_file(test_file)
+        doc_file = docs_dir / f"test_{test_file.stem}_doc.md"
+        return ParallelTask(
+            task_id=f"phase5:{test_file.name}",
+            phase_number=self.phase_number,
+            task_type="test_doc",
+            input_payload={
+                "test_file": test_file,
+                "source_file": source_file,
+                "doc_file": doc_file,
+            },
+        )
+
+    def _generate_test_doc_task(self, task: ParallelTask) -> ParallelTaskResult:
+        test_file = task.input_payload["test_file"]
+        source_file = task.input_payload["source_file"]
+        doc_file = task.input_payload["doc_file"]
+
+        self.log(f"  [DOC] Generating test documentation for {test_file.name}...")
+        result = self.tool_registry.execute_tool('test_doc_generator', {
+            'file_path': str(source_file) if source_file else str(test_file),
+            'output_doc': str(doc_file),
+            'test_file': str(test_file)
+        })
+
+        if result.success:
+            test_cases_count = result.metadata.get('test_cases_generated', 0)
+            self.log(f"    [OK] Test doc generated: {doc_file.name} ({test_cases_count} test cases)")
+            return ParallelTaskResult(
+                task_id=task.task_id,
+                success=True,
+                artifact_path=doc_file,
+                metadata={
+                    "test_file": test_file.name,
+                    "test_cases_generated": test_cases_count,
+                },
+            )
+
+        error = result.error_message or result.content or "unknown test_doc_generator failure"
+        self.log(f"    [FAIL] {error}")
+        return ParallelTaskResult(
+            task_id=task.task_id,
+            success=False,
+            error=f"Failed to generate doc for {test_file.name}: {error}",
+            metadata={"test_file": test_file.name},
         )
 
     def _find_source_file(self, test_file: Path) -> Path:

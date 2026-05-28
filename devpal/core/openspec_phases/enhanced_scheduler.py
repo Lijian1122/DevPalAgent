@@ -344,9 +344,13 @@ class EnhancedOpenSpecScheduler:
         #
         self.progress = ProgressMonitor() if enable_progress else None
         try:
+            initial_project_name = self.context.project_name or infer_openspec_project_name(
+                self.context.requirements_file,
+                language=self.context.language,
+            )
             self.event_integration = EventBusIntegration(
                 requirements_file=requirements_file,
-                project_name=self.context.project_name or "unknown_project",
+                project_name=initial_project_name,
             )
             self.context.workflow_id = self.event_integration.workflow_id
         except Exception as e:
