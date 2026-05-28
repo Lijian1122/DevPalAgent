@@ -54,14 +54,14 @@ class Event:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            'event_id': self.event_id,
+       'event_id': self.event_id,
+         'source': self.source,
             'event_type': self.event_type,
-            'source': self.source,
-            'priority': self.priority.value,
+      'timestamp': self.timestamp.isoformat(),
+    'priority': self.priority.value,
             'scope': self.scope.value,
-            'timestamp': self.timestamp.isoformat(),
             'metadata': self.metadata,
-        }
+     }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Event':
