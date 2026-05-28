@@ -53,15 +53,22 @@ class Event:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-       'event_id': self.event_id,
-         'source': self.source,
-            'event_type': self.event_type,
-      'timestamp': self.timestamp.isoformat(),
-    'priority': self.priority.value,
-            'scope': self.scope.value,
-            'metadata': self.metadata,
-     }
+        event_dict = {
+            "event_id": self.event_id,
+            "source": self.source,
+        }
+        if hasattr(self, "phase_name"):
+            event_dict["phase_name"] = getattr(self, "phase_name")
+        event_dict.update(
+            {
+                "event_type": self.event_type,
+                "timestamp": self.timestamp.isoformat(),
+                "priority": self.priority.value,
+                "scope": self.scope.value,
+                "metadata": self.metadata,
+            }
+        )
+        return event_dict
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Event':

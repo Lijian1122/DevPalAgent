@@ -28,33 +28,45 @@ class EventLogger:
 
     def log_event(self, event: Event):
         """记录事件到文件"""
-        event_dict = {
+        event_dict = self._event_to_ordered_dict(event)
+
+        with open(self.log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event_dict, ensure_ascii=False, default=str) + "\n")
+
+    @staticmethod
+    def _event_to_ordered_dict(event: Event) -> Dict[str, Any]:
+        ordered_keys = [
+            "event_id",
+            "source",
+            "phase_name",
+            "event_type",
+            "timestamp",
+            "priority",
+            "scope",
+            "metadata",
+        ]
+        base_values = {
             "event_id": event.event_id,
+            "source": event.source,
             "event_type": event.event_type,
             "timestamp": event.timestamp.isoformat(),
-            "source": event.source,
             "priority": event.priority.value,
             "scope": event.scope.value,
             "metadata": event.metadata,
         }
+        event_dict = {}
 
-        # 添加具体事件的字段
+        for key in ordered_keys:
+            if key in base_values:
+                event_dict[key] = base_values[key]
+            elif hasattr(event, key):
+                event_dict[key] = getattr(event, key)
+
         for key, value in event.__dict__.items():
-            if key not in [
-                "event_id",
-                "event_type",
-                "timestamp",
-                "source",
-                "priority",
-                "scope",
-                "metadata",
-            ]:
-                # 跳过私有字段
-                if not key.startswith("_"):
-                    event_dict[key] = value
+            if key not in event_dict and not key.startswith("_"):
+                event_dict[key] = value
 
-        with open(self.log_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(event_dict, ensure_ascii=False, default=str) + "\n")
+        return event_dict
 
     def read_events(
         self,

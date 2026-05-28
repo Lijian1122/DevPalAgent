@@ -59,7 +59,7 @@ class Phase3TechnicalDesign(PhaseInterface):
                 system=system_prompt,
                 user_message=user_message,
                 cached_context=cached_context,
-                max_tokens=8192,
+                max_tokens=3072,
             )
         except Exception as exc:
             self.log(f"  [FAIL] AI 调用失败: {exc}")

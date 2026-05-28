@@ -6,10 +6,20 @@ Anthropic Provider - Claude API implementation
 from typing import Any, Callable, Dict, List, Optional
 
 try:
-    from anthropic import Anthropic
+    from anthropic import (
+        Anthropic,
+        APIConnectionError,
+        APIStatusError,
+        APITimeoutError,
+        AuthenticationError,
+        PermissionDeniedError,
+        RateLimitError,
+    )
     _ANTHROPIC_AVAILABLE = True
 except ImportError:
     Anthropic = None
+    APIConnectionError = APIStatusError = APITimeoutError = Exception
+    AuthenticationError = PermissionDeniedError = RateLimitError = Exception
     _ANTHROPIC_AVAILABLE = False
 
 from .base import BaseLLMProvider, LLMUsage, ToolUseResult
@@ -40,7 +50,10 @@ class AnthropicProvider(BaseLLMProvider):
         base_url = kwargs.get('base_url')
         if base_url and base_url != "https://api.anthropic.com":
           client_kwargs["base_url"] = base_url
-        
+        timeout = kwargs.get("timeout") or kwargs.get("request_timeout") or 90
+        client_kwargs["timeout"] = float(timeout)
+        client_kwargs["max_retries"] = int(kwargs.get("max_retries", 0))
+
         self._client = Anthropic(**client_kwargs)
 
     def generate(
@@ -157,9 +170,83 @@ class AnthropicProvider(BaseLLMProvider):
         if tools:
             kwargs["tools"] = tools
         
-        response = self._client.messages.create(**kwargs)
+        try:
+            response = self._client.messages.create(**kwargs)
+        except Exception as exc:
+            raise RuntimeError(self._format_anthropic_error(exc)) from exc
         self._update_usage(response.usage)
         return response
+
+    def _format_anthropic_error(self, exc: Exception) -> str:
+        parts = [f"Anthropic API call failed: {exc.__class__.__name__}: {exc}"]
+
+        status_code = getattr(exc, "status_code", None)
+        if status_code is not None:
+            parts.append(f"status_code={status_code}")
+
+        request_id = getattr(exc, "request_id", None)
+        if not request_id:
+            response = getattr(exc, "response", None)
+            request_id = getattr(response, "headers", {}).get("request-id") if response else None
+        if request_id:
+            parts.append(f"request_id={request_id}")
+
+        error_obj = getattr(exc, "body", None) or getattr(exc, "error", None)
+        error_type = self._extract_error_value(error_obj, "type")
+        error_message = self._extract_error_value(error_obj, "message")
+        if error_type:
+            parts.append(f"error_type={error_type}")
+        if error_message:
+            parts.append(f"api_message={error_message}")
+
+        headers = getattr(getattr(exc, "response", None), "headers", {}) or {}
+        retry_after = headers.get("retry-after") or headers.get("Retry-After")
+        if retry_after:
+            parts.append(f"retry_after={retry_after}s")
+
+        diagnosis = self._diagnose_anthropic_error(exc, status_code, error_type)
+        if diagnosis:
+            parts.append(f"diagnosis={diagnosis}")
+
+        return " | ".join(parts)
+
+    @staticmethod
+    def _extract_error_value(error_obj: Any, key: str) -> Optional[str]:
+        if not error_obj:
+            return None
+        if isinstance(error_obj, dict):
+            nested = error_obj.get("error") if isinstance(error_obj.get("error"), dict) else error_obj
+            value = nested.get(key)
+            return str(value) if value else None
+        value = getattr(error_obj, key, None)
+        return str(value) if value else None
+
+    @staticmethod
+    def _diagnose_anthropic_error(
+        exc: Exception,
+        status_code: Optional[int],
+        error_type: Optional[str],
+    ) -> str:
+        error_type_text = (error_type or "").lower()
+        message = str(exc).lower()
+
+        if isinstance(exc, APITimeoutError):
+            return "request timed out; check network/proxy connectivity or reduce prompt/output size"
+        if isinstance(exc, APIConnectionError):
+            return "network connection failed; check base_url, proxy, DNS, and firewall settings"
+        if isinstance(exc, AuthenticationError) or status_code == 401:
+            return "authentication failed; check ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN"
+        if isinstance(exc, PermissionDeniedError) or status_code == 403:
+            return "permission denied; check model access, subscription/billing status, or account permissions"
+        if isinstance(exc, RateLimitError) or status_code == 429:
+            if "quota" in error_type_text or "quota" in message or "credit" in message or "billing" in message:
+                return "quota or credits appear exhausted; check billing/package balance"
+            return "rate limited; wait before retrying or reduce request rate"
+        if status_code in {500, 502, 503, 504, 529}:
+            return "Anthropic service is temporarily unavailable or overloaded; retry later"
+        if isinstance(exc, APIStatusError):
+            return "API returned a non-success HTTP status; inspect status_code/error_type/request_id"
+        return "unexpected Anthropic SDK error; inspect error_class and request_id"
 
     def _update_usage(self, usage: Any) -> None:
         """Update usage statistics"""

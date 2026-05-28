@@ -66,7 +66,7 @@ Best Practices:
 {lang_features.get_best_practices_description()}
 
 - Be concrete: name actual modules, functions, file paths. No placeholders.
-- Keep total length under 3000 words.
+- Keep total length under 1200 words. For small requirements, prefer concise concrete decisions over exhaustive explanation.
 """
 
         return prompt

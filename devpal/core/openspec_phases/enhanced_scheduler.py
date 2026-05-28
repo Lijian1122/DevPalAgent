@@ -263,18 +263,33 @@ def should_retry_error(result) -> bool:
     if not hasattr(result, "errors") or not result.errors:
         return False
 
+    error_text = " ".join(str(e) for e in result.errors).lower()
+    non_retryable_keywords = [
+        "authentication failed",
+        "permission denied",
+        "quota or credits appear exhausted",
+        "check billing/package balance",
+        "request timed out",
+        "apitimeouterror",
+        "status_code=401",
+        "status_code=403",
+    ]
+    if any(keyword in error_text for keyword in non_retryable_keywords):
+        return False
+
     retry_keywords = [
-        "timeout",
-        "connection",
-        "rate limit",
-        "temporary",
-        "network",
-        "unavailable",
-        "retry",
+        "connection failed",
+        "temporarily unavailable",
+        "overloaded",
+        "rate limited",
+        "status_code=429",
+        "status_code=500",
+        "status_code=502",
+        "status_code=503",
+        "status_code=504",
+        "status_code=529",
     ]
 
-    #
-    error_text = " ".join(str(e) for e in result.errors).lower()
     return any(keyword in error_text for keyword in retry_keywords)
 
 
@@ -887,11 +902,17 @@ class EnhancedOpenSpecScheduler:
         timeout = PHASE_TIMEOUTS.get(phase_num, 60) if self.enable_timeout else None
 
         for attempt in range(max_retries + 1):
+            result = None
+            duration = 0
             try:
                 if timeout and self.enable_timeout:
                     #
-                    with timeout_context(timeout):
-                        result, duration = phase.execute_with_timing()
+                    try:
+                        with timeout_context(timeout):
+                            result, duration = phase.execute_with_timing()
+                    except TimeoutError:
+                        if result is None:
+                            raise
                 else:
                     #
                     result, duration = phase.execute_with_timing()
@@ -910,6 +931,8 @@ class EnhancedOpenSpecScheduler:
                     time.sleep(2)  #  2
                     continue
                 else:
+                    for err in getattr(result, "errors", []) or []:
+                        print(f"[NO-RETRY] Phase {phase_num}: {err}")
                     #
                     return result, duration
 
