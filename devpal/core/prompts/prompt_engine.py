@@ -104,6 +104,17 @@ Output rules:
 - For every non-trivial class, emit at least one tests/test_<class>.cpp that includes "test_base.h"
 - Do NOT regenerate CMakeLists.txt, README.md, include/<project>.h, or tests/test_base.h - they already exist
 
+C++ Standard Library Headers (CRITICAL):
+- ALWAYS use correct STL header names: <mutex>, <thread>, <vector>, <string>, <map>, etc.
+- NEVER use non-existent headers like <lock_guard>, <unique_lock>, <shared_ptr>, etc.
+- Common mistakes to avoid:
+  * std::lock_guard → #include <mutex> (NOT <lock_guard>)
+  * std::unique_lock → #include <mutex> (NOT <unique_lock>)
+  * std::shared_ptr → #include <memory> (NOT <shared_ptr>)
+  * std::vector → #include <vector> (correct)
+  * std::string → #include <string> (correct)
+- When in doubt, check C++17 standard library documentation
+
 C++ Constructor Requirements:
 - ALWAYS provide a default constructor (no parameters) for every class
 - Also provide parameterized constructors as needed
