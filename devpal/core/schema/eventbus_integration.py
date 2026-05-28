@@ -71,6 +71,41 @@ class EventBusIntegration:
         print(f"[EventBus] Initialized for workflow {self.workflow_id[:8]}")
         print(f"[EventBus] Event log: {log_file}")
 
+    def update_project_name(self, new_project_name: str):
+        """Update project name and event log path after Phase 2 determines actual name
+
+        Args:
+               new_project_name: The actual project name from Phase 2
+        """
+        if new_project_name == self.project_name:
+            return  # No change needed
+
+        old_log_file = Path(self.project_name) / ".spec" / "events.jsonl"
+        new_log_file = Path(new_project_name) / ".spec" / "events.jsonl"
+
+        # Update project name
+        self.project_name = new_project_name
+
+        # Update event logger path
+        self.event_logger.log_file = new_log_file
+
+        # If old log file exists and has content, move it to new location
+        if old_log_file.exists() and old_log_file.stat().st_size > 0:
+            new_log_file.parent.mkdir(parents=True, exist_ok=True)
+            # Read old events and write to new location
+            try:
+                old_content = old_log_file.read_text(encoding="utf-8")
+                new_log_file.write_text(old_content, encoding="utf-8")
+                old_log_file.unlink()  # Remove old file
+                print(
+                    f"[EventBus] Migrated event log: {old_log_file} -> {new_log_file}"
+                )
+            except Exception as e:
+                print(f"[EventBus] Warning: Failed to migrate event log: {e}")
+        else:
+            # Just update the path for future events
+            print(f"[EventBus] Updated event log path: {new_log_file}")
+
     def emit_workflow_started(self, language: str, project_type: str):
         """发出工作流开始事件"""
         event = WorkflowStartedEvent(

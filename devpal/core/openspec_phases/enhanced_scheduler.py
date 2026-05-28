@@ -148,7 +148,9 @@ class CheckpointManager:
     ):
         self.checkpoint_file = Path(checkpoint_file)
         self.fallback_file = (
-            Path(fallback_file) if fallback_file and Path(fallback_file) != self.checkpoint_file else None
+            Path(fallback_file)
+            if fallback_file and Path(fallback_file) != self.checkpoint_file
+            else None
         )
         self.loaded_from_checkpoint_file = self.checkpoint_file
         self.requirements_file = Path(requirements_file)
@@ -375,46 +377,62 @@ class EnhancedOpenSpecScheduler:
         elif resume and self.checkpoint:
             restored = self.checkpoint.restore_context(self.context)
             if restored:
-                resume_phase = self.checkpoint.get_resume_phase()
-                if resume_phase > 11:
-                    print("\n[RESUME] workflow already completed; nothing to resume\n")
-                    self._ensure_logger_for_resume(11)
-                    if self.event_integration:
-                        try:
-                            phases_completed = sum(
-                                1 for r in self.context.phase_results.values() if r.success
-                            )
-                            phases_failed = sum(
-                                1
-                                for r in self.context.phase_results.values()
-                                if not r.success and not r.data.get("skipped")
-                            )
-                            phases_skipped = sum(
-                                1
-                                for r in self.context.phase_results.values()
-                                if r.data.get("skipped")
-                            )
-                            self.event_integration.emit_workflow_completed(
-                                success=True,
-                                phases_completed=phases_completed,
-                                phases_failed=phases_failed,
-                                phases_skipped=phases_skipped,
-                            )
-                        except Exception as e:
-                            print(f"[WARNING] Failed to emit workflow completed event: {e}")
-                    return self._build_success_response()
-                if resume_phase > 1:
-                    start_phase = resume_phase
-                    print(f"\n[RESUME]  Phase {start_phase} \n")
-                    self._ensure_logger_for_resume(start_phase)
-            else:
-                self.checkpoint.checkpoint = {}
-                self.checkpoint.loaded_from_checkpoint_file = (
-                    self.checkpoint.checkpoint_file
-                )
-                print(
-                    "\n[RESUME] checkpoint missing or incompatible; starting from Phase 1\n"
-                )
+                # Update EventBus with restored project name
+                if self.event_integration and self.context.project_name:
+                    try:
+                        self.event_integration.update_project_name(
+                            self.context.project_name
+                        )
+                    except Exception as exc:
+                        print(
+                            f"[WARN] Failed to update EventBus project name on resume: {exc}"
+                        )
+                    resume_phase = self.checkpoint.get_resume_phase()
+                    if resume_phase > 11:
+                        print(
+                            "\n[RESUME] workflow already completed; nothing to resume\n"
+                        )
+                        self._ensure_logger_for_resume(11)
+                        if self.event_integration:
+                            try:
+                                phases_completed = sum(
+                                    1
+                                    for r in self.context.phase_results.values()
+                                    if r.success
+                                )
+                                phases_failed = sum(
+                                    1
+                                    for r in self.context.phase_results.values()
+                                    if not r.success and not r.data.get("skipped")
+                                )
+                                phases_skipped = sum(
+                                    1
+                                    for r in self.context.phase_results.values()
+                                    if r.data.get("skipped")
+                                )
+                                self.event_integration.emit_workflow_completed(
+                                    success=True,
+                                    phases_completed=phases_completed,
+                                    phases_failed=phases_failed,
+                                    phases_skipped=phases_skipped,
+                                )
+                            except Exception as e:
+                                print(
+                                    f"[WARNING] Failed to emit workflow completed event: {e}"
+                                )
+                        return self._build_success_response()
+                    if resume_phase > 1:
+                        start_phase = resume_phase
+                        print(f"\n[RESUME]  Phase {start_phase} \n")
+                        self._ensure_logger_for_resume(start_phase)
+                    else:
+                        self.checkpoint.checkpoint = {}
+                        self.checkpoint.loaded_from_checkpoint_file = (
+                            self.checkpoint.checkpoint_file
+                        )
+                    print(
+                        "\n[RESUME] checkpoint missing or incompatible; starting from Phase 1\n"
+                    )
 
         # Emit workflow started event
         if self.event_integration and start_phase == 1:
@@ -585,6 +603,16 @@ class EnhancedOpenSpecScheduler:
                         self._backfill_pre_logger_phases(
                             context, current_phase=i, current_duration=duration
                         )
+                        # Update EventBus with actual project name
+                        if self.event_integration and context.project_name:
+                            try:
+                                self.event_integration.update_project_name(
+                                    context.project_name
+                                )
+                            except Exception as exc:
+                                print(
+                                    f"[WARN] Failed to update EventBus project name: {exc}"
+                                )
                     except Exception as exc:
                         print(f"[WARN] : {exc}")
                 else:
@@ -912,26 +940,36 @@ class EnhancedOpenSpecScheduler:
         context = self.context
         phase10_result = context.get_phase_result(10)
         phase10_data = phase10_result.data if phase10_result else {}
-        resolved_test_skipped = bool(
-            phase10_data.get("test_skipped") or phase10_data.get("skipped")
-        ) if test_skipped is None else test_skipped
-        resolved_test_status = str(
-            phase10_data.get("test_status")
-            or ("skipped" if resolved_test_skipped else "completed")
-        ) if test_status is None else test_status
-        resolved_test_summary = str(
-            phase10_data.get("test_summary")
-            or (
-                "skipped ({})".format(
-                    phase10_data.get("skip_reason", "not applicable")
-                )
-                if resolved_test_skipped
-                else "{}/{} passed".format(
-                    getattr(context, "test_passed", 0),
-                    getattr(context, "test_total", 0),
+        resolved_test_skipped = (
+            bool(phase10_data.get("test_skipped") or phase10_data.get("skipped"))
+            if test_skipped is None
+            else test_skipped
+        )
+        resolved_test_status = (
+            str(
+                phase10_data.get("test_status")
+                or ("skipped" if resolved_test_skipped else "completed")
+            )
+            if test_status is None
+            else test_status
+        )
+        resolved_test_summary = (
+            str(
+                phase10_data.get("test_summary")
+                or (
+                    "skipped ({})".format(
+                        phase10_data.get("skip_reason", "not applicable")
+                    )
+                    if resolved_test_skipped
+                    else "{}/{} passed".format(
+                        getattr(context, "test_passed", 0),
+                        getattr(context, "test_total", 0),
+                    )
                 )
             )
-        ) if test_summary is None else test_summary
+            if test_summary is None
+            else test_summary
+        )
         return {
             "success": True,
             "project_dir": str(context.project_dir),
