@@ -68,7 +68,7 @@ class Config:
         return self.get("anthropic.auth_token")
 
     @property
-    def anthropidot_base_url(self) -> str:
+    def anthropic_base_url(self) -> str:
         """获取 Anthropic API 基础 URL"""
         url = os.getenv("ANTHROPIC_BASE_URL")
         if url:
