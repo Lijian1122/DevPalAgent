@@ -313,6 +313,10 @@ class EnhancedOpenSpecScheduler:
         enable_progress: bool = True,
         abort_on_critical_failure: bool = True,
         force_regenerate_code: bool = True,
+        vector_retrieval_enabled: bool = False,
+        vector_persist_dir: str | None = None,
+        vector_top_k: int = 5,
+        vector_prefer_chroma: bool = True,
         verbose: bool = False,
         debug: bool = False,
     ):
@@ -331,6 +335,11 @@ class EnhancedOpenSpecScheduler:
         # : from .context import Context; self.context = Context(requirements_file)
         self.context = self.base_scheduler.context
         self.context.force_regenerate_code = force_regenerate_code
+        self.vector_retrieval_enabled = vector_retrieval_enabled
+        self.vector_persist_dir = Path(vector_persist_dir) if vector_persist_dir else None
+        self.vector_top_k = vector_top_k
+        self.vector_prefer_chroma = vector_prefer_chroma
+        self._apply_vector_options()
         self.config = get_config()
 
         #
@@ -353,6 +362,7 @@ class EnhancedOpenSpecScheduler:
                 project_name=initial_project_name,
             )
             self.context.workflow_id = self.event_integration.workflow_id
+            self.context.event_integration = self.event_integration
         except Exception as e:
             print(f"[WARNING] Failed to initialize EventBus integration: {e}")
             self.event_integration = None
@@ -370,6 +380,12 @@ class EnhancedOpenSpecScheduler:
             if enable_checkpoint
             else None
         )
+
+    def _apply_vector_options(self) -> None:
+        self.context.vector_retrieval_enabled = self.vector_retrieval_enabled
+        self.context.vector_persist_dir = self.vector_persist_dir
+        self.context.vector_top_k = self.vector_top_k
+        self.context.vector_prefer_chroma = self.vector_prefer_chroma
 
     def _get_checkpoint_file(self, requirements_file: Path) -> Path:
         project_name = infer_openspec_project_name(
@@ -396,6 +412,7 @@ class EnhancedOpenSpecScheduler:
         elif resume and self.checkpoint:
             restored = self.checkpoint.restore_context(self.context)
             if restored:
+                self._apply_vector_options()
                 # Update EventBus with restored project name
                 if self.event_integration and self.context.project_name:
                     try:
@@ -705,6 +722,9 @@ class EnhancedOpenSpecScheduler:
             if self.checkpoint:
                 self.checkpoint.save(i, result.success, context)
 
+            if i == 9 and result.success:
+                self._run_critique_phase(context)
+
             #
             if not result.success:
                 if phase.is_critical and context.abort_on_critical_failure:
@@ -727,73 +747,6 @@ class EnhancedOpenSpecScheduler:
                     print(f"[WARN] {warning_msg}")
                 return self._build_failure_response(i, phase, result)
 
-        # --- Phase 9.5: Critique Phase (after Phase 9 Quality Gate) ---
-        if i == 9 and result.success:
-            enable_critique = self.config.get("enable_critique_phase", True)
-            if enable_critique:
-                try:
-                    if context.logger:
-                        context.logger.info("Starting Phase 9.5: Critique Phase")
-
-                    # Get LLM client from base_scheduler
-                    llm_client = None
-                    if hasattr(self.base_scheduler, "llm_client"):
-                        llm_client = self.base_scheduler.llm_client
-
-                    # Get critique config
-                    critique_config = self.config.get("critique_config", {})
-
-                    # Import and execute Phase 9.5
-                    from .phase9_5_critique import Phase9_5Critique
-
-                    phase_9_5 = Phase9_5Critique(
-                        context, llm_client=llm_client, config=critique_config
-                    )
-
-                    if context.logger:
-                        context.logger.phase_start(9.5, "Critique Phase")
-
-                    critique_result, critique_duration = phase_9_5.execute_with_timing()
-
-                    if context.logger:
-                        context.logger.phase_end(
-                            9.5, critique_result.success, critique_duration
-                        )
-
-                    # Store result
-                    context.phase_results[9.5] = critique_result
-
-                    if critique_result.success:
-                        if context.logger:
-                            overall_score = critique_result.data.get(
-                                "overall_score", "N/A"
-                            )
-                            context.logger.info(
-                                f"Phase 9.5 completed: Overall Score = {overall_score}/100"
-                            )
-                    else:
-                        # Critique Phase failure is not critical
-                        if context.logger:
-                            context.logger.warning(
-                                f"Phase 9.5 failed: {critique_result.message}"
-                            )
-                        else:
-                            print(
-                                f"[WARN] Phase 9.5 Critique failed: {critique_result.message}"
-                            )
-
-                except Exception as e:
-                    # Critique Phase errors should not stop the workflow
-                    if context.logger:
-                        context.logger.error(f"Phase 9.5 Critique error: {e}")
-                    else:
-                        print(f"[ERROR] Phase 9.5 Critique error: {e}")
-            else:
-                if context.logger:
-                    context.logger.info("Phase 9.5 Critique disabled, skipping")
-                else:
-                    print("[INFO] Phase 9.5 Critique disabled, skipping")
-        # ---  ---
         #
         if self.checkpoint:
             self.checkpoint.archive("completed")
@@ -884,6 +837,63 @@ class EnhancedOpenSpecScheduler:
             10: "Compile and run tests",
             11: "Final report",
         }.get(phase_num, "Phase {}".format(phase_num))
+
+    def _run_critique_phase(self, context) -> None:
+        enable_critique = self.config.get("enable_critique_phase", True)
+        if not enable_critique:
+            if context.logger:
+                context.logger.info("Phase 9.5 Critique disabled, skipping")
+            else:
+                print("[INFO] Phase 9.5 Critique disabled, skipping")
+            return
+        try:
+            if context.logger:
+                context.logger.info("Starting Phase 9.5: Critique Phase")
+
+            llm_client = getattr(self.base_scheduler, "llm_client", None)
+            critique_config = self.config.get("critique_config", {})
+
+            from .phase9_5_critique import Phase9_5Critique
+
+            phase_9_5 = Phase9_5Critique(
+                context, llm_client=llm_client, config=critique_config
+            )
+
+            if context.logger:
+                context.logger.phase_start(9.5, "Critique Phase")
+
+            critique_result, critique_duration = phase_9_5.execute_with_timing()
+
+            if context.logger:
+                context.logger.phase_end(9.5, critique_result.success, critique_duration)
+            if self.event_integration:
+                self.event_integration.emit_phase_completed(
+                    phase_num=9.5,
+                    phase_name="Critique Phase",
+                    success=critique_result.success,
+                    duration_ms=int(critique_duration * 1000),
+                )
+
+            context.phase_results[9.5] = critique_result
+            if self.checkpoint:
+                self.checkpoint.save(9.5, critique_result.success, context)
+
+            if critique_result.success:
+                if context.logger:
+                    overall_score = critique_result.data.get("overall_score", "N/A")
+                    context.logger.info(
+                        f"Phase 9.5 completed: Overall Score = {overall_score}/100"
+                    )
+            else:
+                if context.logger:
+                    context.logger.warning(f"Phase 9.5 failed: {critique_result.message}")
+                else:
+                    print(f"[WARN] Phase 9.5 Critique failed: {critique_result.message}")
+        except Exception as e:
+            if context.logger:
+                context.logger.error(f"Phase 9.5 Critique error: {e}")
+            else:
+                print(f"[ERROR] Phase 9.5 Critique error: {e}")
 
     def _apply_success_policy(self, phase_num: int, result: PhaseResult) -> PhaseResult:
         violations = validate_phase_success(phase_num, result)

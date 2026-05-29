@@ -73,9 +73,18 @@ class Phase5GenerateTests(PhaseInterface):
             retry_limit=1,
             serial_fallback=True,
             log=self.log,
+            event_integration=getattr(self.context, "event_integration", None),
         )
         results = executor.execute(tasks, self._generate_test_doc_task)
         parallel_summary = executor.aggregate(results)
+        self.context.parallel_execution_stats[str(self.phase_number)] = parallel_summary
+        event_integration = getattr(self.context, "event_integration", None)
+        if event_integration:
+            event_integration.emit_phase_parallel_summary(
+                self.phase_number,
+                parallel_summary,
+                executor.max_concurrency,
+            )
 
         test_docs_generated = [
             str(result.artifact_path)

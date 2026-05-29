@@ -194,6 +194,14 @@ def main() -> int:
                   help="关键阶段失败时不终止流程")
     parser.add_argument("--force-regenerate-code", action="store_true",
                    help="强制重新生成所有业务代码")
+    parser.add_argument("--vector-retrieval", action="store_true",
+                        help="启用语义检索上下文注入（默认关闭）")
+    parser.add_argument("--vector-persist-dir",
+                        help="向量库持久化目录（默认: <project>/.spec/vector_store）")
+    parser.add_argument("--vector-top-k", type=int, default=5,
+                        help="语义检索返回条数 (默认: 5)")
+    parser.add_argument("--no-vector-chroma", action="store_true",
+                        help="禁用 ChromaDB，使用内存向量检索")
     parser.add_argument("--resume", action="store_true",
              help="从 .spec/checkpoint.json 恢复执行")
     parser.add_argument("--verbose", "-v", action="store_true",
@@ -253,6 +261,10 @@ def main() -> int:
             enable_progress=True,
             resume=args.resume,
             force_regenerate_code=args.force_regenerate_code,
+            vector_retrieval_enabled=args.vector_retrieval,
+            vector_persist_dir=args.vector_persist_dir,
+            vector_top_k=args.vector_top_k,
+            vector_prefer_chroma=not args.no_vector_chroma,
             verbose=args.verbose,
           debug=args.debug,
         ),

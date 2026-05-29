@@ -306,6 +306,26 @@ def _write_valid_quality_gate_project(project_dir):
 """)
 
 
+def test_quality_gate_allows_main_cpp_demo_output(context, temp_project, tool_registry):
+    _write_valid_quality_gate_project(temp_project)
+    main_file = temp_project / "src" / "main.cpp"
+    main_file.write_text("""
+#include <iostream>
+
+int main() {
+    std::cout << "demo" << std::endl;
+    return 0;
+}
+""")
+    context.ai_generated_files = [main_file]
+
+    phase = Phase9QualityGate(context, tool_registry)
+    result = phase.execute()
+
+    assert result.success is True
+    assert result.data.get("review_issues") == 0
+
+
 def test_quality_gate_self_heal_fixes_critical_review_issue(
     context, temp_project, tool_registry
 ):

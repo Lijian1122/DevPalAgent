@@ -176,7 +176,8 @@ class Phase9_5Critique(PhaseInterface):
             raise
 
         # 构建 Prompt
-        prompt = self._build_critique_prompt(file_path, code_content)
+        retrieved_context = self._build_retrieved_context_section(file_path, code_content)
+        prompt = self._build_critique_prompt(file_path, code_content, retrieved_context)
 
         # 调用 LLM
         try:
@@ -198,15 +199,26 @@ class Phase9_5Critique(PhaseInterface):
             self.log_error(f"LLM 评审失败: {e}")
             raise
 
-    def _build_critique_prompt(self, file_path: Path, code_content: str) -> str:
+    def _build_critique_prompt(
+        self,
+        file_path: Path,
+        code_content: str,
+        retrieved_context: str = "",
+    ) -> str:
         """构建评审 Prompt"""
+        context_section = ""
+        if retrieved_context:
+            context_section = f"""
+**相关上下文**:
+{retrieved_context}
+"""
         prompt = f"""
 请评审以下代码文件的质量。
 
 **文件**: `{file_path.name}`
 **代码**:
 {code_content}
-
+{context_section}
 **评审要求**:
 请从以下 5 个维度评审代码质量，每个维度给出 0-100 分的评分：
 1. **Readability** (可读性): 代码是否易读易懂，命名是否规范，注释是否充分
@@ -246,6 +258,38 @@ class Phase9_5Critique(PhaseInterface):
 }}
 """
         return prompt
+
+    def _build_retrieved_context_section(self, file_path: Path, code_content: str) -> str:
+        if not bool(getattr(self.context, "vector_retrieval_enabled", False)):
+            return ""
+        try:
+            from devpal.vector_store.semantic_search import SemanticSearchService
+
+            service = SemanticSearchService.from_context(self.context, log=self.log)
+            service.index_context(self.context, self.context.project_name)
+            query = "\n".join(
+                part
+                for part in [
+                    "Phase 9.5 critique",
+                    file_path.name,
+                    code_content[:1200],
+                    getattr(self.context, "requirements_content", ""),
+                    getattr(self.context, "tech_design_content", ""),
+                ]
+                if part
+            )
+            retrieved_context = service.build_context(
+                query=query,
+                project_name=self.context.project_name,
+                artifact_types=["requirements", "change", "source", "test", "report"],
+                top_k=int(getattr(self.context, "vector_top_k", 5) or 5),
+                event_integration=getattr(self.context, "event_integration", None),
+            )
+            self.context.vector_retrieval_stats = dict(service.stats)
+            return retrieved_context
+        except Exception as exc:
+            self.log(f"  [VECTOR] Phase 9.5 retrieval context unavailable: {exc}")
+            return ""
 
     def _parse_critique_response(self, response_text: str) -> Dict:
         """解析 LLM 响应"""

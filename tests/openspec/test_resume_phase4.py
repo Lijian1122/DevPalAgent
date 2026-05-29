@@ -54,6 +54,61 @@ def test_resume_after_phase4_restores_required_context(tmp_path):
     assert fresh.phase_results[4].data.get("ai_count") == 5
 
 
+def test_checkpoint_restores_project_type_features_and_cache_creation_tokens(tmp_path):
+    project_dir = tmp_path / "installer_project"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    requirements_file = tmp_path / "requirements.md"
+    requirements_file.write_text("installer requirement", encoding="utf-8")
+    context = OpenSpecContext(project_dir=project_dir, requirements_file=requirements_file)
+    context.project_type = "installer"
+    context.features = ["install"]
+    context.llm_cache_creation_tokens = 123
+
+    checkpoint_path = project_dir / ".spec" / "checkpoint.json"
+    saver = CheckpointManager(checkpoint_path, requirements_file)
+    saver.save(3, True, context)
+
+    fresh = OpenSpecContext(project_dir=Path(""), requirements_file=requirements_file)
+    reloader = CheckpointManager(checkpoint_path, requirements_file)
+    assert reloader.restore_context(fresh)
+
+    assert fresh.project_type == "installer"
+    assert fresh.features == ["install"]
+    assert fresh.llm_cache_creation_tokens == 123
+
+
+def test_resume_reapplies_current_vector_options_after_checkpoint_restore(tmp_path, monkeypatch):
+    project_dir = tmp_path / "cpp_simple_login"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    requirements_file = tmp_path / "simple_login.md"
+    requirements_file.write_text("cpp login requirement", encoding="utf-8")
+    context = OpenSpecContext(project_dir=project_dir, requirements_file=requirements_file)
+    context.project_name = "cpp_simple_login"
+    context.vector_retrieval_enabled = False
+    context.vector_top_k = 5
+    context.set_phase_result(11, PhaseResult.ok("phase 11"))
+
+    checkpoint_path = project_dir / ".spec" / "checkpoint.json"
+    checkpoint = CheckpointManager(checkpoint_path, requirements_file)
+    checkpoint.save(11, True, context)
+
+    monkeypatch.chdir(tmp_path)
+    scheduler = EnhancedOpenSpecScheduler(
+        str(requirements_file),
+        _DummyRegistry(),
+        enable_progress=False,
+        vector_retrieval_enabled=True,
+        vector_top_k=3,
+        vector_prefer_chroma=False,
+    )
+    result = scheduler.run_all_phases(resume=True)
+
+    assert result["success"] is True
+    assert scheduler.context.vector_retrieval_enabled is True
+    assert scheduler.context.vector_top_k == 3
+    assert scheduler.context.vector_prefer_chroma is False
+
+
 def test_resume_after_completed_workflow_returns_noop_success(tmp_path, monkeypatch):
     project_dir = tmp_path / "cpp_simple_login"
     project_dir.mkdir(parents=True, exist_ok=True)

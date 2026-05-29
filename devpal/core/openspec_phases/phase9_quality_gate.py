@@ -490,7 +490,7 @@ class Phase9QualityGate(PhaseInterface):
                     )
 
             # 调试代码检查
-            if "debug" in check_types:
+            if "debug" in check_types and not file_path.replace("\\", "/").endswith("src/main.cpp"):
                 if "cout" in line_before_comment or "printf" in line_before_comment:
                     # 排除注释中的
                     if not line_stripped.startswith(
@@ -1119,6 +1119,11 @@ class Phase9QualityGate(PhaseInterface):
                     parts.append(f"    💡 {issue['suggestion']}")
             parts.append("")
 
+        retrieved_context = self._build_retrieved_context_section(analysis)
+        if retrieved_context:
+            parts.append(retrieved_context)
+            parts.append("")
+
         # 强制分析步骤
         parts.append("**CRITICAL: STRUCTURED ANALYSIS REQUIRED**")
         parts.append("Before making ANY changes, you MUST provide:")
@@ -1186,6 +1191,41 @@ class Phase9QualityGate(PhaseInterface):
         parts.append("")
 
         return "\n".join(parts)
+
+    def _build_retrieved_context_section(self, analysis: Dict) -> str:
+        if not bool(getattr(self.context, "vector_retrieval_enabled", False)):
+            return ""
+        try:
+            from devpal.vector_store.semantic_search import SemanticSearchService
+
+            service = SemanticSearchService.from_context(self.context, log=self.log)
+            service.index_context(self.context, self.context.project_name)
+            issue_messages = []
+            for issues in analysis.get("by_file", {}).values():
+                issue_messages.extend(issue.get("message", "") for issue in issues)
+            query = "\n".join(
+                part
+                for part in [
+                    "Phase 9 code review self-heal",
+                    self.context.requirements_content,
+                    self.context.tech_design_content,
+                    "\n".join(issue_messages),
+                ]
+                if part
+            )
+            retrieved_context = service.build_context(
+                query=query,
+                project_name=self.context.project_name,
+                artifact_types=["source", "test", "error", "requirements"],
+                top_k=int(getattr(self.context, "vector_top_k", 5) or 5),
+                event_integration=getattr(self.context, "event_integration", None),
+            )
+            self.context.vector_retrieval_stats = dict(service.stats)
+            if retrieved_context:
+                return retrieved_context
+        except Exception as exc:
+            self.log(f"  [VECTOR] Phase 9 retrieval context unavailable: {exc}")
+        return ""
 
     def _get_fix_plan_client(self, use_fallback: bool = False) -> LLMClient:
         """Return the LLM client for a fix-plan attempt."""

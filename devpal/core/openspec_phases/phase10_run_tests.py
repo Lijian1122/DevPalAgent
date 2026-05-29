@@ -217,12 +217,18 @@ class Phase10RunTests(PhaseInterface):
                     self.log(f"  [WARN] Failed to initialize Enhanced Self-Healer: {e}")
                     self.log("  [INFO] Falling back to standard Self-Healer")
                     self.self_healer = TestSelfHealer(
-                        project_dir=project_dir, llm_client=llm_client, logger=self.log
+                        project_dir=project_dir,
+                        llm_client=llm_client,
+                        logger=self.log,
+                        context=self.context,
                     )
             else:
                 self.log("  [INFO] Initializing standard Self-Healer")
                 self.self_healer = TestSelfHealer(
-                    project_dir=project_dir, llm_client=llm_client, logger=self.log
+                    project_dir=project_dir,
+                    llm_client=llm_client,
+                    logger=self.log,
+                    context=self.context,
                 )
         except Exception as exc:
             self.log(f"  [WARN] Failed to initialize self-healer: {exc}")

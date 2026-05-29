@@ -14,10 +14,11 @@ import os  # 导入 os 模块以处理文件路径
 class TestSelfHealer:
     """测试自愈器：自动修复编译错误和测试失败"""
 
-    def __init__(self, project_dir: Path, llm_client: LLMClient, logger=None, fallback_model: str = "claude-opus-4-7"):
+    def __init__(self, project_dir: Path, llm_client: LLMClient, logger=None, fallback_model: str = "claude-opus-4-7", context=None):
         self.project_dir = project_dir
         self.llm_client = llm_client
         self.fallback_model = fallback_model  # 备用模型
+        self.context = context
         self.logger = logger or print
         self.heal_attempts = 0
         self.heal_success = 0
@@ -222,6 +223,10 @@ class TestSelfHealer:
             parts.append(error_output)
             parts.append("```")
             parts.append("")
+            retrieved_context = self._build_retrieved_context_section(error_output)
+            if retrieved_context:
+                parts.append(retrieved_context)
+                parts.append("")
             parts.append("**Task**:")
             parts.append("1. Analyze the compilation error")
             parts.append("2. Fix the test code to make it compile successfully")
@@ -319,6 +324,10 @@ class TestSelfHealer:
             parts.append(test_output if test_output.strip() else "(empty - no output produced)")
             parts.append("```")
             parts.append("")
+            retrieved_context = self._build_retrieved_context_section(test_output)
+            if retrieved_context:
+                parts.append(retrieved_context)
+                parts.append("")
 
             # Output Format
             parts.append("**OUTPUT FORMAT**:")
@@ -351,6 +360,37 @@ class TestSelfHealer:
             parts.append("3. Each code block must be complete and compilable")
             parts.append("4. Do NOT relax validation rules unless you can justify it violates requirements")
             return "\n".join(parts)
+
+    def _build_retrieved_context_section(self, error_text: str) -> str:
+            if not self.context or not bool(getattr(self.context, "vector_retrieval_enabled", False)):
+                return ""
+            try:
+                from devpal.vector_store.semantic_search import SemanticSearchService
+
+                service = SemanticSearchService.from_context(self.context, log=self.log)
+                service.index_context(self.context, getattr(self.context, "project_name", ""))
+                query = "\n".join(
+                    part
+                    for part in [
+                        "Phase 10 test self-heal",
+                        getattr(self.context, "requirements_content", ""),
+                        getattr(self.context, "tech_design_content", ""),
+                        error_text,
+                    ]
+                    if part
+                )
+                retrieved_context = service.build_context(
+                    query=query,
+                    project_name=getattr(self.context, "project_name", ""),
+                    artifact_types=["source", "test", "error", "requirements"],
+                    top_k=int(getattr(self.context, "vector_top_k", 5) or 5),
+                    event_integration=getattr(self.context, "event_integration", None),
+                )
+                self.context.vector_retrieval_stats = dict(service.stats)
+                return retrieved_context
+            except Exception as exc:
+                self.log(f"  [VECTOR] self-heal retrieval context unavailable: {exc}")
+                return ""
 
     def _extract_code_from_response(self, response: str, marker: Optional[str] = None) -> Optional[str]:
             # Extract and log analysis section if present

@@ -22,16 +22,24 @@ from .workflow_events import (
 class EventLogger:
     """事件日志记录器 将事件持久化到 JSONL 文件"""
 
-    def __init__(self, log_file: Path):
+    def __init__(self, log_file: Path, latest_log_file: Optional[Path] = None):
         self.log_file = log_file
+        self.latest_log_file = latest_log_file
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        if self.latest_log_file:
+            self.latest_log_file.parent.mkdir(parents=True, exist_ok=True)
+            self.latest_log_file.write_text("", encoding="utf-8")
 
     def log_event(self, event: Event):
         """记录事件到文件"""
         event_dict = self._event_to_ordered_dict(event)
 
+        line = json.dumps(event_dict, ensure_ascii=False, default=str) + "\n"
         with open(self.log_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(event_dict, ensure_ascii=False, default=str) + "\n")
+            f.write(line)
+        if self.latest_log_file:
+            with open(self.latest_log_file, "a", encoding="utf-8") as f:
+                f.write(line)
 
     @staticmethod
     def _event_to_ordered_dict(event: Event) -> Dict[str, Any]:
@@ -104,6 +112,8 @@ class EventLogger:
         """清空日志文件"""
         if self.log_file.exists():
             self.log_file.unlink()
+        if self.latest_log_file and self.latest_log_file.exists():
+            self.latest_log_file.unlink()
 
 
 class EventStatistics:

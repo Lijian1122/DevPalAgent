@@ -75,6 +75,8 @@ class Phase11FinalReport(PhaseInterface):
             llm_output_tokens=self.context.llm_output_tokens,
             llm_cache_read_tokens=self.context.llm_cache_read_tokens,
             self_heal_attempts=self.context.self_heal_attempts,
+            vector_retrieval_enabled=self.context.vector_retrieval_enabled,
+            vector_retrieval_stats=dict(self.context.vector_retrieval_stats),
         )
 
     def _generate_final_report(
@@ -133,16 +135,22 @@ class Phase11FinalReport(PhaseInterface):
             "- Self-heal attempts: {}".format(self.context.self_heal_attempts),
             "- AI-generated files: {}".format(len(self.context.ai_generated_files)),
             "",
-            "## 3. Test Results",
-            "",
-            "- Status: {}".format("skipped" if test_skipped else "completed"),
-            "- Summary: {}".format(test_summary),
-            "- Passed: {}".format(
-                "not applicable" if test_skipped else "{}/{}".format(passed, total)
-            ),
-            "- Pass rate: {}".format("not applicable" if test_skipped else rate),
-            "",
         ]
+        lines.extend(self._generate_vector_retrieval_section())
+        lines.extend(self._generate_parallel_execution_section())
+        lines.extend(
+            [
+                "## 3. Test Results",
+                "",
+                "- Status: {}".format("skipped" if test_skipped else "completed"),
+                "- Summary: {}".format(test_summary),
+                "- Passed: {}".format(
+                    "not applicable" if test_skipped else "{}/{}".format(passed, total)
+                ),
+                "- Pass rate: {}".format("not applicable" if test_skipped else rate),
+                "",
+            ]
+        )
 
         # Add Critique section if available
         if hasattr(self.context, "critique_result") and self.context.critique_result:
@@ -271,6 +279,45 @@ class Phase11FinalReport(PhaseInterface):
             ]
         )
         return "\n".join(lines)
+
+    def _generate_vector_retrieval_section(self) -> List[str]:
+        stats = dict(getattr(self.context, "vector_retrieval_stats", {}) or {})
+        if not getattr(self.context, "vector_retrieval_enabled", False) and not stats:
+            return []
+        return [
+            "### Semantic Retrieval",
+            "",
+            "- Enabled: {}".format(getattr(self.context, "vector_retrieval_enabled", False)),
+            "- Search count: {}".format(stats.get("search_count", 0)),
+            "- Fallback count: {}".format(stats.get("fallback_count", 0)),
+            "- Indexed documents: {}".format(stats.get("indexed_documents", 0)),
+            "- Retrieval latency ms: {}".format(stats.get("retrieval_latency_ms", 0)),
+            "",
+        ]
+
+    def _generate_parallel_execution_section(self) -> List[str]:
+        stats = dict(getattr(self.context, "parallel_execution_stats", {}) or {})
+        if not stats:
+            return []
+        lines = [
+            "### Parallel Execution Summary",
+            "",
+            "| Phase | Total Tasks | Success | Failed | Retry | Task Duration ms |",
+            "|-------|-------------|---------|--------|-------|------------------|",
+        ]
+        for phase_num, summary in sorted(stats.items(), key=lambda item: float(item[0])):
+            lines.append(
+                "| {} | {} | {} | {} | {} | {} |".format(
+                    phase_num,
+                    summary.get("total_tasks", 0),
+                    summary.get("success_count", 0),
+                    summary.get("failed_count", 0),
+                    summary.get("retry_count", 0),
+                    summary.get("total_task_duration_ms", 0),
+                )
+            )
+        lines.append("")
+        return lines
 
     def _write_artifact_graph(self) -> Path:
         graph_path = self.context.project_dir / ".spec" / "artifact_graph.json"

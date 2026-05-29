@@ -251,6 +251,55 @@ def test_phase11_python_claude_md_uses_python_conventions(tmp_path):
     assert "CMake" not in claude_md
 
 
+def test_phase11_reports_parallel_execution_stats(tmp_path):
+    project_dir = tmp_path / "cpp_simple_login"
+    for folder in ["src", "tests", "docs", ".spec"]:
+        (project_dir / folder).mkdir(parents=True, exist_ok=True)
+
+    context = OpenSpecContext(project_dir=project_dir, requirements_file=tmp_path / "requirements.md")
+    context.parallel_execution_stats = {
+        "5": {
+            "total_tasks": 2,
+            "success_count": 2,
+            "failed_count": 0,
+            "retry_count": 1,
+            "total_task_duration_ms": 120,
+        }
+    }
+
+    result = Phase11FinalReport(context).execute()
+
+    assert result.success
+    report = (project_dir / "docs" / "final_report.md").read_text(encoding="utf-8")
+    assert "### Parallel Execution Summary" in report
+    assert "| 5 | 2 | 2 | 0 | 1 | 120 |" in report
+
+
+def test_phase11_reports_vector_retrieval_stats(tmp_path):
+    project_dir = tmp_path / "cpp_simple_login"
+    for folder in ["src", "tests", "docs", ".spec"]:
+        (project_dir / folder).mkdir(parents=True, exist_ok=True)
+
+    context = OpenSpecContext(project_dir=project_dir, requirements_file=tmp_path / "requirements.md")
+    context.vector_retrieval_enabled = True
+    context.vector_retrieval_stats = {
+        "search_count": 2,
+        "fallback_count": 1,
+        "indexed_documents": 7,
+        "retrieval_latency_ms": 12,
+    }
+
+    result = Phase11FinalReport(context).execute()
+
+    assert result.success
+    assert result.data["vector_retrieval_enabled"] is True
+    assert result.data["vector_retrieval_stats"]["search_count"] == 2
+    report = (project_dir / "docs" / "final_report.md").read_text(encoding="utf-8")
+    assert "### Semantic Retrieval" in report
+    assert "- Search count: 2" in report
+    assert "- Indexed documents: 7" in report
+
+
 def test_phase11_reports_skipped_phase10_without_zero_of_zero_passed(tmp_path):
     project_dir = tmp_path / "installer_project"
     for folder in ["scripts", "tests", "docs", ".spec"]:

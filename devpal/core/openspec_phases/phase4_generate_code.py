@@ -369,6 +369,7 @@ class Phase4GenerateCode(PhaseInterface):
             f"{test_framework_note}"
             f"{file_plan_section}"
             f"{change_context_section}"
+            f"{self._build_retrieved_context_section(project_name)}"
             "=== EXISTING FILES (regenerate business, skip infrastructure) ===\n"
             f"Current Time: 2026-05-15 10:00:00 (Beijing, China)\n\n"
             + existing_overview
@@ -488,6 +489,34 @@ class Phase4GenerateCode(PhaseInterface):
             turns=result.turns,
         )
 
+    def _build_retrieved_context_section(self, project_name: str) -> str:
+        if not bool(getattr(self.context, "vector_retrieval_enabled", False)):
+            return ""
+        try:
+            from devpal.vector_store.semantic_search import SemanticSearchService
+
+            service = SemanticSearchService.from_context(self.context, log=self.log)
+            service.index_context(self.context, project_name)
+            query_parts = [
+                self.context.requirements_content,
+                self.context.tech_design_content,
+                project_name,
+                self.context.language,
+            ]
+            retrieved_context = service.build_context(
+                query="\n".join(part for part in query_parts if part),
+                project_name=project_name,
+                artifact_types=["requirements", "change", "source", "test", "error"],
+                top_k=int(getattr(self.context, "vector_top_k", 5) or 5),
+                event_integration=getattr(self.context, "event_integration", None),
+            )
+            self.context.vector_retrieval_stats = dict(service.stats)
+            if retrieved_context:
+                return "\n" + retrieved_context + "\n"
+        except Exception as exc:
+            self.log(f"  [VECTOR] retrieval context unavailable: {exc}")
+        return ""
+
     def _is_parallel_file_plan_safe(self, file_plan) -> bool:
         return bool(file_plan) and not any(item.dependencies for item in file_plan)
 
@@ -524,6 +553,7 @@ class Phase4GenerateCode(PhaseInterface):
             retry_limit=0,
             serial_fallback=False,
             log=self.log,
+            event_integration=getattr(self.context, "event_integration", None),
         )
         try:
             results = executor.execute(tasks, self._generate_single_file_task)
@@ -535,6 +565,14 @@ class Phase4GenerateCode(PhaseInterface):
             )
 
         summary = executor.aggregate(results)
+        self.context.parallel_execution_stats[str(self.phase_number)] = summary
+        event_integration = getattr(self.context, "event_integration", None)
+        if event_integration:
+            event_integration.emit_phase_parallel_summary(
+                self.phase_number,
+                summary,
+                executor.max_concurrency,
+            )
         ai_files = [result.artifact_path for result in results if result.success and result.artifact_path]
         errors = infra_errors + [
             result.error for result in results if not result.success and result.error

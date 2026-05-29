@@ -140,6 +140,14 @@ class OpenSpecContext:
     # 生成策略
     force_regenerate_code: bool = True  # 已存在业务代码时是否强制重新生成
 
+    # 可选向量检索配置
+    vector_retrieval_enabled: bool = False
+    vector_persist_dir: Optional[Path] = None
+    vector_top_k: int = 5
+    vector_prefer_chroma: bool = True
+    vector_retrieval_stats: Dict[str, int] = field(default_factory=dict)
+    parallel_execution_stats: Dict[str, Any] = field(default_factory=dict)
+
     def get_phase_result(self, phase_num: int) -> Optional[PhaseResult]:
         return self.phase_results.get(phase_num)
 
@@ -195,6 +203,7 @@ class OpenSpecContext:
             "llm_input_tokens": self.llm_input_tokens,
             "llm_output_tokens": self.llm_output_tokens,
             "llm_cache_read_tokens": self.llm_cache_read_tokens,
+            "llm_cache_creation_tokens": self.llm_cache_creation_tokens,
             "log_file": self.log_file.as_posix() if self.log_file else None,
             "current_change_id": self.current_change_id,
             "current_change_dir": self.current_change_dir.as_posix()
@@ -202,6 +211,14 @@ class OpenSpecContext:
             else None,
             "abort_on_critical_failure": self.abort_on_critical_failure,
             "force_regenerate_code": self.force_regenerate_code,
+            "vector_retrieval_enabled": self.vector_retrieval_enabled,
+            "vector_persist_dir": self.vector_persist_dir.as_posix()
+            if self.vector_persist_dir
+            else None,
+            "vector_top_k": self.vector_top_k,
+            "vector_prefer_chroma": self.vector_prefer_chroma,
+            "vector_retrieval_stats": dict(self.vector_retrieval_stats),
+            "parallel_execution_stats": dict(self.parallel_execution_stats),
         }
 
     def restore_from_checkpoint(self, data: Dict[str, Any]) -> None:
@@ -225,6 +242,8 @@ class OpenSpecContext:
         )
         self.project_name = data.get("project_name", self.project_name)
         self.language = data.get("language", self.language)
+        self.project_type = data.get("project_type", self.project_type)
+        self.features = list(data.get("features", self.features) or [])
         self.phase_results = {
             int(num): PhaseResult.from_dict(result)
             for num, result in (data.get("phase_results", {}) or {}).items()
@@ -259,6 +278,9 @@ class OpenSpecContext:
         self.llm_cache_read_tokens = int(
             data.get("llm_cache_read_tokens", self.llm_cache_read_tokens) or 0
         )
+        self.llm_cache_creation_tokens = int(
+            data.get("llm_cache_creation_tokens", self.llm_cache_creation_tokens) or 0
+        )
         log_file = data.get("log_file")
         self.log_file = Path(log_file) if log_file else self.log_file
         self.current_change_id = data.get("current_change_id")
@@ -269,6 +291,21 @@ class OpenSpecContext:
         )
         self.force_regenerate_code = bool(
             data.get("force_regenerate_code", self.force_regenerate_code)
+        )
+        self.vector_retrieval_enabled = bool(
+            data.get("vector_retrieval_enabled", self.vector_retrieval_enabled)
+        )
+        vector_persist_dir = data.get("vector_persist_dir")
+        self.vector_persist_dir = Path(vector_persist_dir) if vector_persist_dir else None
+        self.vector_top_k = int(data.get("vector_top_k", self.vector_top_k) or 5)
+        self.vector_prefer_chroma = bool(
+            data.get("vector_prefer_chroma", self.vector_prefer_chroma)
+        )
+        self.vector_retrieval_stats = dict(
+            data.get("vector_retrieval_stats", self.vector_retrieval_stats) or {}
+        )
+        self.parallel_execution_stats = dict(
+            data.get("parallel_execution_stats", self.parallel_execution_stats) or {}
         )
 
 

@@ -170,6 +170,29 @@ class TestEventBusIntegration:
                 result_summary="Generated 10 files",
                 artifacts=["src/main.py"],
             )
+            integration.emit_file_task_started(4, "phase4:src/main.py", "code_file", "src/main.py")
+            integration.emit_file_task_completed(
+                4,
+                "phase4:src/main.py",
+                "code_file",
+                "src/main.py",
+                duration_ms=120,
+            )
+            integration.emit_phase_parallel_summary(
+                4,
+                {
+                    "total_tasks": 1,
+                    "success_count": 1,
+                    "failed_count": 0,
+                    "retry_count": 0,
+                    "total_task_duration_ms": 120,
+                },
+                max_concurrency=2,
+            )
+            integration.emit_vector_index_started("demo", ["source"])
+            integration.emit_vector_index_completed("demo", indexed_documents=3, duration_ms=5)
+            integration.emit_vector_search_started("demo", top_k=2, artifact_types=["source"])
+            integration.emit_vector_search_completed("demo", top_k=2, result_count=1, retrieval_latency_ms=4)
             integration.emit_workflow_completed(
                 success=True, phases_completed=1, phases_failed=0, phases_skipped=0
             )
@@ -178,6 +201,22 @@ class TestEventBusIntegration:
             assert summary["total_events"] >= 4
             assert len(summary["phase_durations"]) == 1
             assert summary["phase_durations"][4] == 5000
+            run_log = integration.event_logger.log_file
+            latest_log = integration.event_logger.latest_log_file
+            assert run_log.parent.name == "events"
+            assert run_log.name.endswith(f"_{integration.workflow_id[:8]}.jsonl")
+            assert latest_log == Path(tmpdir) / ".spec" / "events.jsonl"
+            assert run_log.exists()
+            assert latest_log.exists()
+            log_content = run_log.read_text(encoding="utf-8")
+            assert log_content == latest_log.read_text(encoding="utf-8")
+            assert "file_task.started" in log_content
+            assert "file_task.completed" in log_content
+            assert "phase.parallel_summary" in log_content
+            assert "vector.index_started" in log_content
+            assert "vector.index_completed" in log_content
+            assert "vector.search_started" in log_content
+            assert "vector.search_completed" in log_content
 
     def test_eventbus_integration_filters_other_workflows(self):
         """测试 EventBusIntegration 只统计当前 workflow_id 的事件"""

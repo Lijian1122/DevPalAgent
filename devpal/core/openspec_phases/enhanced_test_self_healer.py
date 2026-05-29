@@ -41,7 +41,7 @@ class EnhancedTestSelfHealer(TestSelfHealer):
         logger=None,
         fallback_model: str = "claude-opus-4-7",
     ):
-        super().__init__(project_dir, llm_client, logger, fallback_model)
+        super().__init__(project_dir, llm_client, logger, fallback_model, context=context)
 
         self.context = context
         self.artifact_graph = artifact_graph

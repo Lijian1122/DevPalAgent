@@ -53,11 +53,13 @@ class PhaseParallelExecutor:
         retry_limit: int = 1,
         serial_fallback: bool = True,
         log: Optional[LogHandler] = None,
+        event_integration: Any = None,
     ):
         self.max_concurrency = max(1, int(max_concurrency or 1))
         self.retry_limit = max(0, int(retry_limit or 0))
         self.serial_fallback = serial_fallback
         self.log = log
+        self.event_integration = event_integration
 
     def execute(self, tasks: List[ParallelTask], handler: TaskHandler) -> List[ParallelTaskResult]:
         if not tasks:
@@ -178,6 +180,7 @@ class PhaseParallelExecutor:
                     f"[PARALLEL] start {task.task_id} type={task.task_type} "
                     f"attempt={attempt + 1}/{attempts} thread={thread_name}/{thread_id}"
                 )
+                self._emit_file_task_started(task, attempt)
                 result = handler(task)
                 result.duration_ms = int((time.time() - start) * 1000)
                 result.metadata["retry_attempts"] = attempt
@@ -189,8 +192,13 @@ class PhaseParallelExecutor:
                         f"success={result.success} duration_ms={result.duration_ms} "
                         f"thread={thread_name}/{thread_id}"
                     )
+                    if result.success:
+                        self._emit_file_task_completed(task, result)
+                    else:
+                        self._emit_file_task_failed(task, result)
                     return result
                 last_result = result
+                self._emit_file_task_retrying(task, attempt, result.error or "task returned failure")
             except Exception as exc:
                 last_result = ParallelTaskResult(
                     task_id=task.task_id,
@@ -208,8 +216,64 @@ class PhaseParallelExecutor:
                         f"[PARALLEL] failed {task.task_id} type={task.task_type} "
                         f"duration_ms={last_result.duration_ms} thread={thread_name}/{thread_id}: {exc}"
                     )
+                    self._emit_file_task_failed(task, last_result)
                     return last_result
+                self._emit_file_task_retrying(task, attempt, str(exc))
         return last_result or ParallelTaskResult(task_id=task.task_id, success=False, error="unknown parallel task failure")
+
+    def _task_path(self, task: ParallelTask) -> str:
+        payload = task.input_payload or {}
+        for key in ("doc_file", "test_file"):
+            if key in payload and payload[key]:
+                return str(payload[key])
+        plan_item = payload.get("plan_item")
+        if plan_item is not None and hasattr(plan_item, "path"):
+            return str(plan_item.path)
+        return str(task.metadata.get("path", ""))
+
+    def _emit_file_task_started(self, task: ParallelTask, attempt: int) -> None:
+        if self.event_integration:
+            self.event_integration.emit_file_task_started(
+                task.phase_number,
+                task.task_id,
+                task.task_type,
+                path=self._task_path(task),
+                retry_count=attempt,
+            )
+
+    def _emit_file_task_completed(self, task: ParallelTask, result: ParallelTaskResult) -> None:
+        if self.event_integration:
+            self.event_integration.emit_file_task_completed(
+                task.phase_number,
+                task.task_id,
+                task.task_type,
+                path=str(result.artifact_path or self._task_path(task)),
+                duration_ms=result.duration_ms,
+                retry_count=int(result.metadata.get("retry_attempts", 0) or 0),
+            )
+
+    def _emit_file_task_failed(self, task: ParallelTask, result: ParallelTaskResult) -> None:
+        if self.event_integration:
+            self.event_integration.emit_file_task_failed(
+                task.phase_number,
+                task.task_id,
+                task.task_type,
+                path=self._task_path(task),
+                duration_ms=result.duration_ms,
+                retry_count=int(result.metadata.get("retry_attempts", 0) or 0),
+                error=result.error or "",
+            )
+
+    def _emit_file_task_retrying(self, task: ParallelTask, attempt: int, error: str) -> None:
+        if self.event_integration:
+            self.event_integration.emit_file_task_retrying(
+                task.phase_number,
+                task.task_id,
+                task.task_type,
+                path=self._task_path(task),
+                retry_count=attempt + 1,
+                error=error,
+            )
 
     def _log(self, message: str) -> None:
         if self.log:

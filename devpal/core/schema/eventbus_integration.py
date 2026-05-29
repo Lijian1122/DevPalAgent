@@ -6,15 +6,25 @@ EventBus 主流程接入示例
 """
 
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from devpal.core.schema.event_bus import get_global_event_bus
 from devpal.core.schema.event_logger import EventLogger, EventStatistics
 from devpal.core.schema.workflow_events import (
     CheckpointCreatedEvent,
+    FileTaskCompletedEvent,
+    FileTaskFailedEvent,
+    FileTaskRetryingEvent,
+    FileTaskStartedEvent,
     PhaseCompletedEvent,
+    PhaseParallelSummaryEvent,
     PhaseSkippedEvent,
     PhaseStartedEvent,
+    VectorIndexCompletedEvent,
+    VectorIndexStartedEvent,
+    VectorSearchCompletedEvent,
+    VectorSearchStartedEvent,
     WorkflowCompletedEvent,
     WorkflowFailedEvent,
     WorkflowStartedEvent,
@@ -41,6 +51,7 @@ class EventBusIntegration:
         """
         # 生成唯一的工作流 ID
         self.workflow_id = str(uuid.uuid4())
+        self.run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.requirements_file = requirements_file
         self.project_name = project_name
 
@@ -48,8 +59,8 @@ class EventBusIntegration:
         self.event_bus = get_global_event_bus()
 
         # 初始化事件日志
-        log_file = Path(project_name) / ".spec" / "events.jsonl"
-        self.event_logger = EventLogger(log_file)
+        log_file, latest_log_file = self._event_log_paths(project_name)
+        self.event_logger = EventLogger(log_file, latest_log_file=latest_log_file)
 
         # 订阅当前工作流事件并记录
         self.event_bus.subscribe_all(
@@ -70,6 +81,13 @@ class EventBusIntegration:
 
         print(f"[EventBus] Initialized for workflow {self.workflow_id[:8]}")
         print(f"[EventBus] Event log: {log_file}")
+        print(f"[EventBus] Latest event log: {latest_log_file}")
+
+    def _event_log_paths(self, project_name: str) -> tuple[Path, Path]:
+        spec_dir = Path(project_name) / ".spec"
+        run_log = spec_dir / "events" / f"{self.run_timestamp}_{self.workflow_id[:8]}.jsonl"
+        latest_log = spec_dir / "events.jsonl"
+        return run_log, latest_log
 
     def update_project_name(self, new_project_name: str):
         """Update project name and event log path after Phase 2 determines actual name
@@ -80,31 +98,34 @@ class EventBusIntegration:
         if new_project_name == self.project_name:
             return  # No change needed
 
-        old_log_file = Path(self.project_name) / ".spec" / "events.jsonl"
-        new_log_file = Path(new_project_name) / ".spec" / "events.jsonl"
+        old_log_file = self.event_logger.log_file
+        old_latest_log_file = self.event_logger.latest_log_file
+        new_log_file, new_latest_log_file = self._event_log_paths(new_project_name)
 
         # Update project name
         self.project_name = new_project_name
 
         # Update event logger path
         self.event_logger.log_file = new_log_file
+        self.event_logger.latest_log_file = new_latest_log_file
 
-        # If old log file exists and has content, move it to new location
-        if old_log_file.exists() and old_log_file.stat().st_size > 0:
-            new_log_file.parent.mkdir(parents=True, exist_ok=True)
-            # Read old events and write to new location
-            try:
-                old_content = old_log_file.read_text(encoding="utf-8")
-                new_log_file.write_text(old_content, encoding="utf-8")
-                old_log_file.unlink()  # Remove old file
-                print(
-                    f"[EventBus] Migrated event log: {old_log_file} -> {new_log_file}"
-                )
-            except Exception as e:
-                print(f"[EventBus] Warning: Failed to migrate event log: {e}")
-        else:
-            # Just update the path for future events
-            print(f"[EventBus] Updated event log path: {new_log_file}")
+        # If old log files exist and have content, move them to new location
+        for old_path, new_path in [
+            (old_log_file, new_log_file),
+            (old_latest_log_file, new_latest_log_file),
+        ]:
+            if old_path and old_path.exists() and old_path.stat().st_size > 0:
+                new_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    old_content = old_path.read_text(encoding="utf-8")
+                    new_path.write_text(old_content, encoding="utf-8")
+                    old_path.unlink()
+                    print(f"[EventBus] Migrated event log: {old_path} -> {new_path}")
+                except Exception as e:
+                    print(f"[EventBus] Warning: Failed to migrate event log: {e}")
+            elif new_path:
+                new_path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"[EventBus] Updated event log path: {new_log_file}")
 
     def emit_workflow_started(self, language: str, project_type: str):
         """发出工作流开始事件"""
@@ -192,6 +213,105 @@ class EventBusIntegration:
             workflow_id=self.workflow_id,
             checkpoint_file=checkpoint_file,
             phase_num=phase_num,
+        )
+        self.event_bus.publish(event)
+
+    def emit_file_task_started(self, phase_num: int, task_id: str, task_type: str, path: str = "", retry_count: int = 0):
+        event = FileTaskStartedEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            task_id=task_id,
+            task_type=task_type,
+            path=path,
+            retry_count=retry_count,
+        )
+        self.event_bus.publish(event)
+
+    def emit_file_task_completed(self, phase_num: int, task_id: str, task_type: str, path: str = "", duration_ms: int = 0, retry_count: int = 0):
+        event = FileTaskCompletedEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            task_id=task_id,
+            task_type=task_type,
+            path=path,
+            duration_ms=duration_ms,
+            retry_count=retry_count,
+            success=True,
+        )
+        self.event_bus.publish(event)
+
+    def emit_file_task_failed(self, phase_num: int, task_id: str, task_type: str, path: str = "", duration_ms: int = 0, retry_count: int = 0, error: str = ""):
+        event = FileTaskFailedEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            task_id=task_id,
+            task_type=task_type,
+            path=path,
+            duration_ms=duration_ms,
+            retry_count=retry_count,
+            error=error,
+        )
+        self.event_bus.publish(event)
+
+    def emit_file_task_retrying(self, phase_num: int, task_id: str, task_type: str, path: str = "", retry_count: int = 0, error: str = ""):
+        event = FileTaskRetryingEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            task_id=task_id,
+            task_type=task_type,
+            path=path,
+            retry_count=retry_count,
+            error=error,
+        )
+        self.event_bus.publish(event)
+
+    def emit_phase_parallel_summary(self, phase_num: int, summary: dict, max_concurrency: int):
+        event = PhaseParallelSummaryEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            total_tasks=int(summary.get("total_tasks", 0) or 0),
+            success_count=int(summary.get("success_count", 0) or 0),
+            failed_count=int(summary.get("failed_count", 0) or 0),
+            retry_count=int(summary.get("retry_count", 0) or 0),
+            max_concurrency=max_concurrency,
+            total_task_duration_ms=int(summary.get("total_task_duration_ms", 0) or 0),
+        )
+        self.event_bus.publish(event)
+
+    def emit_vector_index_started(self, project_name: str, artifact_types: list = None):
+        event = VectorIndexStartedEvent(
+            workflow_id=self.workflow_id,
+            project_name=project_name,
+            artifact_types=artifact_types or [],
+        )
+        self.event_bus.publish(event)
+
+    def emit_vector_index_completed(self, project_name: str, indexed_documents: int, duration_ms: int):
+        event = VectorIndexCompletedEvent(
+            workflow_id=self.workflow_id,
+            project_name=project_name,
+            indexed_documents=indexed_documents,
+            duration_ms=duration_ms,
+        )
+        self.event_bus.publish(event)
+
+    def emit_vector_search_started(self, project_name: str, top_k: int, artifact_types: list = None):
+        event = VectorSearchStartedEvent(
+            workflow_id=self.workflow_id,
+            project_name=project_name,
+            top_k=top_k,
+            artifact_types=artifact_types or [],
+        )
+        self.event_bus.publish(event)
+
+    def emit_vector_search_completed(self, project_name: str, top_k: int, result_count: int, retrieval_latency_ms: int, fallback: bool = False):
+        event = VectorSearchCompletedEvent(
+            workflow_id=self.workflow_id,
+            project_name=project_name,
+            top_k=top_k,
+            result_count=result_count,
+            retrieval_latency_ms=retrieval_latency_ms,
+            fallback=fallback,
         )
         self.event_bus.publish(event)
 

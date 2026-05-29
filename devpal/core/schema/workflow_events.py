@@ -48,6 +48,19 @@ class WorkflowEventType(Enum):
     FILE_MODIFIED = "file.modified"
     FILE_DELETED = "file.deleted"
 
+    # Phase 内部任务级别
+    FILE_TASK_STARTED = "file_task.started"
+    FILE_TASK_COMPLETED = "file_task.completed"
+    FILE_TASK_FAILED = "file_task.failed"
+    FILE_TASK_RETRYING = "file_task.retrying"
+    PHASE_PARALLEL_SUMMARY = "phase.parallel_summary"
+
+    # 向量检索级别
+    VECTOR_INDEX_STARTED = "vector.index_started"
+    VECTOR_INDEX_COMPLETED = "vector.index_completed"
+    VECTOR_SEARCH_STARTED = "vector.search_started"
+    VECTOR_SEARCH_COMPLETED = "vector.search_completed"
+
     # LLM 级别
     LLM_REQUEST_STARTED = "llm.request_started"
     LLM_REQUEST_COMPLETED = "llm.request_completed"
@@ -408,6 +421,159 @@ class FileDeletedEvent(Event):
 # ===================================
 # LLM 级别事件
 # =====================================
+
+
+@dataclass
+class FileTaskStartedEvent(Event):
+    """Phase 内部文件任务开始事件"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    task_id: str = ""
+    task_type: str = ""
+    path: str = ""
+    retry_count: int = 0
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.FILE_TASK_STARTED.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}"
+
+
+@dataclass
+class FileTaskCompletedEvent(Event):
+    """Phase 内部文件任务完成事件"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    task_id: str = ""
+    task_type: str = ""
+    path: str = ""
+    duration_ms: int = 0
+    retry_count: int = 0
+    success: bool = True
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.FILE_TASK_COMPLETED.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}"
+
+
+@dataclass
+class FileTaskFailedEvent(Event):
+    """Phase 内部文件任务失败事件"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    task_id: str = ""
+    task_type: str = ""
+    path: str = ""
+    duration_ms: int = 0
+    retry_count: int = 0
+    error: str = ""
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.FILE_TASK_FAILED.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}"
+
+
+@dataclass
+class FileTaskRetryingEvent(Event):
+    """Phase 内部文件任务重试事件"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    task_id: str = ""
+    task_type: str = ""
+    path: str = ""
+    retry_count: int = 0
+    error: str = ""
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.FILE_TASK_RETRYING.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}"
+
+
+@dataclass
+class PhaseParallelSummaryEvent(Event):
+    """Phase 并行任务汇总事件"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    total_tasks: int = 0
+    success_count: int = 0
+    failed_count: int = 0
+    retry_count: int = 0
+    max_concurrency: int = 1
+    total_task_duration_ms: int = 0
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.PHASE_PARALLEL_SUMMARY.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}"
+
+
+@dataclass
+class VectorIndexStartedEvent(Event):
+    """向量索引开始事件"""
+
+    workflow_id: str = ""
+    project_name: str = ""
+    artifact_types: List[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.VECTOR_INDEX_STARTED.value
+        if not self.source:
+            self.source = "vector_store"
+
+
+@dataclass
+class VectorIndexCompletedEvent(Event):
+    """向量索引完成事件"""
+
+    workflow_id: str = ""
+    project_name: str = ""
+    indexed_documents: int = 0
+    duration_ms: int = 0
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.VECTOR_INDEX_COMPLETED.value
+        if not self.source:
+            self.source = "vector_store"
+
+
+@dataclass
+class VectorSearchStartedEvent(Event):
+    """向量检索开始事件"""
+
+    workflow_id: str = ""
+    project_name: str = ""
+    top_k: int = 5
+    artifact_types: List[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.VECTOR_SEARCH_STARTED.value
+        if not self.source:
+            self.source = "vector_store"
+
+
+@dataclass
+class VectorSearchCompletedEvent(Event):
+    """向量检索完成事件"""
+
+    workflow_id: str = ""
+    project_name: str = ""
+    top_k: int = 5
+    result_count: int = 0
+    retrieval_latency_ms: int = 0
+    fallback: bool = False
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.VECTOR_SEARCH_COMPLETED.value
+        if not self.source:
+            self.source = "vector_store"
 
 
 @dataclass

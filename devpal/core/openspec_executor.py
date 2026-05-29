@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from .openspec_phases.enhanced_scheduler import EnhancedOpenSpecScheduler
 
@@ -17,6 +17,10 @@ class OpenSpecRunOptions:
     enable_progress: bool = True
     resume: bool = False
     force_regenerate_code: bool = True
+    vector_retrieval_enabled: bool = False
+    vector_persist_dir: Optional[str] = None
+    vector_top_k: int = 5
+    vector_prefer_chroma: bool = True
     verbose: bool = False
     debug: bool = False
 
@@ -43,6 +47,10 @@ class OpenSpecWorkflowExecutor:
             enable_checkpoint=opts.enable_checkpoint,
             enable_progress=opts.enable_progress,
             force_regenerate_code=opts.force_regenerate_code,
+            vector_retrieval_enabled=opts.vector_retrieval_enabled,
+            vector_persist_dir=opts.vector_persist_dir,
+            vector_top_k=opts.vector_top_k,
+            vector_prefer_chroma=opts.vector_prefer_chroma,
             verbose=opts.verbose,
             debug=opts.debug,
         )
