@@ -39,6 +39,7 @@ def test_executor_preserves_resume_option_without_running(tmp_path):
 
 
 def test_scheduler_runs_critique_after_phase9_success(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     req_file = tmp_path / "requirements.md"
     req_file.write_text("C++ login requirement", encoding="utf-8")
     executor = OpenSpecWorkflowExecutor(_DummyRegistry())
