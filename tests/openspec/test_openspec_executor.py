@@ -1,7 +1,14 @@
 # -*- coding: utf-8 -*-
 
+import pytest
+
 from devpal.core.openspec_executor import OpenSpecRunOptions, OpenSpecWorkflowExecutor
 from devpal.core.openspec_phases.base import PhaseResult
+
+
+@pytest.fixture(autouse=True)
+def _isolate_working_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
 
 
 class _DummyRegistry:
@@ -39,7 +46,6 @@ def test_executor_preserves_resume_option_without_running(tmp_path):
 
 
 def test_scheduler_runs_critique_after_phase9_success(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
     req_file = tmp_path / "requirements.md"
     req_file.write_text("C++ login requirement", encoding="utf-8")
     executor = OpenSpecWorkflowExecutor(_DummyRegistry())
