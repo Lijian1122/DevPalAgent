@@ -263,6 +263,8 @@ def test_phase11_reports_parallel_execution_stats(tmp_path):
             "success_count": 2,
             "failed_count": 0,
             "retry_count": 1,
+            "max_concurrency": 3,
+            "fallback_used": False,
             "total_task_duration_ms": 120,
         }
     }
@@ -272,7 +274,7 @@ def test_phase11_reports_parallel_execution_stats(tmp_path):
     assert result.success
     report = (project_dir / "docs" / "final_report.md").read_text(encoding="utf-8")
     assert "### Parallel Execution Summary" in report
-    assert "| 5 | 2 | 2 | 0 | 1 | 120 |" in report
+    assert "| 5 | 2 | 2 | 0 | 1 | 3 | False | 120 |" in report
 
 
 def test_phase11_reports_vector_retrieval_stats(tmp_path):
@@ -287,6 +289,8 @@ def test_phase11_reports_vector_retrieval_stats(tmp_path):
         "fallback_count": 1,
         "indexed_documents": 7,
         "retrieval_latency_ms": 12,
+        "retrieved_context_count": 4,
+        "last_result_count": 2,
     }
 
     result = Phase11FinalReport(context).execute()
@@ -298,6 +302,8 @@ def test_phase11_reports_vector_retrieval_stats(tmp_path):
     assert "### Semantic Retrieval" in report
     assert "- Search count: 2" in report
     assert "- Indexed documents: 7" in report
+    assert "- Retrieved context count: 4" in report
+    assert "- Last result count: 2" in report
 
 
 def test_phase11_reports_skipped_phase10_without_zero_of_zero_passed(tmp_path):

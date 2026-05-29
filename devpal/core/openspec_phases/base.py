@@ -146,6 +146,8 @@ class OpenSpecContext:
     vector_top_k: int = 5
     vector_prefer_chroma: bool = True
     vector_retrieval_stats: Dict[str, int] = field(default_factory=dict)
+    phase4_max_concurrency: int = 2
+    phase5_max_concurrency: int = 3
     parallel_execution_stats: Dict[str, Any] = field(default_factory=dict)
 
     def get_phase_result(self, phase_num: int) -> Optional[PhaseResult]:
@@ -218,6 +220,8 @@ class OpenSpecContext:
             "vector_top_k": self.vector_top_k,
             "vector_prefer_chroma": self.vector_prefer_chroma,
             "vector_retrieval_stats": dict(self.vector_retrieval_stats),
+            "phase4_max_concurrency": self.phase4_max_concurrency,
+            "phase5_max_concurrency": self.phase5_max_concurrency,
             "parallel_execution_stats": dict(self.parallel_execution_stats),
         }
 
@@ -303,6 +307,12 @@ class OpenSpecContext:
         )
         self.vector_retrieval_stats = dict(
             data.get("vector_retrieval_stats", self.vector_retrieval_stats) or {}
+        )
+        self.phase4_max_concurrency = int(
+            data.get("phase4_max_concurrency", self.phase4_max_concurrency) or 2
+        )
+        self.phase5_max_concurrency = int(
+            data.get("phase5_max_concurrency", self.phase5_max_concurrency) or 3
         )
         self.parallel_execution_stats = dict(
             data.get("parallel_execution_stats", self.parallel_execution_stats) or {}

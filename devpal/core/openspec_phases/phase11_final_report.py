@@ -292,6 +292,8 @@ class Phase11FinalReport(PhaseInterface):
             "- Fallback count: {}".format(stats.get("fallback_count", 0)),
             "- Indexed documents: {}".format(stats.get("indexed_documents", 0)),
             "- Retrieval latency ms: {}".format(stats.get("retrieval_latency_ms", 0)),
+            "- Retrieved context count: {}".format(stats.get("retrieved_context_count", 0)),
+            "- Last result count: {}".format(stats.get("last_result_count", 0)),
             "",
         ]
 
@@ -302,17 +304,19 @@ class Phase11FinalReport(PhaseInterface):
         lines = [
             "### Parallel Execution Summary",
             "",
-            "| Phase | Total Tasks | Success | Failed | Retry | Task Duration ms |",
-            "|-------|-------------|---------|--------|-------|------------------|",
+            "| Phase | Total Tasks | Success | Failed | Retry | Max Concurrency | Fallback | Task Duration ms |",
+            "|-------|-------------|---------|--------|-------|-----------------|----------|------------------|",
         ]
         for phase_num, summary in sorted(stats.items(), key=lambda item: float(item[0])):
             lines.append(
-                "| {} | {} | {} | {} | {} | {} |".format(
+                "| {} | {} | {} | {} | {} | {} | {} | {} |".format(
                     phase_num,
                     summary.get("total_tasks", 0),
                     summary.get("success_count", 0),
                     summary.get("failed_count", 0),
                     summary.get("retry_count", 0),
+                    summary.get("max_concurrency", 0),
+                    summary.get("fallback_used", False),
                     summary.get("total_task_duration_ms", 0),
                 )
             )

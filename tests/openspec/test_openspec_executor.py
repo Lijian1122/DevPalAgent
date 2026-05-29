@@ -98,3 +98,17 @@ def test_executor_passes_vector_retrieval_options_to_scheduler(tmp_path):
     assert scheduler.context.vector_persist_dir == vector_dir
     assert scheduler.context.vector_top_k == 3
     assert scheduler.context.vector_prefer_chroma is False
+
+
+def test_executor_passes_max_concurrency_to_phase_context(tmp_path):
+    req_file = tmp_path / "requirements.md"
+    req_file.write_text("C++ login requirement", encoding="utf-8")
+
+    executor = OpenSpecWorkflowExecutor(_DummyRegistry())
+    scheduler = executor.create_scheduler(
+        str(req_file),
+        OpenSpecRunOptions(max_concurrency=4),
+    )
+
+    assert scheduler.context.phase4_max_concurrency == 4
+    assert scheduler.context.phase5_max_concurrency == 4

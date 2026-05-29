@@ -39,6 +39,8 @@ class SemanticSearchService:
             "search_count": 0,
             "fallback_count": 0,
             "retrieval_latency_ms": 0,
+            "retrieved_context_count": 0,
+            "last_result_count": 0,
         }
 
     @classmethod
@@ -141,6 +143,7 @@ class SemanticSearchService:
             )
         if not self.enabled or not query.strip() or not getattr(self.store, "enabled", False):
             self.stats["fallback_count"] += 1
+            self.stats["last_result_count"] = 0
             if event_integration:
                 event_integration.emit_vector_search_completed(
                     project_name,
@@ -168,6 +171,7 @@ class SemanticSearchService:
                 results = self.store.search(query, top_k=effective_top_k, filters=filters)
         except Exception as exc:
             self.stats["fallback_count"] += 1
+            self.stats["last_result_count"] = 0
             if self.log:
                 self.log(f"  [VECTOR] search unavailable: {exc}")
             if event_integration:
@@ -183,6 +187,8 @@ class SemanticSearchService:
         latency_ms = int((time.time() - started) * 1000)
         self.stats["retrieval_latency_ms"] += latency_ms
         results = results[:effective_top_k]
+        self.stats["last_result_count"] = len(results)
+        self.stats["retrieved_context_count"] += len(results)
         if event_integration:
             event_integration.emit_vector_search_completed(
                 project_name,

@@ -60,8 +60,10 @@ class PhaseParallelExecutor:
         self.serial_fallback = serial_fallback
         self.log = log
         self.event_integration = event_integration
+        self.fallback_used = False
 
     def execute(self, tasks: List[ParallelTask], handler: TaskHandler) -> List[ParallelTaskResult]:
+        self.fallback_used = False
         if not tasks:
             return []
         if self.max_concurrency == 1 or len(tasks) == 1:
@@ -73,6 +75,7 @@ class PhaseParallelExecutor:
         except Exception as exc:
             if not self.serial_fallback:
                 raise
+            self.fallback_used = True
             self._log(f"[PARALLEL] falling back to serial execution: {exc}")
             return self._execute_serial(tasks, handler)
 
@@ -87,6 +90,8 @@ class PhaseParallelExecutor:
             "success_count": success_count,
             "failed_count": failed_count,
             "retry_count": retry_count,
+            "max_concurrency": self.max_concurrency,
+            "fallback_used": self.fallback_used,
             "total_task_duration_ms": total_duration_ms,
             "results": [result.to_dict() for result in results],
         }

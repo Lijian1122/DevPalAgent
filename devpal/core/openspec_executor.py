@@ -21,6 +21,7 @@ class OpenSpecRunOptions:
     vector_persist_dir: Optional[str] = None
     vector_top_k: int = 5
     vector_prefer_chroma: bool = True
+    max_concurrency: int = 3
     verbose: bool = False
     debug: bool = False
 
@@ -51,6 +52,7 @@ class OpenSpecWorkflowExecutor:
             vector_persist_dir=opts.vector_persist_dir,
             vector_top_k=opts.vector_top_k,
             vector_prefer_chroma=opts.vector_prefer_chroma,
+            max_concurrency=opts.max_concurrency,
             verbose=opts.verbose,
             debug=opts.debug,
         )

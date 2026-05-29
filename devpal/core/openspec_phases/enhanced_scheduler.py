@@ -317,6 +317,7 @@ class EnhancedOpenSpecScheduler:
         vector_persist_dir: str | None = None,
         vector_top_k: int = 5,
         vector_prefer_chroma: bool = True,
+        max_concurrency: int = 3,
         verbose: bool = False,
         debug: bool = False,
     ):
@@ -339,6 +340,7 @@ class EnhancedOpenSpecScheduler:
         self.vector_persist_dir = Path(vector_persist_dir) if vector_persist_dir else None
         self.vector_top_k = vector_top_k
         self.vector_prefer_chroma = vector_prefer_chroma
+        self.max_concurrency = max(1, int(max_concurrency or 1))
         self._apply_vector_options()
         self.config = get_config()
 
@@ -386,6 +388,8 @@ class EnhancedOpenSpecScheduler:
         self.context.vector_persist_dir = self.vector_persist_dir
         self.context.vector_top_k = self.vector_top_k
         self.context.vector_prefer_chroma = self.vector_prefer_chroma
+        self.context.phase4_max_concurrency = self.max_concurrency
+        self.context.phase5_max_concurrency = self.max_concurrency
 
     def _get_checkpoint_file(self, requirements_file: Path) -> Path:
         project_name = infer_openspec_project_name(

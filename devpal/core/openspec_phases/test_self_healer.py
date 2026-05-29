@@ -369,6 +369,24 @@ class TestSelfHealer:
 
                 service = SemanticSearchService.from_context(self.context, log=self.log)
                 service.index_context(self.context, getattr(self.context, "project_name", ""))
+                project_name = getattr(self.context, "project_name", "")
+                event_integration = getattr(self.context, "event_integration", None)
+                top_k = int(getattr(self.context, "vector_top_k", 5) or 5)
+                similar_errors = service.search_similar_errors(
+                    error_text,
+                    project_name,
+                    top_k=min(3, top_k),
+                    event_integration=event_integration,
+                )
+                sections = []
+                if similar_errors:
+                    lines = ["=== SIMILAR HISTORICAL ERRORS / FIX STRATEGIES ==="]
+                    for index, document in enumerate(similar_errors, 1):
+                        lines.append(f"\n[{index}] score={document.score:.3f}")
+                        lines.append(document.content[:1200])
+                    lines.append("=== END SIMILAR HISTORICAL ERRORS / FIX STRATEGIES ===")
+                    sections.append("\n".join(lines))
+
                 query = "\n".join(
                     part
                     for part in [
@@ -381,13 +399,15 @@ class TestSelfHealer:
                 )
                 retrieved_context = service.build_context(
                     query=query,
-                    project_name=getattr(self.context, "project_name", ""),
-                    artifact_types=["source", "test", "error", "requirements"],
-                    top_k=int(getattr(self.context, "vector_top_k", 5) or 5),
-                    event_integration=getattr(self.context, "event_integration", None),
+                    project_name=project_name,
+                    artifact_types=["source", "test", "requirements"],
+                    top_k=top_k,
+                    event_integration=event_integration,
                 )
+                if retrieved_context:
+                    sections.append(retrieved_context)
                 self.context.vector_retrieval_stats = dict(service.stats)
-                return retrieved_context
+                return "\n\n".join(sections)
             except Exception as exc:
                 self.log(f"  [VECTOR] self-heal retrieval context unavailable: {exc}")
                 return ""

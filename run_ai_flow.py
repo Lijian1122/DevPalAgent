@@ -202,6 +202,8 @@ def main() -> int:
                         help="语义检索返回条数 (默认: 5)")
     parser.add_argument("--no-vector-chroma", action="store_true",
                         help="禁用 ChromaDB，使用内存向量检索")
+    parser.add_argument("--max-concurrency", type=int, default=3,
+                        help="Phase 内部文件任务最大并发数 (默认: 3)")
     parser.add_argument("--resume", action="store_true",
              help="从 .spec/checkpoint.json 恢复执行")
     parser.add_argument("--verbose", "-v", action="store_true",
@@ -265,8 +267,9 @@ def main() -> int:
             vector_persist_dir=args.vector_persist_dir,
             vector_top_k=args.vector_top_k,
             vector_prefer_chroma=not args.no_vector_chroma,
+            max_concurrency=args.max_concurrency,
             verbose=args.verbose,
-          debug=args.debug,
+            debug=args.debug,
         ),
     )
 
