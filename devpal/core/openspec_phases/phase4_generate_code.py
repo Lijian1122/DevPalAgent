@@ -7,7 +7,7 @@ Step 2: invoke Claude with a write_file tool to emit business headers,
 """
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..compiledb import CompileDB
 from ..llm_client import get_llm_client
@@ -568,17 +568,20 @@ class Phase4GenerateCode(PhaseInterface):
             llm_output_tokens=self.context.llm_output_tokens,
         )
 
-    def _snapshot_parallel_targets(self, file_plan, project_dir: Path) -> Dict[Path, str]:
-        snapshots: Dict[Path, str] = {}
+    def _snapshot_parallel_targets(self, file_plan, project_dir: Path) -> Dict[Path, Optional[str]]:
+        snapshots: Dict[Path, Optional[str]] = {}
         for item in file_plan:
             target = (project_dir / item.path).resolve()
-            if target.exists():
-                snapshots[target] = target.read_text(encoding="utf-8")
+            snapshots[target] = target.read_text(encoding="utf-8") if target.exists() else None
         return snapshots
 
-    def _restore_parallel_targets(self, snapshots: Dict[Path, str]) -> None:
+    def _restore_parallel_targets(self, snapshots: Dict[Path, Optional[str]]) -> None:
         for target, content in snapshots.items():
             try:
+                if content is None:
+                    if target.exists():
+                        target.unlink()
+                    continue
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content, encoding="utf-8")
             except Exception as exc:
