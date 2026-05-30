@@ -249,7 +249,7 @@ class OpenSpecContext:
         self.project_type = data.get("project_type", self.project_type)
         self.features = list(data.get("features", self.features) or [])
         self.phase_results = {
-            int(num): PhaseResult.from_dict(result)
+            float(num) if "." in str(num) else int(num): PhaseResult.from_dict(result)
             for num, result in (data.get("phase_results", {}) or {}).items()
         }
         self.generated_files = [

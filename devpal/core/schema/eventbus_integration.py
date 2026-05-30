@@ -12,6 +12,7 @@ from pathlib import Path
 from devpal.core.schema.event_bus import get_global_event_bus
 from devpal.core.schema.event_logger import EventLogger, EventStatistics
 from devpal.core.schema.workflow_events import (
+    ArchiveLifecycleEvent,
     CheckpointCreatedEvent,
     FileTaskCompletedEvent,
     FileTaskFailedEvent,
@@ -312,6 +313,15 @@ class EventBusIntegration:
             result_count=result_count,
             retrieval_latency_ms=retrieval_latency_ms,
             fallback=fallback,
+        )
+        self.event_bus.publish(event)
+
+    def emit_archive_event(self, event_name: str, payload: dict):
+        event = ArchiveLifecycleEvent(
+            workflow_id=self.workflow_id,
+            change_id=str(payload.get("change_id", "")),
+            archive_event=event_name,
+            payload=payload,
         )
         self.event_bus.publish(event)
 

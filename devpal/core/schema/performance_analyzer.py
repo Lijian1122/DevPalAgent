@@ -177,7 +177,7 @@ class PerformanceAnalyzer:
                 bar = "#" * filled + "-" * (bar_length - filled)
 
                 print(
-                    f"  Phase {phase_num:2d}: {phase_name:25s} {duration_sec:6.2f}s [{bar}] {percentage:5.1f}%"
+                    f"  Phase {phase_num:>4}: {phase_name:25s} {duration_sec:6.2f}s [{bar}] {percentage:5.1f}%"
                 )
 
             # 最慢的阶段

@@ -57,14 +57,17 @@ def test_scheduler_runs_critique_after_phase9_success(tmp_path, monkeypatch):
     scheduler.context.project_dir.mkdir()
     scheduler.config = {"enable_critique_phase": True, "critique_config": {}}
     calls = []
+    fake_client = object()
+    monkeypatch.setattr(scheduler, "_get_critique_llm_client", lambda: fake_client)
 
     class FakeCritique:
         def __init__(self, context, llm_client=None, config=None):
             self.context = context
+            self.llm_client = llm_client
             self.phase_name = "Critique Phase"
 
         def execute_with_timing(self):
-            calls.append("ran")
+            calls.append(self.llm_client)
             return PhaseResult.ok("critique", overall_score=88), 0.01
 
     import devpal.core.openspec_phases.phase9_5_critique as critique_module
@@ -73,7 +76,7 @@ def test_scheduler_runs_critique_after_phase9_success(tmp_path, monkeypatch):
 
     scheduler._run_critique_phase(scheduler.context)
 
-    assert calls == ["ran"]
+    assert calls == [fake_client]
     assert scheduler.context.phase_results[9.5].success is True
     assert scheduler.context.phase_results[9.5].data["overall_score"] == 88
 

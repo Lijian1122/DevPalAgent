@@ -854,7 +854,7 @@ class EnhancedOpenSpecScheduler:
             if context.logger:
                 context.logger.info("Starting Phase 9.5: Critique Phase")
 
-            llm_client = getattr(self.base_scheduler, "llm_client", None)
+            llm_client = getattr(self.base_scheduler, "llm_client", None) or self._get_critique_llm_client()
             critique_config = self.config.get("critique_config", {})
 
             from .phase9_5_critique import Phase9_5Critique
@@ -898,6 +898,11 @@ class EnhancedOpenSpecScheduler:
                 context.logger.error(f"Phase 9.5 Critique error: {e}")
             else:
                 print(f"[ERROR] Phase 9.5 Critique error: {e}")
+
+    def _get_critique_llm_client(self):
+        from devpal.core.llm_client import get_llm_client
+
+        return get_llm_client()
 
     def _apply_success_policy(self, phase_num: int, result: PhaseResult) -> PhaseResult:
         violations = validate_phase_success(phase_num, result)

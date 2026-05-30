@@ -61,6 +61,14 @@ class WorkflowEventType(Enum):
     VECTOR_SEARCH_STARTED = "vector.search_started"
     VECTOR_SEARCH_COMPLETED = "vector.search_completed"
 
+    # Archive 生命周期级别
+    ARCHIVE_STARTED = "archive.started"
+    ARCHIVE_PREFLIGHT_COMPLETED = "archive.preflight_completed"
+    ARCHIVE_SPEC_MERGED = "archive.spec_merged"
+    ARCHIVE_COVERAGE_GENERATED = "archive.coverage_generated"
+    ARCHIVE_COMPLETED = "archive.completed"
+    ARCHIVE_FAILED = "archive.failed"
+
     # LLM 级别
     LLM_REQUEST_STARTED = "llm.request_started"
     LLM_REQUEST_COMPLETED = "llm.request_completed"
@@ -513,6 +521,22 @@ class PhaseParallelSummaryEvent(Event):
         self.event_type = WorkflowEventType.PHASE_PARALLEL_SUMMARY.value
         if not self.source:
             self.source = f"phase{self.phase_num}"
+
+
+@dataclass
+class ArchiveLifecycleEvent(Event):
+    """OpenSpec archive lifecycle event"""
+
+    workflow_id: str = ""
+    change_id: str = ""
+    archive_event: str = ""
+    payload: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        event_type = f"archive.{self.archive_event}" if self.archive_event else WorkflowEventType.ARCHIVE_STARTED.value
+        self.event_type = event_type
+        if not self.source:
+            self.source = "archive"
 
 
 @dataclass

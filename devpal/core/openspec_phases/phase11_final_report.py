@@ -138,6 +138,7 @@ class Phase11FinalReport(PhaseInterface):
         ]
         lines.extend(self._generate_vector_retrieval_section())
         lines.extend(self._generate_parallel_execution_section())
+        lines.extend(self._generate_archive_section())
         lines.extend(
             [
                 "## 3. Test Results",
@@ -296,6 +297,41 @@ class Phase11FinalReport(PhaseInterface):
             "- Last result count: {}".format(stats.get("last_result_count", 0)),
             "",
         ]
+
+    def _generate_archive_section(self) -> List[str]:
+        archive_dir = self.context.project_dir / ".spec" / "archive"
+        coverage_path = self.context.project_dir / ".spec" / "coverage_matrix.md"
+        manifests = []
+        if archive_dir.exists():
+            manifests = sorted(archive_dir.glob("*.json"))
+        if not manifests and not coverage_path.exists():
+            return []
+        lines = ["### Archive Summary", ""]
+        if manifests:
+            lines.extend([
+                "| Change | Status | Archived At | Coverage |",
+                "|--------|--------|-------------|----------|",
+            ])
+            for manifest_path in manifests:
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                coverage = manifest.get("coverage", {}) or {}
+                lines.append(
+                    "| {} | {} | {} | {}% |".format(
+                        manifest.get("change_id", manifest_path.stem),
+                        manifest.get("status", "UNKNOWN"),
+                        manifest.get("archived_at", ""),
+                        coverage.get("coverage_percent", 0),
+                    )
+                )
+        if coverage_path.exists():
+            rel = coverage_path.relative_to(self.context.project_dir)
+            lines.extend(["", f"Coverage matrix: `{rel.as_posix()}`", ""])
+        else:
+            lines.append("")
+        return lines
 
     def _generate_parallel_execution_section(self) -> List[str]:
         stats = dict(getattr(self.context, "parallel_execution_stats", {}) or {})
