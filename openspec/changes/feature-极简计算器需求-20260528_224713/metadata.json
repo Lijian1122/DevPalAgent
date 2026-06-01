@@ -1,0 +1,21 @@
+{
+  "change_id": "feature-极简计算器需求-20260528_224713",
+  "change_type": "feature",
+  "title": "极简计算器需求",
+  "description": "实现一个简单的加法计算器。 - 实现一个 add 函数 - 输入：两个整数 a 和 b",
+  "status": "PROPOSED",
+  "created_at": "2026-05-28T22:47:13.911701",
+  "updated_at": "2026-05-28T22:47:13.911701",
+  "requirements_affected": {
+    "added": [
+      "REQ-001",
+      "REQ-002",
+      "REQ-003",
+      "REQ-004"
+    ],
+    "modified": [],
+    "removed": []
+  },
+  "generated_files": [],
+  "author": "devpal-agent"
+}

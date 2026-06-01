@@ -434,6 +434,38 @@ phase4_code_generation:
 
 ---
 
+## 5.5 Archive + Traceability Lifecycle
+
+After OpenSpec execution completes, you can archive the change to maintain long-term traceability:
+```bash
+# Archive a change
+python -m devpal.openspec archive <change-id> --project-dir <path>
+```
+
+**What archiving does:**
+1. Merges change spec into `openspec/specs/main.md`
+2. Updates change status to `ARCHIVED`
+3. Generates coverage matrix (Requirement → Code → Test → Report)
+4. Updates ArtifactGraph with archive metadata
+5. Creates archive manifest in `.spec/archive/<change-id>.json`
+
+**Traceability chain:**
+```
+Requirement (REQ-001)
+    ↓ implements
+Code (src/feature.cpp)
+    ↓ tests
+Test (tests/test_feature.cpp)
+    ↓ documents
+Report (docs/final_report.md)
+```
+
+All connections are preserved in ArtifactGraph and coverage matrix.
+
+**See:** [doc3.0/archive_lifecycle.md](doc3.0/archive_lifecycle.md) for complete documentation.
+
+---
+
 ## 6. 快速开始
 
 ### 6.1 环境要求
