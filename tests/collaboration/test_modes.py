@@ -17,7 +17,7 @@ def test_mode_policy_full():
     """Test FULL mode policy."""
     policy = MODE_POLICIES[RunMode.FULL]
 
-  assert policy.start_phase == 1
+    assert policy.start_phase == 1
     assert policy.stop_after_phase is None
     assert policy.require_existing_change is False
     assert policy.allow_code_writes is True
@@ -27,7 +27,7 @@ def test_mode_policy_full():
 
     # Should run all phases
     assert policy.should_run_phase(1)
-  assert policy.should_run_phase(5)
+    assert policy.should_run_phase(5)
     assert policy.should_run_phase(11)
 
 
@@ -43,7 +43,7 @@ def test_mode_policy_propose_only():
     assert policy.allow_archive is False
     assert policy.generate_rule_pack is True
 
-  # Should run phases 1-3 only
+    # Should run phases 1-3 only
     assert policy.should_run_phase(1)
     assert policy.should_run_phase(2)
     assert policy.should_run_phase(3)
@@ -75,7 +75,7 @@ def test_mode_policy_validate_only():
     policy = MODE_POLICIES[RunMode.VALIDATE_ONLY]
 
     assert policy.start_phase == 9
-   assert policy.stop_after_phase == 11
+    assert policy.stop_after_phase == 11
     assert policy.require_existing_change is True
     assert policy.allow_code_writes is False
     assert policy.allow_test_writes is False

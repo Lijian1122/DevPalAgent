@@ -37,9 +37,9 @@ class ModePolicy:
             True if phase should run, False otherwise
         """
         if phase_num < self.start_phase:
-            return False
+          return False
         if self.stop_after_phase and phase_num > self.stop_after_phase:
-     return False
+          return False
         return True
 
 
@@ -51,27 +51,27 @@ MODE_POLICIES = {
         require_existing_change=False,
         allow_code_writes=True,
         allow_test_writes=True,
-        allow_archive=True,
+     allow_archive=True,
         generate_rule_pack=False,
-  ),
+    ),
     RunMode.PROPOSE_ONLY: ModePolicy(
         start_phase=1,
         stop_after_phase=3,
         require_existing_change=False,
-        allow_code_writes=False,
-      allow_test_writes=False,
+     allow_code_writes=False,
+        allow_test_writes=False,
         allow_archive=False,
         generate_rule_pack=True,
     ),
     RunMode.APPLY_ONLY: ModePolicy(
         start_phase=4,
         stop_after_phase=None,
-    require_existing_change=True,
+        require_existing_change=True,
         allow_code_writes=True,
         allow_test_writes=True,
-        allow_archive=True,
+      allow_archive=True,
         generate_rule_pack=False,
-  ),
+    ),
     RunMode.VALIDATE_ONLY: ModePolicy(
         start_phase=9,
         stop_after_phase=11,

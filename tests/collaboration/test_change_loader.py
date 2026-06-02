@@ -19,13 +19,13 @@ def test_load_change_success(tmp_path):
     """Test loading a valid change."""
     # Create change structure
     change_id = "test-change-001"
-   change_dir = tmp_path / "openspec" / "changes" / change_id
+    change_dir = tmp_path / "openspec" / "changes" / change_id
     change_dir.mkdir(parents=True)
 
     # Create metadata
     metadata = {
         "change_id": change_id,
-      "status": "PROPOSED",
+        "status": "PROPOSED",
         "project_type": "python",
         "language": "python",
     }
@@ -91,7 +91,7 @@ def test_list_changes(tmp_path):
     assert len(all_changes) == 3
     assert "change-0" in all_changes
 
-  # List by status
+    # List by status
     proposed = loader.list_changes(status="PROPOSED")
     assert len(proposed) == 1
     assert "change-0" in proposed
