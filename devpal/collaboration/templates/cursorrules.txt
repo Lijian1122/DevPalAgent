@@ -1,0 +1,36 @@
+# DevPalAgent Spec-first Project
+
+You are working in a DevPalAgent Spec-first project.
+
+## Before Editing Code
+
+1. Read `openspec/changes/<change-id>/` artifacts first
+2. Understand the requirements from `proposal.md` and `specs/spec.md`
+3. Follow the task list in `tasks.md`
+4. Review technical decisions in `design.md`
+
+## Implementation Rules
+
+- Only implement tasks listed in `tasks.md`
+- Preserve requirement IDs in code comments
+- Keep changes minimal and focused
+- Do not refactor unrelated code
+- Maintain traceability between requirements and code
+
+## After Implementation
+
+Run DevPalAgent validation:
+```bash
+python run_ai_flow.py --validate-change <change-id>
+```
+
+## Archiving
+
+Do not archive manually. Use:
+```bash
+python -m devpal.openspec archive <change-id>
+```
+
+## Questions?
+
+Read CLAUDE.md for detailed collaboration guidelines.
