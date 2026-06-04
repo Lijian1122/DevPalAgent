@@ -8,8 +8,59 @@
 
 ## 架构图列表
 
+**✨ 全部图表已使用 v11 样式重新生成** (2026-06-04)
+- 3600x4800 @ 3x scale 超高清分辨率
+- 纯白背景，适合投影和打印
+- 无文字重叠，清晰可读
+
 ### 1. [System Architecture](./01_system_architecture.md)
 **系统整体架构图**
+
+**🎯 紧凑布局版 v7** (大节点+短连线): [System Architecture v7](./01_system_architecture_v7.md) ⭐⭐⭐⭐⭐⭐ **终极推荐**
+
+![System Architecture v7](./01_system_architecture_v7-diagram-1.png)
+
+> 🎯 **v7 紧凑布局版亮点**：
+> - 📦 **更大节点**：增加节点内容，28px 标题 + 22px 副标题，双语显示
+> - ⚡ **更短连线**：nodeSpacing: 50, rankSpacing: 80，减少空白区域
+> - 🎨 **更紧凑**：整体布局更密集，信息密度提高，但不显拥挤
+> - 💪 **更粗边框**：5px 边框，视觉重量感增强
+> - 🖥️ **16:9 宽屏**：5400x3000 @ 3x，完美适配现代投影仪
+> - 🎨 **纯白背景**：`#FFFF` + Material Design 深色系
+> - 💎 **投影最佳**：大节点 + 短连线 + 紧凑布局 = 最佳演示效果
+
+<details>
+<summary>📦 其他版本（点击展开）</summary>
+
+**横向均衡版 v6**: [System Architecture v6](./01_system_architecture_v6.md) ⭐⭐⭐⭐⭐
+
+![System Architecture v6](./01_system_architecture_v6-diagram-1.png)
+
+**纯白背景纵向版 v5**: [System Architecture v5](./01_system_architecture_v5.md) ⭐⭐⭐⭐⭐
+
+![System Architecture v5](./01_system_architecture_v5-diagram-1.png)
+
+> 🎯 **v3 优化亮点**（对标 doc2.0/01_OpenSpec_Architecture_Overview.png）：
+> - 📐 **超大字体**：22px 基础字体，20px 节点字体，投影清晰
+> - 🎨 **高对比度**：4px 超粗边框，鲜艳 Material Design 色系
+> - 🌐 **双语标签**：中英文对照，便于国际化展示
+> - 📏 **高分辨率**：2400x3200 @ 2x scale，867KB 高清输出
+> - 🔲 **更多留白**：节点内部增加行间距，视觉更舒适
+> 
+> 详细对比见 [OPTIMIZATION_NOTES.md](./OPTIMIZATION_NOTES.md)
+
+<details>
+<summary>📦 其他版本</summary>
+
+**原始版本**: [System Architecture v1](./01_system_architecture.md)
+
+![System Architecture v1](./01_system_architecture-diagram-1.png)
+
+**优化版本 v2**: [System Architecture v2](./01_system_architecture_v2.md)
+
+![System Architecture v2](./01_system_architecture_v2-diagram-1.png)
+
+</details>
 
 **内容**:
 - 8 层架构设计（UI → Agent → OpenSpec → Phase → Multi-Agent → Services → Memory → Storage）
@@ -61,6 +112,19 @@
 
 ### 4. [Quality Gate Validation](./04_quality_gate.md)
 **Quality Gate 四层验证流程图**
+
+**优化版 v11** (横向布局): [Quality Gate v11](./04_quality_gate_v11.md) ⭐ **推荐**
+
+![Quality Gate v11](./04_quality_gate_v11-diagram-1.png)
+
+> 🎯 **v11 优化**: 横向布局 (LR)，4800x2400，更紧凑，适合投影
+
+<details>
+<summary>原始版本（纵向布局）</summary>
+
+![Quality Gate](./04_quality_gate-diagram-1.png)
+
+</details>
 
 **内容**:
 - L1: FORMAT → L2: SEMANTIC → L3: PARSER → L4: BUSINESS
