@@ -18,6 +18,7 @@ from ...collaboration.rule_pack_generator import RulePackGenerator
 from ...config import get_config
 from ..schema.eventbus_integration import EventBusIntegration
 from .base import PhaseResult, infer_openspec_project_name, validate_phase_success
+from .scheduler import OpenSpecPhaseScheduler
 
 #
 PHASE_TIMEOUTS = {
