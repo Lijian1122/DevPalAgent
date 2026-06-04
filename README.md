@@ -466,6 +466,83 @@ All connections are preserved in ArtifactGraph and coverage matrix.
 
 ---
 
+## 5.6 AI-agnostic 协作模式
+
+DevPalAgent 支持与外部 AI coding 工具（Claude Code, Cursor, Cline）进行 Spec-first 协作，实现多工具协同开发。
+
+### 三种协作模式
+
+| 模式 | Phase 范围 | 用途 | 输出 |
+|----|------|------|------|
+| **PROPOSE_ONLY** | 1-3 | 生成 OpenSpec Change artifacts，不修改代码 | proposal, tasks, design, spec + Rule Pack |
+| **APPLY_ONLY** | 4-11 | 基于已有 Change 执行代码实现 | 完整的代码、测试、报告 |
+| **VALIDATE_ONLY** | 9-11 | 仅对已有实现进行质量验证 | 质量报告、测试结果 |
+
+### 使用示例
+
+## 模式1: Propose-only（规划模式）
+生成 OpenSpec Change，供外部 AI 工具使用：
+
+```bash
+python run_ai_flow.py -r requirements/feature.md --propose-only
+```
+
+**输出**：
+- `openspec/changes/<change-id>/` 目录包含：
+  - `proposal.md` - 功能提案
+  - `tasks.md` - 任务清单
+  - `design.md` - 技术设计
+  - `specs/spec.md` - 详细规格
+  - `metadata.json` - Change 元数据
+- **Rule Pack 文件**：
+  - `CLAUDE.md` - Claude Code 协作规则（更新 Spec-first 章节）
+  - `.cursorrules` - Cursor 集成规则
+  - `cline-rules.md` - Cline 集成规则
+
+#### 模式2: Apply-only（实施模式）
+基于已有 Change 执行代码生成和验证：
+
+```bash
+python run_ai_flow.py --apply-change feature-login-20260604_120000
+```
+
+**行为**：
+- 加载并恢复 Change artifacts
+- 执行 Phase 4-11（代码生成、测试、验证、报告）
+- 跳过 Phase 1-3（已通过 propose-only 完成）
+
+#### 模式3: Validate-only（验证模式）
+仅对外部工具修改的代码进行质量验证：
+
+```bash
+python run_ai_flow.py --validate-change feature-login-20260604_120000
+```
+
+**行为**：
+- 加载 Change context
+- 执行 Phase 9-11（Quality Gate、测试执行、最终报告）
+- 跳过 Phase 1-8
+
+### Rule Pack 说明
+
+DevPalAgent 会为不同的 AI 工具生成协作规则，确保：
+- 外部 AI 工具理解如何读取 `openspec/changes/<change-id>/` artifacts
+- 修改代码时保持与 spec 的一致性
+- 维持 traceability（change-id、requirement-id）
+- 修改后可以通过 DevPalAgent 的验证流程
+
+**协作流程**：
+```
+[DevPalAgent --propose-only] 
+    → 生成 OpenSpec Change + Rule Pack
+    → [External AI Tool reads change artifacts]
+    → [External AI Tool modifies code]
+    → [DevPalAgent --validate-change]
+    → Quality Gate + Tests → Report
+```
+
+---
+
 ## 6. 快速开始
 
 ### 6.1 环境要求

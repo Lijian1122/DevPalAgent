@@ -497,7 +497,7 @@ class EnhancedOpenSpecScheduler:
             # Restore context from existing change (for APPLY/VALIDATE modes)
             if self.mode_policy.require_existing_change:
                 try:
-                    project_root = self.context.requirements_file.parent
+                    project_root = self.context.project_dir
                     loader = ChangeLoader(project_root)
 
                     if not loader.change_exists(self.change_id):
@@ -594,7 +594,7 @@ class EnhancedOpenSpecScheduler:
         stop_phase = self.mode_policy.stop_after_phase or 11
         print(f"  Phase Range: {self.mode_policy.start_phase} - {stop_phase}")
         if self.change_id:
-         print(f"  Change ID: {self.change_id}")
+            print(f"  Change ID: {self.change_id}")
         print("=" * 70)
         print()
 
@@ -631,15 +631,15 @@ class EnhancedOpenSpecScheduler:
                 if context.logger:
                     context.logger.info(skip_msg)
 
-            skip_data = {
-                "skipped": True,
-                "skip_reason": f"run_mode={self.run_mode.value}",
-                "run_mode": self.run_mode.value,
-            }
-            result = PhaseResult.ok("Skipped by run mode", **skip_data)
-            context.set_phase_result(i, result)
-            if self.checkpoint:
-                self.checkpoint.save(i, True, context)
+                skip_data = {
+                    "skipped": True,
+                    "skip_reason": f"run_mode={self.run_mode.value}",
+                    "run_mode": self.run_mode.value,
+                }
+                result = PhaseResult.ok("Skipped by run mode", **skip_data)
+                context.set_phase_result(i, result)
+                if self.checkpoint:
+                    self.checkpoint.save(i, True, context)
                 continue
 
             # Check checkpoint first
@@ -796,16 +796,22 @@ class EnhancedOpenSpecScheduler:
                 self.mode_policy.stop_after_phase
                 and i == self.mode_policy.stop_after_phase
             ):
-                if self.mode_policy.generate_rule_pack and self.change_id:
-                    try:
-                        project_root = self.context.requirements_file.parent
-                        generator = RulePackGenerator(project_root, self.change_id)
-                        generator.generate_all()
-                        print(
-                            "\n[INFO] Rule Pack generated for AI-agnostic collaboration\n"
-                        )
-                    except Exception as e:
-                        print(f"\n[WARNING] Failed to generate Rule Pack: {e}\n")
+                if self.mode_policy.generate_rule_pack:
+                    # Get change_id from context (generated in Phase 1) or init parameter
+                    change_id = (
+                        getattr(self.context, "current_change_id", None)
+                        or self.change_id
+                    )
+                    if change_id:
+                        try:
+                            project_root = self.context.project_dir
+                            generator = RulePackGenerator(project_root, change_id)
+                            generator.generate_all()
+                            print(
+                                "\n[INFO] Rule Pack generated for AI-agnostic collaboration\n"
+                            )
+                        except Exception as e:
+                            print(f"\n[WARNING] Failed to generate Rule Pack: {e}\n")
 
                     print(
                         f"\n[INFO] {self.run_mode.value} mode completed at Phase {i}\n"
