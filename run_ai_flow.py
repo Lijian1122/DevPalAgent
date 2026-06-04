@@ -214,6 +214,14 @@ def main() -> int:
                   help="预览执行计划，不实际运行")
     parser.add_argument("--health-check", action="store_true",
                         help="检查系统配置（API 密钥、编译器、依赖等）")
+
+    # AI-agnostic collaboration mode arguments
+    parser.add_argument("--propose-only", action="store_true",
+                help="仅生成 OpenSpec Change（Phase 1-3），输出 Rule Pack 供外部 AI 工具使用")
+    parser.add_argument("--apply-change",
+            help="从已有 Change 恢复并执行 Phase 4-11（需提供 change-id）")
+    parser.add_argument("--validate-change",
+               help="从已有 Change 恢复并仅执行验证（Phase 9-11）")
     args = parser.parse_args()
 
     # P2.2: health check (no requirements file needed)
@@ -222,6 +230,26 @@ def main() -> int:
 
     # P2.3: apply env var overrides before anything else
     _apply_env_overrides()
+    # Determine run mode based on CLI arguments
+    from devpal.collaboration.modes import RunMode
+
+    run_mode = RunMode.FULL
+    change_id = None
+
+    if args.propose_only:
+        run_mode = RunMode.PROPOSE_ONLY
+        print("[INFO] Mode: PROPOSE_ONLY - Will generate OpenSpec Change and stop at Phase 3")
+        print()
+    elif args.apply_change:
+        run_mode = RunMode.APPLY_ONLY
+        change_id = args.apply_change
+        print(f"[INFO] Mode: APPLY_ONLY - Will load change '{change_id}' and run Phase 4-11")
+        print()
+    elif args.validate_change:
+        run_mode = RunMode.VALIDATE_ONLY
+        change_id = args.validate_change
+        print(f"[INFO] Mode: VALIDATE_ONLY - Will load change '{change_id}' and run Phase 9-11")
+        print()
 
     # Validate requirements file
     requirements_file = ROOT / args.requirements
@@ -270,6 +298,8 @@ def main() -> int:
             max_concurrency=args.max_concurrency,
             verbose=args.verbose,
             debug=args.debug,
+       run_mode=run_mode,
+            change_id=change_id,
         ),
     )
 

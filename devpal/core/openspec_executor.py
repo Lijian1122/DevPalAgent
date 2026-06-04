@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from ..collaboration.modes import RunMode
 from .openspec_phases.enhanced_scheduler import EnhancedOpenSpecScheduler
 
 
@@ -24,6 +25,8 @@ class OpenSpecRunOptions:
     max_concurrency: int = 3
     verbose: bool = False
     debug: bool = False
+    run_mode: RunMode = RunMode.FULL
+    change_id: Optional[str] = None
 
 
 class OpenSpecWorkflowExecutor:
@@ -55,4 +58,6 @@ class OpenSpecWorkflowExecutor:
             max_concurrency=opts.max_concurrency,
             verbose=opts.verbose,
             debug=opts.debug,
+            run_mode=opts.run_mode,
+            change_id=opts.change_id,
         )
