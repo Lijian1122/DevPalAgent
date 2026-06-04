@@ -11,6 +11,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict
 
+from ...collaboration.change_loader import ChangeLoader
+from ...collaboration.context_restorer import ContextRestorer
+from ...collaboration.modes import RunMode, get_mode_policy
+from ...collaboration.rule_pack_generator import RulePackGenerator
 from ...config import get_config
 from ..schema.eventbus_integration import EventBusIntegration
 from .base import PhaseResult, infer_openspec_project_name, validate_phase_success
@@ -320,11 +324,9 @@ class EnhancedOpenSpecScheduler:
         max_concurrency: int = 3,
         verbose: bool = False,
         debug: bool = False,
+        run_mode: RunMode = RunMode.FULL,
+        change_id: str | None = None,
     ):
-        """"""
-
-        #
-        from .scheduler import OpenSpecPhaseScheduler
 
         #  context
         self.base_scheduler = OpenSpecPhaseScheduler(
@@ -337,7 +339,9 @@ class EnhancedOpenSpecScheduler:
         self.context = self.base_scheduler.context
         self.context.force_regenerate_code = force_regenerate_code
         self.vector_retrieval_enabled = vector_retrieval_enabled
-        self.vector_persist_dir = Path(vector_persist_dir) if vector_persist_dir else None
+        self.vector_persist_dir = (
+            Path(vector_persist_dir) if vector_persist_dir else None
+        )
         self.vector_top_k = vector_top_k
         self.vector_prefer_chroma = vector_prefer_chroma
         self.max_concurrency = max(1, int(max_concurrency or 1))
@@ -352,12 +356,27 @@ class EnhancedOpenSpecScheduler:
         self.verbose = verbose
         self.debug = debug
 
+        # Run mode and collaboration
+        self.run_mode = run_mode
+        self.mode_policy = get_mode_policy(run_mode)
+        self.change_id = change_id
+
+        # Validate change_id for modes that require it
+        if self.mode_policy.require_existing_change and not self.change_id:
+            raise ValueError(
+                f"{self.run_mode} mode requires change_id parameter. "
+                "Use --apply-change <change-id> or --validate-change <change-id>"
+            )
+
         #
         self.progress = ProgressMonitor() if enable_progress else None
         try:
-            initial_project_name = self.context.project_name or infer_openspec_project_name(
-                self.context.requirements_file,
-                language=self.context.language,
+            initial_project_name = (
+                self.context.project_name
+                or infer_openspec_project_name(
+                    self.context.requirements_file,
+                    language=self.context.language,
+                )
             )
             self.event_integration = EventBusIntegration(
                 requirements_file=requirements_file,
@@ -474,6 +493,28 @@ class EnhancedOpenSpecScheduler:
                         "\n[RESUME] checkpoint missing or incompatible; starting from Phase 1\n"
                     )
 
+            # Restore context from existing change (for APPLY/VALIDATE modes)
+            if self.mode_policy.require_existing_change:
+                try:
+                    project_root = self.context.requirements_file.parent
+                    loader = ChangeLoader(project_root)
+
+                    if not loader.change_exists(self.change_id):
+                        raise FileNotFoundError(
+                            f"Change '{self.change_id}' not found in {project_root}/openspec/changes/"
+                        )
+
+                    artifacts = loader.load_change(self.change_id)
+                    restorer = ContextRestorer()
+                    restorer.restore_context(project_root, artifacts, self.context)
+
+                    print(f"\n[INFO] Context restored from change: {self.change_id}")
+                    print(
+                        f"[INFO] Change status: {artifacts['metadata'].get('status', 'UNKNOWN')}\n"
+                    )
+                except Exception as e:
+                    print(f"\n[ERROR] Failed to restore context from change: {e}\n")
+                    raise
         # Emit workflow started event
         if self.event_integration and start_phase == 1:
             try:
@@ -548,6 +589,11 @@ class EnhancedOpenSpecScheduler:
                 else "Disabled"
             )
         )
+        print(f"  Run Mode: {self.run_mode.value}")
+        stop_phase = self.mode_policy.stop_after_phase or 11
+        print(f"  Phase Range: {self.mode_policy.start_phase} - {stop_phase}")
+        if self.change_id:
+         print(f"  Change ID: {self.change_id}")
         print("=" * 70)
         print()
 
@@ -576,6 +622,24 @@ class EnhancedOpenSpecScheduler:
         #
         for i in range(start_phase, len(phases) + 1):
             phase = phases[i - 1]
+
+            # Check run mode policy first
+            if not self.mode_policy.should_run_phase(i):
+                skip_msg = f"[SKIP] Phase {i} ({phase.phase_name}) - outside run mode range ({self.run_mode.value})"
+                print(skip_msg)
+                if context.logger:
+                    context.logger.info(skip_msg)
+
+            skip_data = {
+                "skipped": True,
+                "skip_reason": f"run_mode={self.run_mode.value}",
+                "run_mode": self.run_mode.value,
+            }
+            result = PhaseResult.ok("Skipped by run mode", **skip_data)
+            context.set_phase_result(i, result)
+            if self.checkpoint:
+                self.checkpoint.save(i, True, context)
+                continue
 
             # Check checkpoint first
             if self.checkpoint and self.checkpoint.is_phase_completed(i):
@@ -726,6 +790,27 @@ class EnhancedOpenSpecScheduler:
             if self.checkpoint:
                 self.checkpoint.save(i, result.success, context)
 
+            # Check for early termination (PROPOSE_ONLY mode)
+            if (
+                self.mode_policy.stop_after_phase
+                and i == self.mode_policy.stop_after_phase
+            ):
+                if self.mode_policy.generate_rule_pack and self.change_id:
+                    try:
+                        project_root = self.context.requirements_file.parent
+                        generator = RulePackGenerator(project_root, self.change_id)
+                        generator.generate_all()
+                        print(
+                            "\n[INFO] Rule Pack generated for AI-agnostic collaboration\n"
+                        )
+                    except Exception as e:
+                        print(f"\n[WARNING] Failed to generate Rule Pack: {e}\n")
+
+                    print(
+                        f"\n[INFO] {self.run_mode.value} mode completed at Phase {i}\n"
+                    )
+                    break
+
             if i == 9 and result.success:
                 self._run_critique_phase(context)
 
@@ -854,7 +939,10 @@ class EnhancedOpenSpecScheduler:
             if context.logger:
                 context.logger.info("Starting Phase 9.5: Critique Phase")
 
-            llm_client = getattr(self.base_scheduler, "llm_client", None) or self._get_critique_llm_client()
+            llm_client = (
+                getattr(self.base_scheduler, "llm_client", None)
+                or self._get_critique_llm_client()
+            )
             critique_config = self.config.get("critique_config", {})
 
             from .phase9_5_critique import Phase9_5Critique
@@ -869,7 +957,9 @@ class EnhancedOpenSpecScheduler:
             critique_result, critique_duration = phase_9_5.execute_with_timing()
 
             if context.logger:
-                context.logger.phase_end(9.5, critique_result.success, critique_duration)
+                context.logger.phase_end(
+                    9.5, critique_result.success, critique_duration
+                )
             if self.event_integration:
                 self.event_integration.emit_phase_completed(
                     phase_num=9.5,
@@ -890,9 +980,13 @@ class EnhancedOpenSpecScheduler:
                     )
             else:
                 if context.logger:
-                    context.logger.warning(f"Phase 9.5 failed: {critique_result.message}")
+                    context.logger.warning(
+                        f"Phase 9.5 failed: {critique_result.message}"
+                    )
                 else:
-                    print(f"[WARN] Phase 9.5 Critique failed: {critique_result.message}")
+                    print(
+                        f"[WARN] Phase 9.5 Critique failed: {critique_result.message}"
+                    )
         except Exception as e:
             if context.logger:
                 context.logger.error(f"Phase 9.5 Critique error: {e}")

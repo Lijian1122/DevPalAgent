@@ -8,38 +8,38 @@ from typing import Optional
 class RulePackGenerator:
     """Generate AI-agnostic collaboration rule packs."""
 
-    def __init__(self, project_dir: Path):
+    def __init__(self, project_dir: Path, change_id: Optional[str] = None):
         """Initialize RulePackGenerator.
 
         Args:
             project_dir: Project directory path
-        """
-        self.project_dir = Path(project_dir)
-        self.templates_dir = Path(__file__).parent / "templates"
-
-    def generate_all(self, change_id: Optional[str] = None) -> None:
-        """Generate all rule pack files.
-
-        Args:
             change_id: Optional change ID to include in templates
         """
-        self.update_claude_md(change_id)
-        self.generate_cursorrules(change_id)
-        self.generate_cline_rules(change_id)
+        self.project_dir = Path(project_dir)
+        self.change_id = change_id
+        self.templates_dir = Path(__file__).parent / "templates"
+
+    def generate_all(self) -> None:
+        """Generate all rule pack files."""
+        self.update_claude_md()
+        self.generate_cursorrules()
+        self.generate_cline_rules()
 
     def update_claude_md(self, change_id: Optional[str] = None) -> Path:
         """Update CLAUDE.md with spec-first collaboration section.
 
-        Args:
-        change_id: Optional change ID to include in template
+           Args:
+           change_id: Optional change ID to include in template
 
-     Returns:
-            Path to updated CLAUDE.md
+        Returns:
+               Path to updated CLAUDE.md
         """
-     claude_md_path = self.project_dir / "CLAUDE.md"
+        claude_md_path = self.project_dir / "CLAUDE.md"
 
         # Read template
-        template = (self.templates_dir / "claude_code_rules.md").read_text(encoding="utf-8")
+        template = (self.templates_dir / "claude_code_rules.md").read_text(
+            encoding="utf-8"
+        )
 
         # Replace placeholders
         if change_id:
@@ -52,30 +52,32 @@ class RulePackGenerator:
 
             if marker_start in content:
                 # Find section boundaries
-            start_idx = content.find(marker_start)
+                start_idx = content.find(marker_start)
                 # Find next ## heading after this section
                 next_section_idx = content.find("\n##", start_idx + 1)
-        if next_section_idx == -1:
-               # This is the last section
-               content = content[:start_idx] + template
+                if next_section_idx == -1:
+                    # This is the last section
+                    content = content[:start_idx] + template
                 else:
-                 # Replace existing section
-                  content = content[:start_idx] + template + "\n" + content[next_section_idx:]
+                    # Replace existing section
+                    content = (
+                        content[:start_idx]
+                        + template
+                        + "\n"
+                        + content[next_section_idx:]
+                    )
             else:
-           # Append new section
+                # Append new section
                 content += "\n\n" + template
         else:
-      # Create new CLAUDE.md
+            # Create new CLAUDE.md
             content = "# Project Documentation\n" + template
 
         claude_md_path.write_text(content, encoding="utf-8")
         return claude_md_path
 
-    def generate_cursorrules(self, change_id: Optional[str] = None) -> Path:
+    def generate_cursorrules(self) -> Path:
         """Generate .cursorrules file.
-
-        Args:
-            change_id: Optional change ID to include in template
 
         Returns:
         Path to generated .cursorrules
@@ -84,8 +86,8 @@ class RulePackGenerator:
 
         template = (self.templates_dir / "cursorrules.txt").read_text(encoding="utf-8")
 
-      if change_id:
-            template = template.replace("<change-id>", change_id)
+        if self.change_id:
+            template = template.replace("<change-id>", self.change_id)
 
         cursorrules_path.write_text(template, encoding="utf-8")
         return cursorrules_path
@@ -98,13 +100,13 @@ class RulePackGenerator:
 
         Returns:
             Path to generated cline-rules.md
-      """
+        """
         cline_rules_path = self.project_dir / "cline-rules.md"
 
         template = (self.templates_dir / "cline_rules.md").read_text(encoding="utf-8")
 
         if change_id:
-          template = template.replace("<change-id>", change_id)
+            template = template.replace("<change-id>", change_id)
 
         cline_rules_path.write_text(template, encoding="utf-8")
         return cline_rules_path
@@ -112,9 +114,9 @@ class RulePackGenerator:
     def remove_rule_pack(self) -> None:
         """Remove generated rule pack files (for cleanup)."""
         cursorrules_path = self.project_dir / ".cursorrules"
-      cline_rules_path = self.project_dir / "cline-rules.md"
+        cline_rules_path = self.project_dir / "cline-rules.md"
 
-      if cursorrules_path.exists():
+        if cursorrules_path.exists():
             cursorrules_path.unlink()
 
         if cline_rules_path.exists():
