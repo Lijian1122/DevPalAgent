@@ -258,7 +258,71 @@ python -m pytest tests/openspec/test_spec_first_artifacts.py tests/openspec/test
 
 ---
 
-## 11. Demo 结束后的清理
+## 11. OpenSpec 主线能力 smoke demo
+
+除 installer skip demo 外，当前项目还可以用同一个需求文件展示语义检索、AI-agnostic 协作、Archive 和 multi-agent sandbox summary。
+
+### 11.1 Semantic Retrieval
+
+```bash
+python run_ai_flow.py -r requirements/simple_login.md --vector-retrieval --vector-top-k 5
+```
+
+检查 final report：
+
+```bash
+grep -n "Semantic Retrieval\|Search count\|Indexed documents" simple_login/docs/final_report.md
+```
+
+应看到 Semantic Retrieval 章节和检索统计。默认 provider 是 deterministic mock embedding，适合离线演示；ChromaDB 是可选持久化后端。
+
+### 11.2 AI-agnostic collaboration lifecycle
+
+```bash
+python run_ai_flow.py -r requirements/simple_login.md --propose-only
+python run_ai_flow.py -r requirements/simple_login.md --apply-change <change-id>
+python run_ai_flow.py -r requirements/simple_login.md --validate-change <change-id>
+```
+
+讲解重点：
+
+- `--propose-only` 只生成 `openspec/changes/<change-id>/` 和 Rule Pack，不直接写业务代码。
+- `--apply-change` 从已有 change artifacts 恢复 context，执行 Phase 4-11。
+- `--validate-change` 从已有 change artifacts 恢复 context，只执行 Phase 9-11。
+
+### 11.3 Archive + Coverage Matrix
+
+```bash
+python -m devpal.openspec archive <change-id> --project-dir <project-dir>
+```
+
+检查：
+
+```bash
+ls <project-dir>/.spec/archive/
+grep -n "REQ-" <project-dir>/.spec/coverage_matrix.md
+```
+
+Archive 会合并 spec、更新 metadata 状态、生成 `.spec/archive/<change-id>.json`，并输出 requirement → code/test/report coverage matrix。
+
+### 11.4 Multi-Agent Sandbox Summary
+
+```bash
+python run_ai_flow.py -r requirements/simple_login.md --enable-multi-agent --max-concurrency 3
+```
+
+检查：
+
+```bash
+grep -n "Multi-Agent Sandbox Summary\|manifest.json\|Policy violations" simple_login/docs/final_report.md
+ls simple_login/.spec/sandboxes/*/manifest.json
+```
+
+讲解重点：当前 sandbox 是本地 MVP，主要提供路径/命令策略、workspace artifact 和 manifest 审计；不是容器或 OS 级隔离。
+
+---
+
+## 12. Demo 结束后的清理
 
 运行产物不应提交到 git。
 
@@ -282,7 +346,7 @@ Remove-Item -Recurse -Force .spec,test_phase_skip,cpp_test_phase_skip -ErrorActi
 
 ---
 
-## 12. Demo 讲解词
+## 13. Demo 讲解词
 
 可以这样讲：
 

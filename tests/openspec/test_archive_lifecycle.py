@@ -67,9 +67,37 @@ def test_archive_change_merges_spec_updates_metadata_and_manifest(tmp_path):
     assert manifest["coverage"]["coverage_percent"] == 100
     coverage_matrix = (project / ".spec" / "coverage_matrix.md").read_text(encoding="utf-8")
     assert "REQ-001" in coverage_matrix
+    assert "HEURISTIC" in coverage_matrix
     graph = json.loads((project / ".spec" / "artifact_graph.json").read_text(encoding="utf-8"))
     assert graph["nodes"][0]["metadata"]["change_id"] == "add-calculator"
     assert "completed" in [name for name, _ in events.events]
+
+
+def test_archive_coverage_prefers_artifact_graph_requirement_links(tmp_path):
+    project = _make_project(tmp_path)
+    (project / ".spec" / "artifact_graph.json").write_text(json.dumps({
+        "nodes": [
+            {"id": "req:REQ-001", "type": "requirement", "path": None, "metadata": {}},
+            {"id": "req:REQ-002", "type": "requirement", "path": None, "metadata": {}},
+            {"id": "file:src/calculator.cpp", "type": "code", "path": "src/calculator.cpp", "metadata": {"requirement_ids": ["REQ-001"]}},
+            {"id": "file:tests/test_calculator.cpp", "type": "test", "path": "tests/test_calculator.cpp", "metadata": {"requirement_ids": ["REQ-001"]}},
+        ],
+        "edges": [],
+    }), encoding="utf-8")
+    change_dir = project / "openspec" / "changes" / "add-calculator"
+    metadata = json.loads((change_dir / "metadata.json").read_text(encoding="utf-8"))
+    metadata["requirements"] = ["REQ-001", "REQ-002"]
+    (change_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    result = ArchiveChangeService().archive_change(project, "add-calculator")
+
+    assert result.success is True
+    assert result.metadata["coverage_percent"] == 50
+    covered_requirements = result.metadata["covered_requirements"]
+    coverage_matrix = (project / ".spec" / "coverage_matrix.md").read_text(encoding="utf-8")
+    assert covered_requirements == 1
+    assert "| REQ-001 | src/calculator.cpp | tests/test_calculator.cpp" in coverage_matrix
+    assert "| REQ-002 | (none) | (none)" in coverage_matrix
 
 
 def test_archive_change_is_idempotent_for_spec_merge(tmp_path):

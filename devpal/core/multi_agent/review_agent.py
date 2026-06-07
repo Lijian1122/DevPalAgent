@@ -34,6 +34,11 @@ class ReviewAgent:
             target = file_path.resolve()
             target.relative_to(project_dir.resolve())
         except ValueError as exc:
+            manifest_path = sandbox.write_manifest(
+                [],
+                status="policy_violation",
+                policy_violations=[{"reason": str(exc), "path": str(file_path)}],
+            )
             return AgentResult(
                 task_id=task.task_id,
                 success=False,
@@ -41,21 +46,33 @@ class ReviewAgent:
                 error=f"review path escapes project root: {file_path}",
                 sandbox_id=sandbox.sandbox_id,
                 policy_violations=[{"reason": str(exc), "path": str(file_path)}],
-                metadata={"file_path": str(file_path), "issues": []},
+                metadata={"file_path": str(file_path), "issues": [], "manifest_path": str(manifest_path), "sandbox": sandbox.manifest()},
             )
 
         try:
             issues = self.checker(target, check_types)
         except Exception as exc:
+            manifest_path = sandbox.write_manifest(
+                [target],
+                status="failed",
+                error=str(exc),
+                reviewed_file=str(target),
+            )
             return AgentResult(
                 task_id=task.task_id,
                 success=False,
                 duration_ms=int((time.time() - start) * 1000),
                 error=str(exc),
                 sandbox_id=sandbox.sandbox_id,
-                metadata={"file_path": str(file_path), "issues": []},
+                metadata={"file_path": str(file_path), "issues": [], "manifest_path": str(manifest_path), "sandbox": sandbox.manifest([target])},
             )
 
+        manifest_path = sandbox.write_manifest(
+            [target],
+            status="completed",
+            reviewed_file=str(target),
+            issue_count=len(issues),
+        )
         return AgentResult(
             task_id=task.task_id,
             success=True,
@@ -64,6 +81,7 @@ class ReviewAgent:
             metadata={
                 "file_path": str(file_path),
                 "issues": issues,
+                "manifest_path": str(manifest_path),
                 "sandbox": sandbox.manifest([target]),
             },
         )

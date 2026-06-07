@@ -128,22 +128,33 @@ class CodegenAgent:
             )
 
         usage = getattr(client, "usage", None)
+        workspace_target = sandbox.resolve_workspace_target(item.path)
+        workspace_target.parent.mkdir(parents=True, exist_ok=True)
+        workspace_target.write_text(generated_content[-1], encoding="utf-8")
+        manifest_path = sandbox.write_manifest(
+            [workspace_target],
+            target_path=str(target),
+            workspace_artifact=str(workspace_target),
+            status="generated",
+        )
         metadata = {
             "path": item.path,
             "content": generated_content[-1],
+            "workspace_artifact": str(workspace_target),
+            "manifest_path": str(manifest_path),
             "turns": getattr(result, "turns", 0),
             "llm_calls": getattr(usage, "calls", 0),
             "llm_input_tokens": getattr(usage, "input_tokens", 0),
             "llm_output_tokens": getattr(usage, "output_tokens", 0),
             "llm_cache_read_tokens": getattr(usage, "cache_read_tokens", 0),
             "llm_cache_creation_tokens": getattr(usage, "cache_creation_tokens", 0),
-            "sandbox": sandbox.manifest([target]),
+            "sandbox": sandbox.manifest([workspace_target]),
         }
         return AgentResult(
             task_id=task.task_id,
             success=True,
-            artifacts=[target],
-            artifact_path=target,
+            artifacts=[workspace_target],
+            artifact_path=workspace_target,
             duration_ms=int((time.time() - start) * 1000),
             sandbox_id=sandbox.sandbox_id,
             metadata=metadata,
@@ -161,6 +172,17 @@ class CodegenAgent:
         details = {"path": path}
         if metadata:
             details.update(metadata)
+        try:
+            manifest_path = sandbox.write_manifest(
+                [],
+                status="failed",
+                error=error,
+                target_path=path,
+            )
+            details["manifest_path"] = str(manifest_path)
+            details["sandbox"] = sandbox.manifest()
+        except Exception:
+            pass
         return AgentResult(
             task_id=task.task_id,
             success=False,

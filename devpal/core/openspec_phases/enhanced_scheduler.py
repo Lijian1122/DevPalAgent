@@ -203,7 +203,14 @@ class CheckpointManager:
             self._canonical_requirements_key(Path(saved_req)) == self._requirements_key
         )
 
+    def set_checkpoint_file(self, checkpoint_file: Path) -> None:
+        self.checkpoint_file = Path(checkpoint_file)
+        self.loaded_from_checkpoint_file = self.checkpoint_file
+
     def save(self, phase_num: int, success: bool, context):
+        if phase_num == 1 and context.project_type in {"installer", "tooling"}:
+            safe_name = self.requirements_file.stem.replace("_requirements", "").removeprefix("req_")
+            self.set_checkpoint_file(Path(safe_name) / ".spec" / "checkpoint.json")
         completed_phases = list(self.checkpoint.get("completed_phases", []))
         if success and phase_num not in completed_phases:
             completed_phases.append(phase_num)
@@ -380,10 +387,7 @@ class EnhancedOpenSpecScheduler:
         try:
             initial_project_name = (
                 self.context.project_name
-                or infer_openspec_project_name(
-                    self.context.requirements_file,
-                    language=self.context.language,
-                )
+                or self.context.requirements_file.stem.replace("_requirements", "").removeprefix("req_")
             )
             self.event_integration = EventBusIntegration(
                 requirements_file=requirements_file,
@@ -434,6 +438,27 @@ class EnhancedOpenSpecScheduler:
         print(f"  {message}")
         if self.context.logger:
             self.context.logger.info(message)
+
+    def _restore_existing_change_context(self) -> None:
+        try:
+            project_root = self.context.project_dir
+            loader = ChangeLoader(project_root)
+
+            if not loader.change_exists(self.change_id):
+                raise FileNotFoundError(
+                    f"Change '{self.change_id}' not found in {project_root}/openspec/changes/"
+                )
+
+            artifacts = loader.load_change(self.change_id)
+            ContextRestorer().restore_context(project_root, artifacts, self.context)
+
+            print(f"\n[INFO] Context restored from change: {self.change_id}")
+            print(
+                f"[INFO] Change status: {artifacts['metadata'].get('status', 'UNKNOWN')}\n"
+            )
+        except Exception as exc:
+            print(f"\n[ERROR] Failed to restore context from change: {exc}\n")
+            raise
 
     def _get_checkpoint_file(self, requirements_file: Path) -> Path:
         project_name = infer_openspec_project_name(
@@ -518,28 +543,8 @@ class EnhancedOpenSpecScheduler:
                         "\n[RESUME] checkpoint missing or incompatible; starting from Phase 1\n"
                     )
 
-            # Restore context from existing change (for APPLY/VALIDATE modes)
-            if self.mode_policy.require_existing_change:
-                try:
-                    project_root = self.context.project_dir
-                    loader = ChangeLoader(project_root)
-
-                    if not loader.change_exists(self.change_id):
-                        raise FileNotFoundError(
-                            f"Change '{self.change_id}' not found in {project_root}/openspec/changes/"
-                        )
-
-                    artifacts = loader.load_change(self.change_id)
-                    restorer = ContextRestorer()
-                    restorer.restore_context(project_root, artifacts, self.context)
-
-                    print(f"\n[INFO] Context restored from change: {self.change_id}")
-                    print(
-                        f"[INFO] Change status: {artifacts['metadata'].get('status', 'UNKNOWN')}\n"
-                    )
-                except Exception as e:
-                    print(f"\n[ERROR] Failed to restore context from change: {e}\n")
-                    raise
+        if self.mode_policy.require_existing_change:
+            self._restore_existing_change_context()
         # Emit workflow started event
         if self.event_integration and start_phase == 1:
             try:
@@ -735,6 +740,10 @@ class EnhancedOpenSpecScheduler:
                         self._backfill_pre_logger_phases(
                             context, current_phase=i, current_duration=duration
                         )
+                        if self.checkpoint:
+                            self.checkpoint.set_checkpoint_file(
+                                context.project_dir / ".spec" / "checkpoint.json"
+                            )
                         # Update EventBus with actual project name
                         if self.event_integration and context.project_name:
                             try:

@@ -41,6 +41,13 @@ class TestAgent:
             except ValueError as exc:
                 violation = {"reason": str(exc), "argv": getattr(command, "argv", [])}
                 policy_violations.append(violation)
+                metadata = self._metadata(task, sandbox, command_results)
+                manifest_path = sandbox.write_manifest(
+                    [],
+                    status="policy_violation",
+                    policy_violations=policy_violations,
+                )
+                metadata["manifest_path"] = str(manifest_path)
                 return AgentResult(
                     task_id=task.task_id,
                     success=False,
@@ -48,27 +55,42 @@ class TestAgent:
                     error=str(exc),
                     sandbox_id=sandbox.sandbox_id,
                     policy_violations=policy_violations,
-                    metadata=self._metadata(task, sandbox, command_results),
+                    metadata=metadata,
                 )
 
             result = self.runner(command)
             command_results.append(result)
             if result.timed_out or result.error or result.returncode != 0:
+                metadata = self._metadata(task, sandbox, command_results)
+                manifest_path = sandbox.write_manifest(
+                    [],
+                    status="failed",
+                    commands=metadata["commands"],
+                    error=result.error or result.stderr or f"command failed: {result.returncode}",
+                )
+                metadata["manifest_path"] = str(manifest_path)
                 return AgentResult(
                     task_id=task.task_id,
                     success=False,
                     duration_ms=int((time.time() - start) * 1000),
                     error=result.error or result.stderr or f"command failed: {result.returncode}",
                     sandbox_id=sandbox.sandbox_id,
-                    metadata=self._metadata(task, sandbox, command_results),
+                    metadata=metadata,
                 )
 
+        metadata = self._metadata(task, sandbox, command_results)
+        manifest_path = sandbox.write_manifest(
+            [],
+            status="completed",
+            commands=metadata["commands"],
+        )
+        metadata["manifest_path"] = str(manifest_path)
         return AgentResult(
             task_id=task.task_id,
             success=True,
             duration_ms=int((time.time() - start) * 1000),
             sandbox_id=sandbox.sandbox_id,
-            metadata=self._metadata(task, sandbox, command_results),
+            metadata=metadata,
         )
 
     def _metadata(

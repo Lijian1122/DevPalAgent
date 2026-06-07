@@ -36,7 +36,10 @@ def test_phase11_report_includes_test_documentation_and_sandbox_summary(tmp_path
                     "task_id": "phase10:python:pytest",
                     "success": True,
                     "duration_ms": 12,
-                    "metadata": {"sandbox_id": "phase10-test-abc"},
+                    "metadata": {
+                        "sandbox_id": "phase10-test-abc",
+                        "manifest_path": str(project / ".spec" / "sandboxes" / "phase10-test-abc" / "manifest.json"),
+                    },
                 }
             ],
         }
@@ -51,5 +54,22 @@ def test_phase11_report_includes_test_documentation_and_sandbox_summary(tmp_path
     assert "failed to generate one doc" in report
     assert "Multi-Agent Sandbox Summary" in report
     assert "phase10-test-abc" in report
+    assert ".spec/sandboxes/phase10-test-abc/manifest.json" in report
     assert result.data["sandbox_task_count"] == 1
     assert result.data["agent_backend"] == "local"
+
+
+def test_phase11_report_includes_requirement_status_rows(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    context = OpenSpecContext(project_dir=project, requirements_file=tmp_path / "requirements.md")
+    context.structured_requirements = [{"id": "REQ-001", "title": "Login"}]
+    context.update_requirement_status("REQ-001", "VERIFIED")
+
+    result = Phase11FinalReport(context).execute()
+    report = (project / "docs" / "final_report.md").read_text(encoding="utf-8")
+
+    assert result.success is True
+    assert "### Requirement Status" in report
+    assert "`REQ-001`: VERIFIED" in report
+    assert "**VERIFIED**: 1" in report

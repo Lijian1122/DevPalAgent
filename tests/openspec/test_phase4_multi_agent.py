@@ -128,6 +128,8 @@ def test_codegen_agent_generates_content_without_writing_target(tmp_path):
 
     assert result.success is True
     assert result.metadata["content"].startswith("// generated")
+    assert Path(result.metadata["workspace_artifact"]).exists()
+    assert Path(result.metadata["manifest_path"]).exists()
     assert not (tmp_path / item.path).exists()
 
 
@@ -267,6 +269,8 @@ def test_phase4_multi_agent_generates_and_merges_files(tmp_path, monkeypatch):
     }
     assert context.get_requirement_status("REQ-1") == "IN_PROGRESS"
     assert context.llm_calls == 2
+    manifests = list((tmp_path / ".spec" / "sandboxes").glob("*/manifest.json"))
+    assert manifests
 
 
 def test_phase4_multi_agent_merge_preserves_complete_content_when_unchanged(tmp_path, monkeypatch):

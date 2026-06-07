@@ -14,19 +14,19 @@ DevPalAgent 面向 AI Coding / Agentic Engineering 场景，目标是解决 LLM 
 | 问题 | DevPalAgent 的解决方式 |
 |---|---|
 | LLM 直接写代码不可控 | 使用 11 阶段 OpenSpec workflow 包裹 LLM 输出 |
-| 顺序生成效率低下 | **Phase 4/5 多智能体并行执行，3-4 倍加速** |
-| 需求、代码、测试难追踪 | 使用 structured requirements、ArtifactGraph、final report |
+| 顺序生成效率低下 | Phase 4/5 支持文件级并行，Phase 4/9/10 可选本地多 Agent 执行 |
+| 需求、代码、测试难追踪 | 使用 structured requirements、ArtifactGraph、coverage matrix、final report |
 | 生成结果无法验证 | Phase 9 Quality Gate + Phase 10 测试执行 |
 | 长流程失败难恢复 | checkpoint/resume + phase result 持久化 |
 | 多语言上下文错配 | language-aware Phase 2/9/10/11 + Prompt Engine |
 | skipped 与 passed 混淆 | 明确记录 skipped/test_skipped/test_summary |
 | 生成错误需要人工修 | 自愈与 fallback model 机制逐步接入 |
-| 大项目生成慢 | **多智能体池并行生成，智能依赖解析** |
+| 大项目生成慢 | 文件计划拆分 + 并发控制 + 可审计 sandbox manifest |
 
 一句话概括：
 
 ```text
-DevPalAgent = Spec-first workflow + Multi-Agent parallel execution + Quality gate + Test/self-heal + Traceable reports
+DevPalAgent = Spec-first workflow + phase parallelism + optional sandboxed multi-agent execution + Quality gate + Traceable reports
 ```
 
 ---
@@ -95,39 +95,32 @@ DevPalAgent 不是单一的"问答式 Agent"，而是由两条互补执行链组
 └───────────────────────────────────────────────────┘
 ```
 
-### 2.2 多智能体架构（新增）
+### 2.2 多智能体架构（当前实现）
 
-**Phase 4（代码生成）和 Phase 5（代码审查）支持多智能体并行执行**：
+OpenSpec Runtime 在确定性 11 阶段主流程内提供**可选的本地多 Agent 执行路径**，当前重点接入 Phase 4/9/10：
 
 ```text
-Phase 4/5 Coordinator
+Phase 4/9/10
     ↓
-AgentPoolManager (管理 4-16 个智能体)
+MultiAgentCoordinator
     ↓
-┌─────────┬─────────┬─────────┬─────┐
-│ Agent 1 │ Agent 2 │ Agent 3 │ Agent 4 │
-└─────────┴──────┴─────────┴─────────┘
-    ↓         ↓         ↓         ↓
-并行生成/审查多个文件
+LocalThreadBackend / PhaseParallelExecutor
     ↓
-MessageBus (事件总线)
+CodegenAgent / ReviewAgent / TestAgent
     ↓
-结果聚合 → PhaseResult
+SandboxSession(path + command policy)
+    ↓
+workspace artifact / manifest → merge / report
 ```
 
-**核心特性**:
-- **并行执行**: 4-16 个智能体同时生成代码，3-4 倍加速
-- **依赖解析**: 自动分析文件依赖，分阶段并行执行
-- **故障隔离**: 单个智能体失败不影响其他，自动重试
-- **负载均衡**: 智能分配工作，最大化资源利用
-- **实时监控**: 细粒度进度追踪，每个文件独立状态
+**当前已落地能力**:
+- **文件级并发**: Phase 4/5 使用 `PhaseParallelExecutor` 拆分文件任务并聚合结果。
+- **可选多 Agent**: `--enable-multi-agent` 后，Phase 4 可用 CodegenAgent，Phase 9 可用 ReviewAgent，Phase 10 可用 TestAgent。
+- **沙箱策略**: `SandboxSession` 限制写入根目录、精确 allowed paths、命令 argv/cwd/CMake 路径，并拒绝 shell/network/destructive 命令。
+- **审计产物**: 每个 sandbox task 可写入 `.spec/sandboxes/<sandbox_id>/manifest.json`，Phase 11 汇总 sandbox id、manifest 和 policy violation。
+- **Fallback**: 多 Agent 或并行任务失败时回退到现有 phase-local 执行路径。
 
-**性能提升**:
-| 文件数 | 顺序执行 | 多智能体(4) | 加速比 |
-|-------|---------|----------|--------|
-| 10    | 300s    | 90s        | 3.3x   |
-| 20    | 600s    | 180s       | 3.3x   |
-| 50    | 1500s   | 450s       | 3.3x   |
+性能收益依赖文件数量、LLM 延迟和依赖图形状；README 不固定承诺倍数，实际以 final report 的 parallel summary 和 benchmark 为准。
 
 详细设计见：
 - [plan_doc/plan_0525_Phase4_5_MultiAgent_Architecture.md](plan_doc/plan_0525_Phase4_5_MultiAgent_Architecture.md)
@@ -543,6 +536,25 @@ DevPalAgent 会为不同的 AI 工具生成协作规则，确保：
 
 ---
 
+## 5.7 Semantic Retrieval / Vector Store
+
+DevPalAgent 可以把 requirements、OpenSpec change artifacts、source、tests、docs 和 error memory 建立本地语义索引，并在 Phase 4 代码生成、自愈和 Phase 11 报告中使用检索统计。
+
+```bash
+# 在 OpenSpec 流程中启用检索上下文注入
+python run_ai_flow.py -r requirements/simple_login.md --vector-retrieval --vector-top-k 5
+
+# 单独索引项目 artifacts
+python -m devpal.vector_store.index_project <project-dir>
+
+# 查询相关代码/文档，必要时先索引
+python -m devpal.vector_store.search "用户登录密码校验逻辑" --project-dir <project-dir> --index-first
+```
+
+当前默认使用 deterministic `MockEmbeddingProvider`，便于本地测试和离线 demo；安装并配置 ChromaDB 后可使用持久化向量库。真实 embedding provider 和召回质量 benchmark 是后续优化项。
+
+---
+
 ## 6. 快速开始
 
 ### 6.1 环境要求
@@ -611,7 +623,7 @@ python -m pytest tests/e2e/test_multi_agent_flow.py
 9. **Evaluation**：Phase 9/10/11 把生成结果变成可验证报告
 10. **Multi-language awareness**：C++/Python/installer 分支已稳定
 11. **Traceability**：ArtifactGraph 追踪需求到代码/测试/文档
-12. **Scalability**：从本地 4 智能体到未来分布式 100+ 智能体
+12. **Scalability**：Phase 级并行 + 本地多 Agent MVP，保留未来远程/分布式扩展口
 
 详细面试讲法见：
 
@@ -646,16 +658,16 @@ python -m pytest tests/e2e/test_multi_agent_flow.py
 - Phase 11 / CLAUDE.md 语言感知
 - installer e2e 覆盖
 
-### M2：多智能体并行执行
+### M2：本地多 Agent 与并行执行
 
-状态：✅ 已完成
+状态：✅ MVP 已完成，持续产品化
 
-- Phase 4/5 多智能体架构设计
-- 依赖解析与拓扑排序
-- 智能体池管理与生命周期
-- 消息总线与事件驱动
-- 故障隔离与自动恢复
-- 完整技术文档
+- Phase 4/5 文件级并行执行
+- Phase 4 CodegenAgent 可选执行路径
+- Phase 9 ReviewAgent 可选执行路径
+- Phase 10 TestAgent 命令策略校验
+- SandboxSession 路径/命令策略与 manifest 审计
+- LocalThreadBackend 作为当前本地后端
 
 ### M3：OpenSpec Change MVP
 
@@ -684,14 +696,14 @@ openspec/
 - ArtifactGraph 增加 introduced_by / modified_by / archived_at
 - final report 输出 requirement coverage matrix
 
-### M5：分布式多智能体
+### M5：多 Agent 产品化与远程后端探索
 
-目标：支持分布式智能体池
+目标：在本地 MVP 稳定后，再扩展更强隔离和远程执行
 
-- Redis 消息总线
-- 跨节点智能体协调
-- 动态池大小调整
-- 100+ 智能体支持
+- 更严格的 sandbox level 策略
+- Agent lifecycle / budget / cooldown 事件
+- 可选多进程或远程 worker backend
+- 更完整的性能 benchmark 与 fallback 报告
 
 ---
 

@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+from pathlib import Path
+
 from devpal.core.multi_agent import AgentPolicy, AgentTask, ReviewAgent
 
 
@@ -40,6 +42,7 @@ def test_review_agent_returns_issues_for_valid_file(tmp_path):
     assert result.metadata["file_path"] == str(source)
     assert result.metadata["issues"][0]["category"] == "todo"
     assert result.metadata["sandbox"]["sandbox_id"] == result.sandbox_id
+    assert Path(result.metadata["manifest_path"]).exists()
 
 
 def test_review_agent_rejects_path_escape(tmp_path):
@@ -49,6 +52,7 @@ def test_review_agent_rejects_path_escape(tmp_path):
 
     assert result.success is False
     assert result.policy_violations
+    assert Path(result.metadata["manifest_path"]).exists()
     assert "escapes project root" in result.error
 
 

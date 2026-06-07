@@ -2,6 +2,7 @@
 
 import pytest
 
+from devpal.collaboration.modes import RunMode
 from devpal.core.openspec_executor import OpenSpecRunOptions, OpenSpecWorkflowExecutor
 from devpal.core.openspec_phases.base import PhaseResult
 
@@ -148,6 +149,21 @@ def test_executor_defaults_agent_pool_size_to_max_concurrency(tmp_path):
     )
 
     assert scheduler.context.agent_pool_size == 5
+
+
+def test_executor_passes_collaboration_mode_options_to_scheduler(tmp_path):
+    req_file = tmp_path / "requirements.md"
+    req_file.write_text("C++ login requirement", encoding="utf-8")
+
+    executor = OpenSpecWorkflowExecutor(_DummyRegistry())
+    scheduler = executor.create_scheduler(
+        str(req_file),
+        OpenSpecRunOptions(run_mode=RunMode.APPLY_ONLY, change_id="change-001"),
+    )
+
+    assert scheduler.run_mode == RunMode.APPLY_ONLY
+    assert scheduler.change_id == "change-001"
+    assert scheduler.mode_policy.require_existing_change is True
 
 
 def test_context_checkpoint_preserves_multi_agent_options(tmp_path):

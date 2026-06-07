@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List
@@ -42,6 +43,42 @@ class SandboxSession:
     def sandbox_id(self) -> str:
         digest = hashlib.sha1(self.task_id.encode("utf-8")).hexdigest()[:10]
         return f"phase{self.phase_number}-{self.role}-{digest}"
+
+    @property
+    def sandbox_dir(self) -> Path:
+        return self.project_dir / ".spec" / "sandboxes" / self.sandbox_id
+
+    @property
+    def workspace_dir(self) -> Path:
+        return self.sandbox_dir / "workspace"
+
+    @property
+    def manifest_path(self) -> Path:
+        return self.sandbox_dir / "manifest.json"
+
+    def prepare_workspace(self) -> Path:
+        self.workspace_dir.mkdir(parents=True, exist_ok=True)
+        return self.workspace_dir
+
+    def resolve_workspace_target(self, rel_path: str) -> Path:
+        normalized = self.normalize_relative_path(rel_path)
+        workspace = self.prepare_workspace().resolve()
+        target = (workspace / normalized).resolve()
+        try:
+            target.relative_to(workspace)
+        except ValueError as exc:
+            raise ValueError(f"workspace path escapes sandbox: {rel_path}") from exc
+        return target
+
+    def write_manifest(self, artifacts: Iterable[Path] = (), **metadata) -> Path:
+        manifest = self.manifest(artifacts)
+        manifest.update(metadata)
+        self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        self.manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return self.manifest_path
 
     def normalize_relative_path(self, rel_path: str) -> str:
         normalized = (rel_path or "").replace("\\", "/").strip()
@@ -88,6 +125,9 @@ class SandboxSession:
             "phase_number": self.phase_number,
             "role": self.role,
             "sandbox_level": self.sandbox_level,
+            "sandbox_dir": str(self.sandbox_dir),
+            "workspace_dir": str(self.workspace_dir),
+            "manifest_path": str(self.manifest_path),
             "artifacts": [str(path) for path in artifacts],
         }
 

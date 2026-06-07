@@ -55,6 +55,21 @@ def test_sandbox_accepts_exact_allowed_task_path(tmp_path):
     assert sandbox.normalize_relative_path("src/example.cpp") == "src/example.cpp"
 
 
+def test_sandbox_prepares_workspace_and_writes_manifest(tmp_path):
+    sandbox = _sandbox(tmp_path, allowed_paths=["src/example.cpp"])
+    workspace_target = sandbox.resolve_workspace_target("src/example.cpp")
+    workspace_target.parent.mkdir(parents=True, exist_ok=True)
+    workspace_target.write_text("int main() { return 0; }", encoding="utf-8")
+
+    manifest_path = sandbox.write_manifest([workspace_target], status="generated")
+
+    assert workspace_target.exists()
+    assert manifest_path.exists()
+    content = manifest_path.read_text(encoding="utf-8")
+    assert sandbox.sandbox_id in content
+    assert "generated" in content
+
+
 def test_sandbox_accepts_pytest_command_at_project_root(tmp_path):
     sandbox = _sandbox(tmp_path)
     command = CommandSpec(argv=["pytest", "tests", "-v"], cwd=tmp_path)

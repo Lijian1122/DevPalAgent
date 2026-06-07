@@ -61,6 +61,7 @@ class MultiAgentCoordinator:
     def merge_successful_results(self, results: List[ParallelTaskResult], project_dir: Path) -> Tuple[List[Path], List[str]]:
         artifacts: List[Path] = []
         errors: List[str] = []
+        pending_writes: List[Tuple[Path, str, SandboxSession, Path | None]] = []
         for result in results:
             if not result.success:
                 continue
@@ -70,6 +71,7 @@ class MultiAgentCoordinator:
                 break
             rel_path = str(agent_result.metadata.get("path") or "")
             content = agent_result.metadata.get("content")
+            workspace_artifact = agent_result.metadata.get("workspace_artifact")
             sandbox = SandboxSession(
                 project_dir=project_dir,
                 task_id=agent_result.task_id,
@@ -83,6 +85,9 @@ class MultiAgentCoordinator:
             except ValueError as exc:
                 errors.append(str(exc))
                 break
+            source_path = Path(workspace_artifact) if workspace_artifact else None
+            if source_path and source_path.exists():
+                content = source_path.read_text(encoding="utf-8")
             if not isinstance(content, str) or not content:
                 errors.append(f"missing generated content for {result.task_id}")
                 break
@@ -91,10 +96,20 @@ class MultiAgentCoordinator:
                     f"multi-agent output for {rel_path} is a diff/patch, not a complete file"
                 )
                 break
+            pending_writes.append((target, content, sandbox, source_path))
+        if errors:
+            return artifacts, errors
+        for target, content, sandbox, source_path in pending_writes:
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content, encoding="utf-8")
                 artifacts.append(target)
+                sandbox.write_manifest(
+                    [target],
+                    status="merged",
+                    target_path=str(target),
+                    workspace_artifact=str(source_path) if source_path else None,
+                )
             except Exception as exc:
                 errors.append(str(exc))
                 break

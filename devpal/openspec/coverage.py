@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List
@@ -37,16 +38,21 @@ class CoverageMatrixBuilder:
         code_files = self._relative_files(project_dir, ["src/**/*.py", "src/**/*.cpp", "src/**/*.c", "src/**/*.h", "include/**/*.h", "include/**/*.hpp"])
         test_files = self._relative_files(project_dir, ["tests/**/*.py", "tests/**/*.cpp", "tests/**/*.sh"])
         report_files = self._relative_files(project_dir, ["docs/final_report.md"])
-        rows = []
-        for requirement in requirements:
-            status = "VERIFIED" if code_files and test_files else "MISSING"
-            rows.append({
-                "requirement": requirement,
-                "code": code_files,
-                "tests": test_files,
-                "report": report_files,
-                "status": status,
-            })
+        graph_rows = self._rows_from_artifact_graph(project_dir, requirements, report_files)
+        if graph_rows and any(row["code"] or row["tests"] for row in graph_rows):
+            rows = graph_rows
+        else:
+            rows = []
+        if not rows:
+            for requirement in requirements:
+                status = "HEURISTIC" if code_files and test_files else "MISSING"
+                rows.append({
+                    "requirement": requirement,
+                    "code": code_files,
+                    "tests": test_files,
+                    "report": report_files,
+                    "status": status,
+                })
         if not rows:
             rows.append({
                 "requirement": "(none)",
@@ -58,13 +64,74 @@ class CoverageMatrixBuilder:
         output_path = project_dir / ".spec" / "coverage_matrix.md"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         self._write_markdown(output_path, change_id, rows)
-        covered = sum(1 for row in rows if row["status"] == "VERIFIED")
+        covered = sum(1 for row in rows if row["status"] in {"VERIFIED", "HEURISTIC"})
         return CoverageMatrixResult(
             path=output_path,
             total_requirements=len(rows),
             covered_requirements=covered,
             rows=rows,
         )
+
+    def _rows_from_artifact_graph(self, project_dir: Path, requirements: List[str], report_files: List[str]) -> List[Dict[str, Any]]:
+        graph_path = project_dir / ".spec" / "artifact_graph.json"
+        if not graph_path.exists() or not requirements:
+            return []
+        try:
+            graph = json.loads(graph_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        nodes = {node.get("id"): node for node in graph.get("nodes", []) if node.get("id")}
+        rows = []
+        for requirement in requirements:
+            req_node_id = f"req:{requirement}"
+            related = self._related_graph_files(graph, nodes, requirement, req_node_id)
+            code = related["code"]
+            tests = related["test"]
+            docs = related["doc"] or report_files
+            if code and tests:
+                status = "VERIFIED"
+            elif code or tests:
+                status = "PARTIAL"
+            else:
+                status = "MISSING"
+            rows.append({
+                "requirement": requirement,
+                "code": code,
+                "tests": tests,
+                "report": docs,
+                "status": status,
+            })
+        return rows
+
+    def _related_graph_files(self, graph: Dict[str, Any], nodes: Dict[str, Dict[str, Any]], requirement: str, req_node_id: str) -> Dict[str, List[str]]:
+        related = {"code": [], "test": [], "doc": []}
+        for node in nodes.values():
+            metadata = node.get("metadata", {}) or {}
+            requirement_ids = metadata.get("requirement_ids") or metadata.get("requirements") or []
+            if isinstance(requirement_ids, str):
+                requirement_ids = [requirement_ids]
+            if requirement in requirement_ids:
+                self._add_node_file(related, node)
+        for edge in graph.get("edges", []) or []:
+            source = edge.get("from") or edge.get("from_id") or edge.get("source")
+            target = edge.get("to") or edge.get("to_id") or edge.get("target")
+            if source == req_node_id and target in nodes:
+                self._add_node_file(related, nodes[target])
+            elif target == req_node_id and source in nodes:
+                self._add_node_file(related, nodes[source])
+        return {key: sorted(set(value)) for key, value in related.items()}
+
+    def _add_node_file(self, related: Dict[str, List[str]], node: Dict[str, Any]) -> None:
+        node_type = str(node.get("type") or "")
+        path = node.get("path") or str(node.get("id", "")).removeprefix("file:")
+        if not path:
+            return
+        if node_type in {"code", "source"}:
+            related["code"].append(path)
+        elif node_type == "test":
+            related["test"].append(path)
+        elif node_type == "doc":
+            related["doc"].append(path)
 
     def _requirements(self, metadata: Dict[str, Any]) -> List[str]:
         candidates = metadata.get("requirements") or metadata.get("requirement_ids") or metadata.get("related_requirements") or []

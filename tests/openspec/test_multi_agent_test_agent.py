@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+from pathlib import Path
+
 from devpal.core.multi_agent import AgentPolicy, AgentTask, CommandResult, CommandSpec, TestAgent
 
 
@@ -36,6 +38,7 @@ def test_test_agent_returns_success_with_command_output(tmp_path):
     assert result.metadata["stdout"] == "passed"
     assert result.metadata["output"] == "passed"
     assert result.metadata["commands"][0]["returncode"] == 0
+    assert Path(result.metadata["manifest_path"]).exists()
 
 
 def test_test_agent_returns_failure_for_nonzero_command(tmp_path):
@@ -87,4 +90,5 @@ def test_test_agent_fails_closed_on_policy_violation(tmp_path):
 
     assert result.success is False
     assert result.policy_violations
+    assert Path(result.metadata["manifest_path"]).exists()
     assert calls["count"] == 0

@@ -215,6 +215,7 @@ class Phase11FinalReport(PhaseInterface):
                 "### Requirement Status",
                 "",
             ]
+            + self._generate_status_summary()
             + [
                 "",
             ]
@@ -411,6 +412,9 @@ class Phase11FinalReport(PhaseInterface):
                 sandbox = metadata.get("sandbox") or {}
                 if not sandbox_id and isinstance(sandbox, dict):
                     sandbox_id = sandbox.get("sandbox_id")
+                manifest_path = metadata.get("manifest_path")
+                if not manifest_path and isinstance(sandbox, dict):
+                    manifest_path = sandbox.get("manifest_path")
                 policy_violations = metadata.get("policy_violations") or result.get("policy_violations") or []
                 if not sandbox_id and not policy_violations:
                     continue
@@ -424,6 +428,7 @@ class Phase11FinalReport(PhaseInterface):
                         "success": result.get("success", False),
                         "duration_ms": result.get("duration_ms", 0),
                         "violations": violation_count,
+                        "manifest_path": manifest_path or "",
                     }
                 )
         return {"rows": rows, "task_count": len(rows), "policy_violations": violations}
@@ -447,12 +452,21 @@ class Phase11FinalReport(PhaseInterface):
         ]
         if rows:
             lines.extend([
-                "| Phase | Task | Sandbox | Success | Duration ms | Violations |",
-                "|-------|------|---------|---------|-------------|------------|",
+                "| Phase | Task | Sandbox | Success | Duration ms | Violations | Manifest |",
+                "|-------|------|---------|---------|-------------|------------|----------|",
             ])
             for row in rows:
+                manifest = row.get("manifest_path") or ""
+                if manifest:
+                    try:
+                        manifest = Path(manifest).resolve().relative_to(self.context.project_dir.resolve()).as_posix()
+                    except Exception:
+                        manifest = str(manifest)
                 lines.append(
-                    "| {phase} | `{task_id}` | `{sandbox_id}` | {success} | {duration_ms} | {violations} |".format(**row)
+                    "| {phase} | `{task_id}` | `{sandbox_id}` | {success} | {duration_ms} | {violations} | `{manifest}` |".format(
+                        manifest=manifest,
+                        **row,
+                    )
                 )
             lines.append("")
         return lines

@@ -30,7 +30,7 @@ DevPalAgent 采用**三层记忆架构**（Short-term、Long-term、Error Memory
 **向量数据库集成**:
 - 存储：代码片段、设计文档、需求
 - 检索：相似代码、相关文档、历史案例
-- 支持：Chroma、FAISS
+- 支持：默认 MockEmbeddingProvider；可选 ChromaDB 持久化后端
 
 ---
 
@@ -200,118 +200,52 @@ class ErrorMemory:
 
 ## Q3: 向量数据库如何集成？
 
-**架构**:
-```
-devpal/memory/
-├── vector_store.py       # 向量存储抽象
-├── chroma_store.py       # Chroma 实现
-├── faiss_store.py        # FAISS 实现
-└── embeddings.py         # 向量化
+**当前实现架构**:
+```text
+devpal/vector_store/
+├── documents.py         # VectorDocument 数据结构
+├── embeddings.py        # EmbeddingProvider + MockEmbeddingProvider
+├── vector_db.py         # InMemoryVectorStore / ChromaVectorStore / DisabledVectorStore
+├── indexer.py           # ProjectArtifactIndexer
+├── semantic_search.py   # SemanticSearchService，供 OpenSpec phase 调用
+├── index_project.py     # CLI: 索引项目
+└── search.py            # CLI: 语义查询
 ```
 
-**VectorStore 接口**:
+**核心设计**:
+- 默认使用 `MockEmbeddingProvider`，保证离线测试和面试 demo 可重复。
+- 如果安装 ChromaDB，可通过 `ChromaVectorStore` 做本地持久化。
+- 没有当前 FAISS 实现；FAISS 只适合作为未来可选后端，不应在面试中说成已完成。
+- `ProjectArtifactIndexer` 会索引 requirements、OpenSpec change artifacts、source、tests、docs 和 error memory。
+- `SemanticSearchService.from_context()` 将向量检索接入 OpenSpec context，并记录 search/index/fallback stats。
+
+**运行入口**:
+```bash
+# OpenSpec 运行时启用检索上下文注入
+python run_ai_flow.py -r requirements/simple_login.md --vector-retrieval --vector-top-k 5
+
+# 单独索引项目 artifacts
+python -m devpal.vector_store.index_project <project-dir>
+
+# 查询相关代码/文档；--index-first 会先建立索引
+python -m devpal.vector_store.search "用户登录密码校验逻辑" --project-dir <project-dir> --index-first
+```
+
+**在主流程中的使用**:
 ```python
-# devpal/memory/vector_store.py
-class VectorStore(ABC):
-    """向量存储抽象接口"""
-    
-    @abstractmethod
-    def add(self, documents: List[str], metadatas: List[dict]) -> List[str]:
-        """添加文档"""
-        pass
-    
-    @abstractmethod
-    def query(self, query: str, top_k: int = 5) -> List[dict]:
-        """查询相似文档"""
-        pass
-    
-    @abstractmethod
-    def delete(self, ids: List[str]) -> None:
-        """删除文档"""
-        pass
+# Phase 4: 代码生成前注入相关上下文
+service = SemanticSearchService.from_context(context)
+service.index_context(context, project_name)
+retrieved_context = service.build_context(
+    query=context.requirements_content,
+    project_name=project_name,
+    artifact_types=["requirements", "change", "source", "test", "report"],
+    top_k=context.vector_top_k,
+)
 ```
 
-**Chroma 实现**:
-```python
-# devpal/memory/chroma_store.py
-import chromadb
-
-class ChromaVectorStore(VectorStore):
-    """Chroma 向量存储"""
-    
-    def __init__(self, persist_dir: Path):
-        self.client = chromadb.Client(chromadb.Settings(
-         persist_directory=str(persist_dir)
-        ))
-        self.collection = self.client.get_or_create_collection("devpal_knowledge")
-    
-    def add(self, documents: List[str], metadatas: List[dict]) -> List[str]:
-        """添加文档到向量库"""
-      ids = [f"doc_{i}" for i in range(len(documents))]
-        self.collection.add(
-            documents=documents,
-            metadatas=metadatas,
-            ids=ids
-        )
-        return ids
-    
-    def query(self, query: str, top_k: int = 5) -> List[dict]:
-        """语义检索"""
-        results = self.collection.query(
-            query_texts=[query],
-       n_results=top_k
-        )
-        
-      return [
-            {
-           "document": doc,
-             "metadata": meta,
-              "similarity": dist
-        }
-            for doc, meta, dist in zip(
-                results["documents"][0],
-                results["metadatas"][0],
-                results["distances"][0]
-            )
-        ]
-```
-
-**使用场景**:
-```python
-# Phase 3: 技术设计时检索相似设计
-def phase3_with_vector_retrieval(context):
-    # 1. 检索相似项目的设计文档
-    similar_designs = vector_store.query(
-        query=context.requirements_content,
-        top_k=3
-    )
-    
-    # 2. 将相似设计作为参考
-    design_prompt = f"""
-Design for the following requirements:
-{context.requirements_content}
-
-Reference designs from similar projects:
-{format_similar_designs(similar_designs)}
-
-Create a new design based on best practices.
-"""
-    
-    # 3. LLM 生成设计
-    design = llm_client.create_message(design_prompt)
-    
-    # 4. 保存新设计到向量库
-    vector_store.add(
-     documents=[design],
-        metadatas=[{
-            "project": context.project_name,
-            "language": context.language,
-            "timestamp": datetime.now().isoformat()
-        }]
-    )
-    
-    return design
-```
+**面试讲法**:
+> 我没有把向量数据库做成单独的炫技模块，而是接进 OpenSpec phase：Phase 4 生成代码前检索相关 requirements/change/source/test/report；Phase 11 输出检索统计；Self-Healing 可以复用 error memory 的相似错误召回。为了保证本地演示稳定，默认 provider 是 deterministic mock embedding，Chroma 是可选持久化后端。
 
 ---
 
@@ -525,14 +459,15 @@ def transfer_knowledge(from_project, to_project):
 
 **技术深度展示**:
 1. "三层记忆：Short-term（对话上下文）、Long-term（用户偏好）、Error（失败案例）"
-2. "向量检索：相似设计文档、历史代码片段、最佳实践"
-3. "能力提升：上下文连贯、个性化、错误预防、知识复用"
-4. "性能优化：文档分块、元数据过滤、缓存策略"
+2. "向量检索：`ProjectArtifactIndexer` 索引 requirements/change/source/test/docs，`SemanticSearchService` 在 Phase 4 注入相关上下文"
+3. "能力提升：上下文裁剪、相似错误召回、报告可观测统计"
+4. "性能优化：top-k、artifact type filter、Mock provider 离线测试、Chroma 持久化可选"
 
 **代码展示**:
-- `devpal/memory/` - 记忆系统实现
-- `devpal/memory/vector_store.py` - 向量存储
-- 使用示例
+- `devpal/memory/` - 三层记忆系统实现
+- `devpal/vector_store/` - 语义检索与向量存储实现
+- `devpal/core/openspec_phases/phase4_generate_code.py` - Phase 4 检索上下文注入
+- `devpal/core/openspec_phases/phase11_final_report.py` - 检索统计报告
 
 **亮点总结**:
 - 🧠 **三层记忆**: Short-term + Long-term + Error Memory
