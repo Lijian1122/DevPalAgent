@@ -203,9 +203,15 @@ def main() -> int:
     parser.add_argument("--no-vector-chroma", action="store_true",
                         help="禁用 ChromaDB，使用内存向量检索")
     parser.add_argument("--max-concurrency", type=int, default=3,
-                        help="Phase 内部文件任务最大并发数 (默认: 3)")
+                  help="Phase 内部文件任务最大并发数 (默认: 3)")
+    parser.add_argument("--enable-multi-agent", action="store_true",
+                     help="启用多Agent模式 (ReviewAgent, CodegenAgent, TestAgent)")
+    parser.add_argument("--agent-pool-size", type=int,
+                        help="Agent 池大小 (默认: 等于 max-concurrency)")
+    parser.add_argument("--sandbox-level", choices=["staging", "production"], default="staging",
+                  help="沙箱隔离级别 (默认: staging)")
     parser.add_argument("--resume", action="store_true",
-             help="从 .spec/checkpoint.json 恢复执行")
+                 help="从 .spec/checkpoint.json 恢复执行")
     parser.add_argument("--verbose", "-v", action="store_true",
                help="启用详细输出模式")
     parser.add_argument("--debug", action="store_true",
@@ -294,8 +300,11 @@ def main() -> int:
             vector_retrieval_enabled=args.vector_retrieval,
             vector_persist_dir=args.vector_persist_dir,
             vector_top_k=args.vector_top_k,
-            vector_prefer_chroma=not args.no_vector_chroma,
+         vector_prefer_chroma=not args.no_vector_chroma,
             max_concurrency=args.max_concurrency,
+            enable_multi_agent=args.enable_multi_agent,
+         sandbox_level=args.sandbox_level,
+            agent_pool_size=args.agent_pool_size,
             verbose=args.verbose,
             debug=args.debug,
        run_mode=run_mode,

@@ -23,6 +23,9 @@ class OpenSpecRunOptions:
     vector_top_k: int = 5
     vector_prefer_chroma: bool = True
     max_concurrency: int = 3
+    enable_multi_agent: bool = False
+    sandbox_level: str = "staging"
+    agent_pool_size: Optional[int] = None
     verbose: bool = False
     debug: bool = False
     run_mode: RunMode = RunMode.FULL
@@ -56,6 +59,9 @@ class OpenSpecWorkflowExecutor:
             vector_top_k=opts.vector_top_k,
             vector_prefer_chroma=opts.vector_prefer_chroma,
             max_concurrency=opts.max_concurrency,
+            enable_multi_agent=opts.enable_multi_agent,
+            sandbox_level=opts.sandbox_level,
+            agent_pool_size=opts.agent_pool_size,
             verbose=opts.verbose,
             debug=opts.debug,
             run_mode=opts.run_mode,

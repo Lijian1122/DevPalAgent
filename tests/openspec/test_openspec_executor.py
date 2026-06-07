@@ -115,3 +115,61 @@ def test_executor_passes_max_concurrency_to_phase_context(tmp_path):
 
     assert scheduler.context.phase4_max_concurrency == 4
     assert scheduler.context.phase5_max_concurrency == 4
+
+
+def test_executor_passes_multi_agent_options_to_phase_context(tmp_path):
+    req_file = tmp_path / "requirements.md"
+    req_file.write_text("C++ login requirement", encoding="utf-8")
+
+    executor = OpenSpecWorkflowExecutor(_DummyRegistry())
+    scheduler = executor.create_scheduler(
+        str(req_file),
+        OpenSpecRunOptions(
+            max_concurrency=2,
+            enable_multi_agent=True,
+            sandbox_level="strict",
+            agent_pool_size=4,
+        ),
+    )
+
+    assert scheduler.context.enable_multi_agent is True
+    assert scheduler.context.sandbox_level == "strict"
+    assert scheduler.context.agent_pool_size == 4
+
+
+def test_executor_defaults_agent_pool_size_to_max_concurrency(tmp_path):
+    req_file = tmp_path / "requirements.md"
+    req_file.write_text("C++ login requirement", encoding="utf-8")
+
+    executor = OpenSpecWorkflowExecutor(_DummyRegistry())
+    scheduler = executor.create_scheduler(
+        str(req_file),
+        OpenSpecRunOptions(max_concurrency=5, enable_multi_agent=True),
+    )
+
+    assert scheduler.context.agent_pool_size == 5
+
+
+def test_context_checkpoint_preserves_multi_agent_options(tmp_path):
+    req_file = tmp_path / "requirements.md"
+    req_file.write_text("C++ login requirement", encoding="utf-8")
+
+    executor = OpenSpecWorkflowExecutor(_DummyRegistry())
+    scheduler = executor.create_scheduler(
+        str(req_file),
+        OpenSpecRunOptions(
+            enable_multi_agent=True,
+            sandbox_level="strict",
+            agent_pool_size=6,
+        ),
+    )
+    data = scheduler.context.to_checkpoint_dict()
+    restored = scheduler.context.__class__(
+        project_dir=scheduler.context.project_dir,
+        requirements_file=req_file,
+    )
+    restored.restore_from_checkpoint(data)
+
+    assert restored.enable_multi_agent is True
+    assert restored.sandbox_level == "strict"
+    assert restored.agent_pool_size == 6

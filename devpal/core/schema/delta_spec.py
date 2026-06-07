@@ -185,7 +185,13 @@ class DeltaSpec:
 
         # 4. 返回预览结果（不写入文件）
         success = len(conflicts) == 0
-        return DeltaResult(success, applied, conflicts, content, diff_preview)
+        return DeltaResult(
+            success=success,
+            applied_deltas=applied,
+            conflicts=conflicts,
+            new_content=content,
+            diff_preview=diff_preview,
+        )
 
     def apply(self, validate: bool = True, dry_run: bool = False) -> DeltaResult:
         """应用所有 Delta 变更
@@ -222,7 +228,13 @@ class DeltaSpec:
         diff_preview = self._generate_diff(self._original_content, content)
 
         success = len(conflicts) == 0
-        return DeltaResult(success, applied, conflicts, content, diff_preview)
+        return DeltaResult(
+            success=success,
+            applied_deltas=applied,
+            conflicts=conflicts,
+            new_content=content,
+            diff_preview=diff_preview,
+        )
 
     def _apply_delta(self, content: str, delta: DeltaHunk) -> str:
         """应用单个 Delta"""

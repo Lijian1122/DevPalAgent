@@ -3,7 +3,7 @@
 
 import json
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from ..cache_strategy import CacheMetrics
 from ..schema.artifact_graph import ArtifactNode, ArtifactType, DependencyType
@@ -59,6 +59,7 @@ class Phase11FinalReport(PhaseInterface):
         )
         self.log("  self-heal attempts: {}".format(self.context.self_heal_attempts))
         self.log("=" * 60)
+        sandbox_stats = self._collect_sandbox_stats()
 
         return PhaseResult.ok(
             "Final report generated",
@@ -77,6 +78,12 @@ class Phase11FinalReport(PhaseInterface):
             self_heal_attempts=self.context.self_heal_attempts,
             vector_retrieval_enabled=self.context.vector_retrieval_enabled,
             vector_retrieval_stats=dict(self.context.vector_retrieval_stats),
+            multi_agent_enabled=bool(getattr(self.context, "enable_multi_agent", False)),
+            sandbox_level=getattr(self.context, "sandbox_level", "staging"),
+            agent_pool_size=getattr(self.context, "agent_pool_size", 0),
+            agent_backend=getattr(self.context, "agent_backend", "local"),
+            sandbox_task_count=sandbox_stats["task_count"],
+            sandbox_policy_violations=sandbox_stats["policy_violations"],
         )
 
     def _generate_final_report(
@@ -138,6 +145,7 @@ class Phase11FinalReport(PhaseInterface):
         ]
         lines.extend(self._generate_vector_retrieval_section())
         lines.extend(self._generate_parallel_execution_section())
+        lines.extend(self._generate_multi_agent_sandbox_section())
         lines.extend(self._generate_archive_section())
         lines.extend(
             [
@@ -152,6 +160,7 @@ class Phase11FinalReport(PhaseInterface):
                 "",
             ]
         )
+        lines.extend(self._generate_test_documentation_section())
 
         # Add Critique section if available
         if hasattr(self.context, "critique_result") and self.context.critique_result:
@@ -191,15 +200,15 @@ class Phase11FinalReport(PhaseInterface):
                     dim_name = dim_name_map.get(dim, dim)
                     lines.append(f"| {dim_name} | {score}/100 |")
 
-                lines.extend(
-                    [
-                        "",
-                        f"**Critical Issues**: {len(critical_issues)}",
-                        "",
-                        "Detailed report: [critique_report.md](critique_report.md)",
-                        "",
-                    ]
-                )
+            lines.extend(
+                [
+                    "",
+                    f"**Critical Issues**: {len(critical_issues)}",
+                    "",
+                    "Detailed report: [critique_report.md](critique_report.md)",
+                    "",
+                ]
+            )
 
         lines.extend(
             [
@@ -357,6 +366,95 @@ class Phase11FinalReport(PhaseInterface):
                 )
             )
         lines.append("")
+        return lines
+
+    def _generate_test_documentation_section(self) -> List[str]:
+        summary = dict(getattr(self.context, "test_doc_summary", {}) or {})
+        docs = list(summary.get("doc_paths") or getattr(self.context, "test_docs", []) or [])
+        if not summary and not docs:
+            return []
+        lines = [
+            "### Test Documentation",
+            "",
+            "- Test files: {}".format(summary.get("test_count", len(docs))),
+            "- Docs generated: {}".format(summary.get("docs_generated", len(docs))),
+            "",
+        ]
+        if docs:
+            lines.extend(["| Document |", "|----------|"])
+            for doc in docs:
+                try:
+                    rel = Path(doc).resolve().relative_to(self.context.project_dir.resolve())
+                    doc_text = rel.as_posix()
+                except Exception:
+                    doc_text = str(doc)
+                lines.append(f"| `{doc_text}` |")
+            lines.append("")
+        errors = list(summary.get("errors") or [])
+        if errors:
+            lines.extend(["Partial generation errors:", ""])
+            for error in errors:
+                lines.append(f"- {error}")
+            lines.append("")
+        return lines
+
+    def _collect_sandbox_stats(self) -> Dict[str, Any]:
+        rows = []
+        violations = 0
+        for phase_num, summary in sorted(
+            dict(getattr(self.context, "parallel_execution_stats", {}) or {}).items(),
+            key=lambda item: float(item[0]),
+        ):
+            for result in summary.get("results", []) or []:
+                metadata = result.get("metadata", {}) if isinstance(result, dict) else {}
+                sandbox_id = metadata.get("sandbox_id") or result.get("sandbox_id")
+                sandbox = metadata.get("sandbox") or {}
+                if not sandbox_id and isinstance(sandbox, dict):
+                    sandbox_id = sandbox.get("sandbox_id")
+                policy_violations = metadata.get("policy_violations") or result.get("policy_violations") or []
+                if not sandbox_id and not policy_violations:
+                    continue
+                violation_count = len(policy_violations) if isinstance(policy_violations, list) else 1
+                violations += violation_count
+                rows.append(
+                    {
+                        "phase": phase_num,
+                        "task_id": result.get("task_id", ""),
+                        "sandbox_id": sandbox_id or "",
+                        "success": result.get("success", False),
+                        "duration_ms": result.get("duration_ms", 0),
+                        "violations": violation_count,
+                    }
+                )
+        return {"rows": rows, "task_count": len(rows), "policy_violations": violations}
+
+    def _generate_multi_agent_sandbox_section(self) -> List[str]:
+        sandbox_stats = self._collect_sandbox_stats()
+        rows = sandbox_stats["rows"]
+        violations = sandbox_stats["policy_violations"]
+        if not rows and not getattr(self.context, "enable_multi_agent", False):
+            return []
+        lines = [
+            "### Multi-Agent Sandbox Summary",
+            "",
+            "- Enabled: {}".format(bool(getattr(self.context, "enable_multi_agent", False))),
+            "- Sandbox level: {}".format(getattr(self.context, "sandbox_level", "staging")),
+            "- Backend: {}".format(getattr(self.context, "agent_backend", "local")),
+            "- Agent pool size: {}".format(getattr(self.context, "agent_pool_size", 0)),
+            "- Sandboxed tasks: {}".format(len(rows)),
+            "- Policy violations: {}".format(violations),
+            "",
+        ]
+        if rows:
+            lines.extend([
+                "| Phase | Task | Sandbox | Success | Duration ms | Violations |",
+                "|-------|------|---------|---------|-------------|------------|",
+            ])
+            for row in rows:
+                lines.append(
+                    "| {phase} | `{task_id}` | `{sandbox_id}` | {success} | {duration_ms} | {violations} |".format(**row)
+                )
+            lines.append("")
         return lines
 
     def _write_artifact_graph(self) -> Path:

@@ -15,6 +15,7 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from devpal.core.multi_agent.models import CommandResult
 from devpal.core.schema.languages.cpp_plugin import CppLanguagePlugin
 from devpal.core.schema.languages.python_plugin import PythonLanguagePlugin
 from devpal.core.schema.languages.shell_plugin import ShellLanguagePlugin
@@ -33,6 +34,10 @@ from .enhanced_test_self_healer import EnhancedTestSelfHealer
 from .test_self_healer import TestSelfHealer
 
 
+class CommandPolicyViolation(Exception):
+    pass
+
+
 class Phase10RunTests(PhaseInterface):
     """Phase 10: 编译运行测试并更新文档"""
 
@@ -47,6 +52,7 @@ class Phase10RunTests(PhaseInterface):
         # EventBus integration
         self.event_bus = get_global_event_bus()
         self.workflow_id = getattr(context, "workflow_id", "")
+        self._phase10_command_results: List[Dict] = []
 
     def should_skip(self) -> tuple:
         """判断是否应该跳过当前阶段"""
@@ -59,7 +65,8 @@ class Phase10RunTests(PhaseInterface):
             "Phase 10 start: compile + run tests + update docs (AI self-heal enabled)"
         )
 
-        project_dir = self.context.project_dir
+        # 确保 project_dir 是绝对路径，避免多Agent模式下的路径问题
+        project_dir = Path(self.context.project_dir).resolve()
         tests_dir = project_dir / "tests"
 
         if not tests_dir.exists():
@@ -111,12 +118,207 @@ class Phase10RunTests(PhaseInterface):
 
         # Branch based on language
         if language == "python":
+            if bool(getattr(self.context, "enable_multi_agent", False)):
+                return self._try_run_python_tests_multi_agent(project_dir, tests_dir, test_files)
             return self._run_python_tests(project_dir, tests_dir, test_files)
         elif language == "cpp":
             return self._run_cpp_tests(project_dir, tests_dir, test_files)
         else:
             self.log(f"  [WARN] Unsupported language for testing: {language}")
             return PhaseResult.ok("Tests skipped (unsupported language)", skipped=True)
+
+    def _build_python_test_env(self, project_dir: Path) -> Dict[str, str]:
+        env = os.environ.copy()
+        src_dir = project_dir / "src"
+        if src_dir.exists():
+            pythonpath = str(src_dir)
+            if "PYTHONPATH" in env:
+                pythonpath = f"{pythonpath}{os.pathsep}{env['PYTHONPATH']}"
+            env["PYTHONPATH"] = pythonpath
+        return env
+
+    def _try_run_python_tests_multi_agent(
+        self, project_dir: Path, tests_dir: Path, test_files: List[Path]
+    ) -> PhaseResult:
+        from devpal.core.multi_agent import AgentPolicy, CommandSpec, MultiAgentCoordinator
+        from devpal.core.openspec_phases.parallel_executor import ParallelTask
+
+        self.log(f"  [MULTI-AGENT TEST] Running {len(test_files)} Python test files with pytest...")
+        env = self._build_python_test_env(project_dir)
+        command = CommandSpec(
+            argv=["pytest", "tests", "-v"],
+            cwd=project_dir,
+            timeout_seconds=300,
+            env=env,
+        )
+        task = ParallelTask(
+            task_id="phase10:python:pytest",
+            phase_number=self.phase_number,
+            task_type="test_run",
+            input_payload={
+                "project_dir": project_dir,
+                "language": "python",
+                "test_files": [path.as_posix() for path in test_files],
+                "commands": [command],
+            },
+        )
+        policy = AgentPolicy(
+            enabled=True,
+            sandbox_level=getattr(self.context, "sandbox_level", "staging"),
+            max_concurrency=1,
+            retry_limit=0,
+            allowed_tools=["execute_command"],
+            timeout_seconds=300,
+        )
+        coordinator = MultiAgentCoordinator(
+            policy=policy,
+            log=self.log,
+            event_integration=getattr(self.context, "event_integration", None),
+        )
+        try:
+            results, summary = coordinator.execute_test_tasks([task])
+        except Exception as exc:
+            return PhaseResult.fail("Python tests failed", errors=[str(exc)])
+
+        self.context.parallel_execution_stats[str(self.phase_number)] = summary
+        result = results[0]
+        output = str(result.metadata.get("output") or "")
+        self.context.test_output = output
+        test_total = len(test_files)
+        if result.success:
+            self.context.test_passed = test_total
+            self.context.test_failed = 0
+            self.context.test_total = test_total
+            self.log("  [OK] All Python tests passed (multi-agent)")
+            return PhaseResult.ok(
+                "Python tests passed",
+                test_passed=test_total,
+                test_failed=0,
+                test_total=test_total,
+                multi_agent=True,
+                parallel_summary=summary,
+            )
+
+        self.context.test_passed = 0
+        self.context.test_failed = test_total
+        self.context.test_total = test_total
+        self.log("  [FAIL] Some Python tests failed (multi-agent)")
+        error = result.error or str(result.metadata.get("stderr") or "Python tests failed")
+        return PhaseResult.fail("Python tests failed", errors=[error])
+
+    def _is_multi_agent_command_execution_enabled(self) -> bool:
+        return bool(getattr(self.context, "enable_multi_agent", False))
+
+    def _run_phase10_command(
+        self,
+        task_id: str,
+        argv: List[str],
+        timeout_seconds: int,
+        env: Optional[Dict] = None,
+        legacy_cwd: Optional[Path] = None,
+        agent_cwd: Optional[Path] = None,
+        encoding: Optional[str] = None,
+        errors: Optional[str] = None,
+    ) -> CommandResult:
+        if not self._is_multi_agent_command_execution_enabled():
+            try:
+                completed = subprocess.run(
+                    argv,
+                    cwd=legacy_cwd,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_seconds,
+                    env=env,
+                    encoding=encoding,
+                    errors=errors,
+                )
+                return CommandResult(
+                    argv=list(argv),
+                    cwd=legacy_cwd or "",
+                    returncode=completed.returncode,
+                    stdout=completed.stdout or "",
+                    stderr=completed.stderr or "",
+                )
+            except subprocess.TimeoutExpired as exc:
+                return CommandResult(
+                    argv=list(argv),
+                    cwd=legacy_cwd or "",
+                    stdout=exc.stdout or "",
+                    stderr=exc.stderr or "",
+                    timed_out=True,
+                    error=f"timeout after {timeout_seconds}s",
+                )
+            except Exception as exc:
+                return CommandResult(
+                    argv=list(argv),
+                    cwd=legacy_cwd or "",
+                    error=str(exc),
+                )
+
+        from devpal.core.multi_agent import AgentPolicy, CommandSpec, MultiAgentCoordinator
+        from devpal.core.openspec_phases.parallel_executor import ParallelTask
+
+        command = CommandSpec(
+            argv=list(argv),
+            cwd=agent_cwd or legacy_cwd or self.context.project_dir,
+            timeout_seconds=timeout_seconds,
+            env=env,
+            encoding=encoding,
+            errors=errors,
+        )
+        task = ParallelTask(
+            task_id=task_id,
+            phase_number=self.phase_number,
+            task_type="test_run",
+            input_payload={
+                "project_dir": self.context.project_dir,
+                "language": self.context.language,
+                "commands": [command],
+            },
+        )
+        policy = AgentPolicy(
+            enabled=True,
+            sandbox_level=getattr(self.context, "sandbox_level", "staging"),
+            max_concurrency=1,
+            retry_limit=0,
+            allowed_tools=["execute_command"],
+            timeout_seconds=timeout_seconds,
+        )
+        coordinator = MultiAgentCoordinator(
+            policy=policy,
+            log=self.log,
+            event_integration=getattr(self.context, "event_integration", None),
+        )
+        results, summary = coordinator.execute_test_tasks([task])
+        result = results[0]
+        self._record_phase10_command_result(summary)
+        if result.metadata.get("policy_violations"):
+            raise CommandPolicyViolation(str(result.metadata["policy_violations"]))
+        return CommandResult(
+            argv=list(argv),
+            cwd=command.cwd,
+            returncode=0 if result.success else 1,
+            stdout=str(result.metadata.get("stdout") or ""),
+            stderr=str(result.metadata.get("stderr") or ""),
+            duration_ms=result.duration_ms,
+            timed_out=bool(result.metadata.get("commands", [{}])[-1].get("timed_out", False)) if result.metadata.get("commands") else False,
+            error=result.error,
+        )
+
+    def _record_phase10_command_result(self, summary: Dict[str, object]) -> None:
+        self._phase10_command_results.extend(summary.get("results", []))
+        total_duration = sum(int(item.get("duration_ms", 0) or 0) for item in self._phase10_command_results)
+        failed_count = sum(1 for item in self._phase10_command_results if not item.get("success"))
+        self.context.parallel_execution_stats[str(self.phase_number)] = {
+            "total_tasks": len(self._phase10_command_results),
+            "success_count": len(self._phase10_command_results) - failed_count,
+            "failed_count": failed_count,
+            "retry_count": 0,
+            "max_concurrency": 1,
+            "fallback_used": False,
+            "total_task_duration_ms": total_duration,
+            "results": list(self._phase10_command_results),
+        }
 
     def _run_python_tests(
         self, project_dir: Path, tests_dir: Path, test_files: List[Path]
@@ -125,16 +327,7 @@ class Phase10RunTests(PhaseInterface):
         self.log(f"  [TEST] Running {len(test_files)} Python test files with pytest...")
 
         try:
-            # Set PYTHONPATH to include src directory
-            import os
-
-            env = os.environ.copy()
-            src_dir = project_dir / "src"
-            if src_dir.exists():
-                pythonpath = str(src_dir)
-                if "PYTHONPATH" in env:
-                    pythonpath = f"{pythonpath}{os.pathsep}{env['PYTHONPATH']}"
-                env["PYTHONPATH"] = pythonpath
+            env = self._build_python_test_env(project_dir)
 
             # Use relative path "tests" instead of absolute path
             result = subprocess.run(
@@ -185,6 +378,15 @@ class Phase10RunTests(PhaseInterface):
         self, project_dir: Path, tests_dir: Path, test_files: List[Path]
     ) -> PhaseResult:
         """Run C++ tests (original logic)"""
+        try:
+            return self._run_cpp_tests_impl(project_dir, tests_dir, test_files)
+        except CommandPolicyViolation as exc:
+            self.log(f"  [SECURITY] Command policy violation: {exc}")
+            return PhaseResult.fail("Command policy violation", errors=[str(exc)])
+
+    def _run_cpp_tests_impl(
+        self, project_dir: Path, tests_dir: Path, test_files: List[Path]
+    ) -> PhaseResult:
         # 检测编译器
         compiler_cmd, compiler_env = self._detect_compiler()
         if not compiler_cmd:
@@ -539,12 +741,12 @@ class Phase10RunTests(PhaseInterface):
                         str(build_dir),
                     ]
 
-                result = subprocess.run(
-                    configure_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
+                result = self._run_phase10_command(
+                    task_id=f"phase10:cpp:test:{test_file.stem}:configure",
+                    argv=configure_cmd,
+                    timeout_seconds=120,
                     env=compiler_env,
+                    agent_cwd=project_dir,
                 )
 
                 output_lines.append("=== CMake Configure ===")
@@ -567,8 +769,12 @@ class Phase10RunTests(PhaseInterface):
                 test_file.stem,
             ]
 
-            result = subprocess.run(
-                build_cmd, capture_output=True, text=True, timeout=120, env=compiler_env
+            result = self._run_phase10_command(
+                task_id=f"phase10:cpp:test:{test_file.stem}:build",
+                argv=build_cmd,
+                timeout_seconds=120,
+                env=compiler_env,
+                agent_cwd=project_dir,
             )
 
             output_lines.append("=== CMake Build ===")
@@ -580,6 +786,8 @@ class Phase10RunTests(PhaseInterface):
             else:
                 return None, False, "\n".join(output_lines)
 
+        except CommandPolicyViolation:
+            raise
         except Exception as e:
             output_lines.append(f"Exception: {str(e)}")
             return None, False, "\n".join(output_lines)
@@ -618,12 +826,12 @@ class Phase10RunTests(PhaseInterface):
     def _run_test(self, exe_path: Path) -> Tuple[bool, str, int, int]:
         """运行测试并解析结果"""
         try:
-            result = subprocess.run(
-                [str(exe_path)],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                cwd=exe_path.parent,
+            result = self._run_phase10_command(
+                task_id=f"phase10:cpp:test:{exe_path.stem}:run",
+                argv=[str(exe_path)],
+                timeout_seconds=60,
+                legacy_cwd=exe_path.parent,
+                agent_cwd=exe_path.parent,
                 encoding="utf-8",
                 errors="replace",
             )
@@ -637,6 +845,8 @@ class Phase10RunTests(PhaseInterface):
 
             return success, output, passed, total
 
+        except CommandPolicyViolation:
+            raise
         except Exception as e:
             return False, f"Run exception: {str(e)}", 0, 0
 
@@ -781,12 +991,12 @@ class Phase10RunTests(PhaseInterface):
                     str(build_dir),
                 ]
 
-            result = subprocess.run(
-                configure_cmd,
-                capture_output=True,
-                text=True,
-                timeout=120,
+            result = self._run_phase10_command(
+                task_id="phase10:cpp:main:configure",
+                argv=configure_cmd,
+                timeout_seconds=120,
                 env=compiler_env,
+                agent_cwd=project_dir,
             )
 
             output_lines.append("=== CMake Configure ===")
@@ -808,8 +1018,12 @@ class Phase10RunTests(PhaseInterface):
                 target_name,
             ]
 
-            result = subprocess.run(
-                build_cmd, capture_output=True, text=True, timeout=120, env=compiler_env
+            result = self._run_phase10_command(
+                task_id="phase10:cpp:main:build",
+                argv=build_cmd,
+                timeout_seconds=120,
+                env=compiler_env,
+                agent_cwd=project_dir,
             )
 
             output_lines.append("=== CMake Build ===")
@@ -821,6 +1035,8 @@ class Phase10RunTests(PhaseInterface):
             else:
                 return False, "\n".join(output_lines)
 
+        except CommandPolicyViolation:
+            raise
         except Exception as e:
             output_lines.append(f"Exception: {str(e)}")
             return False, "\n".join(output_lines)

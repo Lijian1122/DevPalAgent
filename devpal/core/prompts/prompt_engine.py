@@ -167,6 +167,11 @@ CRITICAL RULES:
 - You MUST use the write_file tool for EVERY file. Do NOT write code in prose.
 - Call write_file once per file immediately. No planning, no discussion first.
 - Start with your first write_file call right away.
+- **CRITICAL**: Write COMPLETE file content, NOT diffs or patches.
+- **NEVER** start with diff markers like: ---, +++, @@, or + prefix on lines.
+- **NEVER** use unified diff format, patch format, or any incremental change format.
+- Always write the FULL, COMPLETE file content from the first line to the last.
+- If you find yourself writing "---" or "+++" at the start, STOP and write the complete file instead.
 
 {required_files}
 

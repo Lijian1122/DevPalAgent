@@ -110,6 +110,7 @@ class OpenSpecContext:
     test_total: int = 0
     test_output: str = ""
     test_docs: List[str] = field(default_factory=list)  # Phase 5 生成的测试文档路径列表
+    test_doc_summary: Dict[str, Any] = field(default_factory=dict)
 
     # AI 驱动流程 (Phase 3 产出 → Phase 4/10 复用)
     tech_design_content: str = ""
@@ -148,6 +149,11 @@ class OpenSpecContext:
     vector_retrieval_stats: Dict[str, int] = field(default_factory=dict)
     phase4_max_concurrency: int = 2
     phase5_max_concurrency: int = 3
+    enable_multi_agent: bool = False
+    sandbox_level: str = "staging"
+    agent_pool_size: int = 2
+    agent_backend: str = "local"
+    agent_backend_options: Dict[str, Any] = field(default_factory=dict)
     parallel_execution_stats: Dict[str, Any] = field(default_factory=dict)
 
     def get_phase_result(self, phase_num: int) -> Optional[PhaseResult]:
@@ -198,6 +204,7 @@ class OpenSpecContext:
             "test_total": self.test_total,
             "test_output": self.test_output,
             "test_docs": list(self.test_docs),
+            "test_doc_summary": _json_safe(self.test_doc_summary),
             "tech_design_content": self.tech_design_content,
             "ai_generated_files": [path.as_posix() for path in self.ai_generated_files],
             "self_heal_attempts": self.self_heal_attempts,
@@ -222,6 +229,11 @@ class OpenSpecContext:
             "vector_retrieval_stats": dict(self.vector_retrieval_stats),
             "phase4_max_concurrency": self.phase4_max_concurrency,
             "phase5_max_concurrency": self.phase5_max_concurrency,
+            "enable_multi_agent": self.enable_multi_agent,
+            "sandbox_level": self.sandbox_level,
+            "agent_pool_size": self.agent_pool_size,
+            "agent_backend": self.agent_backend,
+            "agent_backend_options": _json_safe(self.agent_backend_options),
             "parallel_execution_stats": dict(self.parallel_execution_stats),
         }
 
@@ -263,6 +275,9 @@ class OpenSpecContext:
         self.test_total = int(data.get("test_total", self.test_total) or 0)
         self.test_output = data.get("test_output", self.test_output)
         self.test_docs = list(data.get("test_docs", self.test_docs) or [])
+        self.test_doc_summary = dict(
+            data.get("test_doc_summary", self.test_doc_summary) or {}
+        )
         self.tech_design_content = data.get(
             "tech_design_content", self.tech_design_content
         )
@@ -313,6 +328,17 @@ class OpenSpecContext:
         )
         self.phase5_max_concurrency = int(
             data.get("phase5_max_concurrency", self.phase5_max_concurrency) or 3
+        )
+        self.enable_multi_agent = bool(
+            data.get("enable_multi_agent", self.enable_multi_agent)
+        )
+        self.sandbox_level = data.get("sandbox_level", self.sandbox_level) or "staging"
+        self.agent_pool_size = int(
+            data.get("agent_pool_size", self.agent_pool_size) or self.phase4_max_concurrency
+        )
+        self.agent_backend = data.get("agent_backend", self.agent_backend) or "local"
+        self.agent_backend_options = dict(
+            data.get("agent_backend_options", self.agent_backend_options) or {}
         )
         self.parallel_execution_stats = dict(
             data.get("parallel_execution_stats", self.parallel_execution_stats) or {}

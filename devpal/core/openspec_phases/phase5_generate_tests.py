@@ -97,7 +97,16 @@ class Phase5GenerateTests(PhaseInterface):
             if not result.success
         ]
 
+        test_doc_summary = {
+            "phase": self.phase_number,
+            "test_count": len(test_files),
+            "docs_generated": len(test_docs_generated),
+            "doc_paths": test_docs_generated,
+            "errors": errors,
+            "parallel_summary": parallel_summary,
+        }
         self.context.test_docs = test_docs_generated
+        self.context.test_doc_summary = test_doc_summary
 
         if errors:
             return PhaseResult.ok(
@@ -107,6 +116,7 @@ class Phase5GenerateTests(PhaseInterface):
                 test_docs=test_docs_generated,
                 errors=errors,
                 parallel_summary=parallel_summary,
+                test_doc_summary=test_doc_summary,
             )
 
         return PhaseResult.ok(
@@ -115,6 +125,7 @@ class Phase5GenerateTests(PhaseInterface):
             files=[tf.name for tf in test_files],
             test_docs=test_docs_generated,
             parallel_summary=parallel_summary,
+            test_doc_summary=test_doc_summary,
         )
 
     def _build_test_doc_task(self, test_file: Path, docs_dir: Path) -> ParallelTask:

@@ -47,3 +47,6 @@ def test_phase5_failure_isolation_records_partial_success(tmp_path):
     assert result.data["parallel_summary"]["success_count"] == 1
     assert result.data["parallel_summary"]["failed_count"] == 1
     assert any("test_bad.cpp" in error for error in result.data["errors"])
+    assert context.test_doc_summary["test_count"] == 2
+    assert context.test_doc_summary["docs_generated"] == 1
+    assert result.data["test_doc_summary"] == context.test_doc_summary

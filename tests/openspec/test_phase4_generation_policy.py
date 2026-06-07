@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from devpal.core.multi_agent.content_sanitizer import sanitize_landed_generated_files
 from devpal.core.openspec_phases.base import OpenSpecContext
 from devpal.core.openspec_phases.phase4_generate_code import Phase4GenerateCode
 from devpal.core.openspec_phases.enhanced_scheduler import EnhancedOpenSpecScheduler
@@ -67,3 +68,22 @@ def test_enhanced_scheduler_can_disable_force_regenerate_for_run_ai_flow(tmp_pat
     )
 
     assert scheduler.context.force_regenerate_code is False
+
+
+def test_sanitize_landed_generated_files_cleans_diff_patch(tmp_path):
+    generated_file = tmp_path / "src" / "user.cpp"
+    generated_file.parent.mkdir()
+    generated_file.write_text(
+        "--- a/src/user.cpp\n"
+        "+++ b/src/user.cpp\n"
+        "@@ -1,3 +1,3 @@\n"
+        "-bool login() { return false; }\n"
+        "+bool login() { return true; }\n",
+        encoding="utf-8",
+    )
+
+    report = sanitize_landed_generated_files([generated_file])
+
+    assert report["sanitized"]
+    assert report["remaining"] == []
+    assert generated_file.read_text(encoding="utf-8") == "bool login() { return true; }\n"

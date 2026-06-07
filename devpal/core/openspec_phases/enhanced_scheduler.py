@@ -323,6 +323,9 @@ class EnhancedOpenSpecScheduler:
         vector_top_k: int = 5,
         vector_prefer_chroma: bool = True,
         max_concurrency: int = 3,
+        enable_multi_agent: bool = False,
+        sandbox_level: str = "staging",
+        agent_pool_size: int | None = None,
         verbose: bool = False,
         debug: bool = False,
         run_mode: RunMode = RunMode.FULL,
@@ -346,6 +349,9 @@ class EnhancedOpenSpecScheduler:
         self.vector_top_k = vector_top_k
         self.vector_prefer_chroma = vector_prefer_chroma
         self.max_concurrency = max(1, int(max_concurrency or 1))
+        self.enable_multi_agent = bool(enable_multi_agent)
+        self.sandbox_level = sandbox_level or "staging"
+        self.agent_pool_size = max(1, int(agent_pool_size or self.max_concurrency))
         self._apply_vector_options()
         self.config = get_config()
 
@@ -410,6 +416,24 @@ class EnhancedOpenSpecScheduler:
         self.context.vector_prefer_chroma = self.vector_prefer_chroma
         self.context.phase4_max_concurrency = self.max_concurrency
         self.context.phase5_max_concurrency = self.max_concurrency
+        self.context.enable_multi_agent = self.enable_multi_agent
+        self.context.sandbox_level = self.sandbox_level
+        self.context.agent_pool_size = self.agent_pool_size
+
+    def _multi_agent_status_message(self) -> str:
+        if self.enable_multi_agent:
+            return (
+                "[MULTI-AGENT] enabled "
+                f"(backend={getattr(self.context, 'agent_backend', 'local')}, "
+                f"pool_size={self.agent_pool_size}, sandbox={self.sandbox_level})"
+            )
+        return "[MULTI-AGENT] disabled; using phase-local execution only"
+
+    def _log_multi_agent_status(self) -> None:
+        message = self._multi_agent_status_message()
+        print(f"  {message}")
+        if self.context.logger:
+            self.context.logger.info(message)
 
     def _get_checkpoint_file(self, requirements_file: Path) -> Path:
         project_name = infer_openspec_project_name(
@@ -543,6 +567,7 @@ class EnhancedOpenSpecScheduler:
             )
             context.log_file = context.logger.log_file
             print(f"[INFO] resume log: {context.log_file}")
+            self._log_multi_agent_status()
             context.logger.info(f"[RESUME] start_phase={start_phase}")
             backfill_through = min(start_phase - 1, 11)
             if backfill_through >= 1:
@@ -591,6 +616,7 @@ class EnhancedOpenSpecScheduler:
             )
         )
         print(f"  Run Mode: {self.run_mode.value}")
+        print(f"  {self._multi_agent_status_message()}")
         stop_phase = self.mode_policy.stop_after_phase or 11
         print(f"  Phase Range: {self.mode_policy.start_phase} - {stop_phase}")
         if self.change_id:
@@ -705,6 +731,7 @@ class EnhancedOpenSpecScheduler:
                         )
                         context.log_file = context.logger.log_file
                         print(f"[INFO] : {context.log_file}")
+                        self._log_multi_agent_status()
                         self._backfill_pre_logger_phases(
                             context, current_phase=i, current_duration=duration
                         )

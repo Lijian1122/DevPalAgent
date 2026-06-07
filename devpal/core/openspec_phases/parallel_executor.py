@@ -76,7 +76,7 @@ class PhaseParallelExecutor:
             if not self.serial_fallback:
                 raise
             self.fallback_used = True
-            self._log(f"[PARALLEL] falling back to serial execution: {exc}")
+            self._log(f"[PHASE-PARALLEL] falling back to serial execution: {exc}")
             return self._execute_serial(tasks, handler)
 
     def aggregate(self, results: List[ParallelTaskResult]) -> Dict[str, Any]:
@@ -144,7 +144,7 @@ class PhaseParallelExecutor:
                     },
                 )
                 self._log(
-                    f"[PARALLEL] skip {task.task_id} type={task.task_type} "
+                    f"[PHASE-PARALLEL] skip {task.task_id} type={task.task_type} "
                     f"thread={thread_name}/{thread_id} failed_deps={','.join(failed_deps)}"
                 )
                 results_by_id[task.task_id] = result
@@ -182,7 +182,7 @@ class PhaseParallelExecutor:
             thread_name = threading.current_thread().name
             try:
                 self._log(
-                    f"[PARALLEL] start {task.task_id} type={task.task_type} "
+                    f"[PHASE-PARALLEL] start {task.task_id} type={task.task_type} "
                     f"attempt={attempt + 1}/{attempts} thread={thread_name}/{thread_id}"
                 )
                 self._emit_file_task_started(task, attempt)
@@ -193,7 +193,7 @@ class PhaseParallelExecutor:
                 result.metadata["thread_name"] = thread_name
                 if result.success or attempt == attempts - 1:
                     self._log(
-                        f"[PARALLEL] done {task.task_id} type={task.task_type} "
+                        f"[PHASE-PARALLEL] done {task.task_id} type={task.task_type} "
                         f"success={result.success} duration_ms={result.duration_ms} "
                         f"thread={thread_name}/{thread_id}"
                     )
@@ -218,7 +218,7 @@ class PhaseParallelExecutor:
                 )
                 if attempt == attempts - 1:
                     self._log(
-                        f"[PARALLEL] failed {task.task_id} type={task.task_type} "
+                        f"[PHASE-PARALLEL] failed {task.task_id} type={task.task_type} "
                         f"duration_ms={last_result.duration_ms} thread={thread_name}/{thread_id}: {exc}"
                     )
                     self._emit_file_task_failed(task, last_result)

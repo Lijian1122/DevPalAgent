@@ -1,78 +1,70 @@
 # -*- coding: utf-8 -*-
-"""Test Phase 3 with Multi-LLM Provider"""
+"""Tests for Phase 3 technical design generation."""
 
-import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from devpal.core.openspec_phases.base import OpenSpecContext
 from devpal.core.openspec_phases.phase3_technical_design import Phase3TechnicalDesign
-print("=== Testing Phase 3 with Multi-LLM Provider ===\n")
 
-# 创建测试上下文
-project_dir = Path("test_phase3_output")
-project_dir.mkdir(exist_ok=True)
 
-requirements_file = Path("requirements/simple_login.md")
-if not requirements_file.exists():
-    print(f"Error: {requirements_file} not found")
-    sys.exit(1)
+class _FakeLLMClient:
+    def __init__(self, response: str):
+        self.response = response
+        self.usage = SimpleNamespace(
+            calls=1,
+            input_tokens=120,
+            output_tokens=80,
+            cache_read_tokens=30,
+            cache_creation_tokens=10,
+        )
+        self.calls = []
 
-# 读取需求内容
-requirements_content = requirements_file.read_text(encoding='utf-8')
+    def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.response
 
-context = OpenSpecContext(
-    project_dir=project_dir,
-    requirements_file=requirements_file
-)
-context.requirements_content = requirements_content
-context.structured_requirements = {
-    "title": "Simple Login System",
-    "description": "A simple login system for testing",
-    "language": "cpp"
-}
 
-# 创建 Phase 3 实例
-phase3 = Phase3TechnicalDesign(context)
+def test_phase3_generates_design_with_injected_llm(tmp_path, monkeypatch):
+    requirements_file = tmp_path / "requirements.md"
+    requirements_file.write_text("# Simple Login\n\n用户可以使用密码登录。", encoding="utf-8")
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    fake_client = _FakeLLMClient("# Technical Design\n\nUse LoginService for authentication.")
+    context = OpenSpecContext(
+        project_dir=project_dir,
+        requirements_file=requirements_file,
+        requirements_content=requirements_file.read_text(encoding="utf-8"),
+        project_name="simple_login",
+        language="cpp",
+    )
 
-print("Starting Phase 3 execution...")
-print(f"Project dir: {project_dir}")
-print(f"Requirements length: {len(requirements_content)} chars")
-print(f"Language: {context.structured_requirements.get('language')}\n")
+    monkeypatch.setattr(
+        "devpal.core.openspec_phases.phase3_technical_design.get_llm_client",
+        lambda: fake_client,
+    )
 
-try:
-    # 执行 Phase 3
-    result = phase3.execute()
+    result = Phase3TechnicalDesign(context).execute()
 
-    print("\n=== Phase 3 Result ===")
-    print(f"Success: {result.success}")
-    print(f"Message: {result.message}")
+    assert result.success is True
+    assert context.tech_design_content == fake_client.response
+    assert (project_dir / "docs" / "技术实现文档.md").read_text(encoding="utf-8") == fake_client.response
+    assert context.llm_calls == 1
+    assert context.llm_input_tokens == 120
+    assert context.llm_output_tokens == 80
+    assert context.llm_cache_read_tokens == 30
+    assert context.llm_cache_creation_tokens == 10
+    assert fake_client.calls[0]["cached_context"] == [context.requirements_content]
 
-    if result.success:
-        print(f"\nTech design length: {len(context.tech_design_content)} chars")
-        print(f"LLM calls: {context.llm_calls}")
-        print(f"Input tokens: {context.llm_input_tokens}")
-        print(f"Output tokens: {context.llm_output_tokens}")
-        print(f"Cache read tokens: {context.llm_cache_read_tokens}")
-        print(f"Cache creation tokens: {context.llm_cache_creation_tokens}")
 
-        # 显示技术设计的前500字符
-        print(f"\nTech design preview:")
-        print(context.tech_design_content[:500])
-        print("...")
+def test_phase3_fails_without_requirements_content(tmp_path):
+    context = OpenSpecContext(
+        project_dir=tmp_path,
+        requirements_file=Path("requirements.md"),
+        requirements_content="",
+    )
 
-        print("\n[SUCCESS] Phase 3 test PASSED")
-    else:
-        print(f"\n[FAILED] Phase 3 test FAILED: {result.message}")
-        if result.errors:
-            for error in result.errors:
-             print(f"  - {error}")
-        sys.exit(1)
+    result = Phase3TechnicalDesign(context).execute()
 
-except Exception as e:
-    print(f"\n[FAILED] Phase 3 test FAILED with exception:")
-    print(f"  {type(e).__name__}: {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
-
-print("\n=== Test completed successfully ===")
+    assert result.success is False
+    assert "requirements_content" in result.errors[0]

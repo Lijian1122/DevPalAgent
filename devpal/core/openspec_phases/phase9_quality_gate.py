@@ -4,9 +4,10 @@
 import json
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from ..llm_client import LLMClient, get_llm_client
+from ..multi_agent.content_sanitizer import detect_diff_pollution_in_files
 from ..schema.event_bus import get_global_event_bus
 from ..schema.workflow_events import (
     ValidationCompletedEvent,
@@ -72,6 +73,10 @@ class Phase9QualityGate(PhaseInterface):
                 "fail_on_critical": False,  # 默认不因代码审查失败而终止
                 "max_files": 50,
                 "exclude_patterns": [],
+                "review_agent": {
+                    "enabled": False,
+                    "max_concurrency": None,
+                },
                 "self_heal": {
                     "enabled": True,  # 默认启用自愈
                     "max_attempts": 3,  # 最大尝试次数
@@ -175,6 +180,12 @@ class Phase9QualityGate(PhaseInterface):
         violations = []
         warnings = []
 
+        diff_pollution_check = self._check_diff_pollution()
+        if diff_pollution_check:
+            violations.extend(diff_pollution_check)
+        else:
+            self.log("  [OK] No diff pollution detected in generated files")
+
         # 根据语言动态检查
         language = getattr(self.context, "language", "cpp")
 
@@ -262,11 +273,13 @@ class Phase9QualityGate(PhaseInterface):
 
         # ========== Layer 2: 代码质量审查 (可选) ==========
         review_issues = []
+        original_review_issues_count = 0
         if self._should_run_code_review():
             self.log("  [CODE REVIEW] Starting code quality review...")
             self._emit_validation_started_event()
             try:
                 review_issues = self._run_code_review()
+                original_review_issues_count = len(review_issues)
                 self.log("  [CODE REVIEW] Found {} issues".format(len(review_issues)))
             except Exception as e:
                 self.log("  [WARN] Code review failed: {}".format(e))
@@ -343,9 +356,51 @@ class Phase9QualityGate(PhaseInterface):
             "Quality Gate passed",
             violations=0,
             warnings=len(warnings),
-            review_issues=len(review_issues),
+            review_issues=original_review_issues_count,
             critical_issues=len(critical_issues),
             report_path=str(report_path),
+        )
+
+    def _check_diff_pollution(self) -> List[str]:
+        issues = detect_diff_pollution_in_files(self._collect_diff_pollution_targets())
+        return [
+            "Diff pollution detected in {}:{} ({})".format(
+                issue["path"], issue["line"], issue["marker"]
+            )
+            for issue in issues
+        ]
+
+    def _collect_diff_pollution_targets(self) -> List[Path]:
+        targets = set()
+        project_dir = self.context.project_dir
+        for attr in ("ai_generated_files", "generated_files"):
+            for path in getattr(self.context, attr, []) or []:
+                path = Path(path)
+                if not path.is_absolute():
+                    path = project_dir / path
+                if self._is_diff_pollution_target(path):
+                    targets.add(path)
+
+        if targets:
+            return sorted(targets)
+
+        for name in ("CMakeLists.txt",):
+            path = project_dir / name
+            if path.exists():
+                targets.add(path)
+        for subdir in ("src", "include", "tests", "scripts"):
+            base = project_dir / subdir
+            if not base.exists():
+                continue
+            for path in base.rglob("*"):
+                if self._is_diff_pollution_target(path):
+                    targets.add(path)
+        return sorted(targets)
+
+    def _is_diff_pollution_target(self, path: Path) -> bool:
+        return path.is_file() and (
+            path.suffix in {".c", ".cc", ".cpp", ".h", ".hpp", ".py", ".sh", ".bat", ".cmake"}
+            or path.name == "CMakeLists.txt"
         )
 
     def _should_run_code_review(self) -> bool:
@@ -354,6 +409,21 @@ class Phase9QualityGate(PhaseInterface):
 
     def _run_code_review(self) -> List[Dict[str, Any]]:
         """运行代码审查"""
+        if self._should_run_review_agent():
+            try:
+                return self._run_code_review_with_agent()
+            except Exception as exc:
+                self.log(
+                    f"    [WARN] ReviewAgent failed, falling back to local review: {exc}"
+                )
+        return self._run_code_review_local()
+
+    def _should_run_review_agent(self) -> bool:
+        agent_cfg = self.config["code_review"].get("review_agent", {})
+        return bool(agent_cfg.get("enabled", False) or getattr(self.context, "enable_multi_agent", False))
+
+    def _run_code_review_local(self) -> List[Dict[str, Any]]:
+        self.log("    [CODE REVIEW] Running local deterministic rule checks")
         files_to_review = self._collect_review_targets()
 
         if not files_to_review:
@@ -392,6 +462,74 @@ class Phase9QualityGate(PhaseInterface):
                 )
 
         return all_issues
+
+    def _get_relative_path(self, file_path: Union[str, Path]) -> Path:
+        """Convert path to relative path, handling both relative and absolute paths."""
+        file_p = Path(file_path)
+        project_p = Path(self.context.project_dir).resolve()
+
+        if file_p.is_absolute():
+            file_resolved = file_p.resolve()
+            if file_resolved.is_relative_to(project_p):
+                return file_resolved.relative_to(project_p)
+            else:
+                return Path(file_p.name)
+        else:
+            return file_p
+
+    def _run_code_review_with_agent(self) -> List[Dict[str, Any]]:
+        from devpal.core.multi_agent import AgentPolicy, MultiAgentCoordinator
+        from devpal.core.openspec_phases.parallel_executor import ParallelTask
+
+        files_to_review = self._collect_review_targets()
+        if not files_to_review:
+            self.log("    [WARN] No files to review")
+            return []
+        max_files = self.config["code_review"]["max_files"]
+        if len(files_to_review) > max_files:
+            files_to_review = files_to_review[:max_files]
+        check_types = self.config["code_review"]["check_types"]
+        tasks = [
+            ParallelTask(
+                task_id=f"phase9:review:{self._get_relative_path(file_path).as_posix()}",
+                phase_number=9,
+                task_type="code_review",
+                input_payload={
+                    "project_dir": self.context.project_dir,
+                    "file_path": file_path,
+                    "check_types": check_types,
+                },
+            )
+            for file_path in files_to_review
+        ]
+        agent_cfg = self.config["code_review"].get("review_agent", {})
+        max_concurrency = agent_cfg.get("max_concurrency") or getattr(
+            self.context, "agent_pool_size", 1
+        )
+        policy = AgentPolicy(
+            enabled=True,
+            sandbox_level=getattr(self.context, "sandbox_level", "staging"),
+            max_concurrency=max_concurrency,
+            retry_limit=0,
+            allowed_tools=["read_file", "review_code"],
+            backend=getattr(self.context, "agent_backend", "local"),
+            backend_options=getattr(self.context, "agent_backend_options", {}),
+        )
+        coordinator = MultiAgentCoordinator(
+            policy=policy,
+            log=self.log,
+            event_integration=getattr(self.context, "event_integration", None),
+            review_checker=self._review_file,
+        )
+        results, summary = coordinator.execute_review_tasks(tasks)
+        self.context.parallel_execution_stats["9"] = summary
+        issues: List[Dict[str, Any]] = []
+        for result in results:
+            if result.success:
+                issues.extend(result.metadata.get("issues", []) or [])
+            elif result.error:
+                self.log(f"    [WARN] ReviewAgent task failed: {result.error}")
+        return issues
 
     def _collect_review_targets(self) -> List[Path]:
         """收集需要审查的文件（优先 AI 生成的文件）"""
@@ -490,7 +628,9 @@ class Phase9QualityGate(PhaseInterface):
                     )
 
             # 调试代码检查
-            if "debug" in check_types and not file_path.replace("\\", "/").endswith("src/main.cpp"):
+            if "debug" in check_types and not file_path.replace("\\", "/").endswith(
+                "src/main.cpp"
+            ):
                 if "cout" in line_before_comment or "printf" in line_before_comment:
                     # 排除注释中的
                     if not line_stripped.startswith(
@@ -699,7 +839,13 @@ class Phase9QualityGate(PhaseInterface):
             return "src/main.cpp not found"
         try:
             content = main_path.read_text(encoding="utf-8")
-            if "int main(" not in content:
+            # 允许两种形式：1) 显式的 int main( 函数，2) TEST_MAIN_BEGIN 宏
+            has_explicit_main = "int main(" in content
+            has_test_main_macro = (
+                "TEST_MAIN_BEGIN" in content and "TEST_MAIN_END" in content
+            )
+
+            if not (has_explicit_main or has_test_main_macro):
                 return "src/main.cpp has no main() function"
         except Exception as e:
             return "Cannot read src/main.cpp: {}".format(e)

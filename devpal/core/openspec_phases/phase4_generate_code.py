@@ -14,6 +14,13 @@ from ..llm_client import get_llm_client
 from ..prompts import get_prompt_engine
 from ..templates import TemplateContext, registry
 from ..templates.install_script_generator import InstallScriptGenerator
+from ..multi_agent.content_sanitizer import (
+    cpp_header_public_incomplete_type_errors,
+    has_unified_diff_markers,
+    missing_local_includes,
+    sanitize_generated_content,
+    sanitize_landed_generated_files,
+)
 from .base import OpenSpecContext, PhaseInterface, PhaseResult
 from .parallel_executor import ParallelTask, ParallelTaskResult, PhaseParallelExecutor
 from .phase4_file_plan import Phase4FilePlanner
@@ -55,6 +62,33 @@ class Phase4GenerateCode(PhaseInterface):
         self.tool_registry = tool_registry
         self.compiledb = CompileDB()
         self.skipped_files = []  # Track skipped files for better reporting
+
+    def _sanitize_landed_files(self, paths: List[Path]) -> Dict[str, List[Dict[str, object]]]:
+        scan_targets = [
+            path
+            for path in paths
+            if path.suffix in {".c", ".cc", ".cpp", ".h", ".hpp", ".py", ".sh", ".bat", ".cmake"}
+            or path.name == "CMakeLists.txt"
+        ]
+        report = sanitize_landed_generated_files(scan_targets)
+        for item in report["sanitized"]:
+            self.log(f"  [SANITIZE] cleaned diff-style landed file {item['path']}")
+        for item in report["remaining"]:
+            self.log(f"  [WARN] diff markers remain in {item['path']}:{item['line']}")
+        for item in report["errors"]:
+            self.log(f"  [WARN] failed to scan {item['path']}: {item['marker']}")
+        return report
+
+    def _diff_pollution_errors(self, report: Dict[str, List[Dict[str, object]]]) -> List[str]:
+        errors = [
+            f"diff pollution remains in {item['path']}:{item['line']} ({item['marker']})"
+            for item in report["remaining"]
+        ]
+        errors.extend(
+            f"failed to scan {item['path']}: {item['marker']}"
+            for item in report["errors"]
+        )
+        return errors
 
     def _read_change_artifacts(self) -> Dict[str, str]:
         """Read change directory artifacts if available (M2 implementation)"""
@@ -116,6 +150,13 @@ class Phase4GenerateCode(PhaseInterface):
             for req in self.context.structured_requirements or []:
                 self.context.update_requirement_status(req.get("id", ""), "IN_PROGRESS")
             self._update_artifact_graph(project_dir, script_files)
+            sanitize_report = self._sanitize_landed_files(infra_files + script_files)
+            pollution_errors = self._diff_pollution_errors(sanitize_report)
+            if pollution_errors:
+                return PhaseResult.fail(
+                    "Phase 4 blocked diff pollution in landed files",
+                    errors=pollution_errors,
+                )
             self.compiledb.index_project(project_dir, use_cache=False)
             self.compiledb.save_cache(project_dir)
             return PhaseResult.ok(
@@ -132,6 +173,13 @@ class Phase4GenerateCode(PhaseInterface):
             )
             self.context.ai_generated_files.extend(existing_business_files)
             self.context.generated_files.extend(infra_files + existing_business_files)
+            sanitize_report = self._sanitize_landed_files(infra_files + existing_business_files)
+            pollution_errors = self._diff_pollution_errors(sanitize_report)
+            if pollution_errors:
+                return PhaseResult.fail(
+                    "Phase 4 blocked diff pollution in reused files",
+                    errors=pollution_errors,
+                )
             self.compiledb.index_project(project_dir, use_cache=False)
             self.compiledb.save_cache(project_dir)
             return PhaseResult.ok(
@@ -185,6 +233,13 @@ class Phase4GenerateCode(PhaseInterface):
             )
             self.context.ai_generated_files.extend(existing_business_files)
             self.context.generated_files.extend(infra_files + existing_business_files)
+            sanitize_report = self._sanitize_landed_files(infra_files + existing_business_files)
+            pollution_errors = self._diff_pollution_errors(sanitize_report)
+            if pollution_errors:
+                return PhaseResult.fail(
+                    "Phase 4 blocked diff pollution in reused files",
+                    errors=pollution_errors,
+                )
             self.compiledb.index_project(project_dir, use_cache=False)
             self.compiledb.save_cache(project_dir)
             return PhaseResult.ok(
@@ -222,6 +277,13 @@ class Phase4GenerateCode(PhaseInterface):
             content = tool_input.get("content") or ""
             if not rel or not content:
                 return "[error] path and content are required"
+
+            content, sanitized = sanitize_generated_content(content)
+            if sanitized:
+                self.log(f"    [AI] sanitized diff-style output for {rel}")
+            if not content.strip():
+                return "[error] content is empty after diff/patch sanitization"
+
             target = (project_dir / rel).resolve()
 
             # PRE-CHECK: Block retry attempts for already-skipped files
@@ -380,10 +442,32 @@ class Phase4GenerateCode(PhaseInterface):
             cached_context.append(self.context.tech_design_content)
 
         parallel_enabled = bool(getattr(self.context, "phase4_parallel_enabled", True))
+        multi_agent_enabled = bool(getattr(self.context, "enable_multi_agent", False))
         parallel_safe = self._is_parallel_file_plan_safe(file_plan)
-        if parallel_enabled and file_plan and not parallel_safe:
-            self.log("  [PARALLEL] disabled for dependency-coupled file plan; using serial tool loop")
-        if parallel_enabled and file_plan and parallel_safe:
+        if multi_agent_enabled and file_plan and parallel_safe:
+            multi_agent_result = self._try_generate_files_multi_agent(
+                file_plan=file_plan,
+                project_dir=project_dir,
+                infra_files=infra_files,
+                infra_errors=infra_errors,
+                system_prompt=system_prompt,
+                base_user_message=user_message,
+                cached_context=cached_context,
+            )
+            if multi_agent_result.success:
+                return multi_agent_result
+            self.log(
+                "  [MULTI-AGENT] fallback to serial tool loop after multi-agent failure"
+            )
+        elif multi_agent_enabled and file_plan:
+            self.log(
+                "  [MULTI-AGENT] skipped for dependency-coupled file plan; using serial tool loop"
+            )
+        if parallel_enabled and file_plan:
+            if not parallel_safe:
+                self.log(
+                    "  [PHASE-PARALLEL] using dependency-staged single-file generation"
+                )
             parallel_result = self._try_generate_files_parallel(
                 file_plan=file_plan,
                 project_dir=project_dir,
@@ -396,7 +480,7 @@ class Phase4GenerateCode(PhaseInterface):
             )
             if parallel_result.success:
                 return parallel_result
-            self.log("  [PARALLEL] fallback to serial tool loop after parallel failure")
+            self.log("  [PHASE-PARALLEL] fallback to serial tool loop after parallel failure")
 
         try:
             result = client.generate_with_tool_loop(
@@ -430,6 +514,14 @@ class Phase4GenerateCode(PhaseInterface):
                 self.log(f"  [SUMMARY] Skipped: {len(self.skipped_files)} files")
                 self.log(f"  [SUMMARY] Infrastructure: {len(infra_files)} files")
 
+                sanitize_report = self._sanitize_landed_files(infra_files + self.skipped_files)
+                pollution_errors = self._diff_pollution_errors(sanitize_report)
+                if pollution_errors:
+                    return PhaseResult.fail(
+                        "Phase 4 blocked diff pollution in skipped files",
+                        errors=pollution_errors,
+                    )
+
                 # Mark as successful with skipped flag
                 return PhaseResult.ok(
                     "Code generation completed (files already exist)",
@@ -457,6 +549,14 @@ class Phase4GenerateCode(PhaseInterface):
         self.context.generated_files.extend(infra_files + ai_files)
 
         self._update_artifact_graph(project_dir, ai_files)
+
+        sanitize_report = self._sanitize_landed_files(infra_files + ai_files)
+        pollution_errors = self._diff_pollution_errors(sanitize_report)
+        if pollution_errors:
+            return PhaseResult.fail(
+                "Phase 4 blocked diff pollution in landed files",
+                errors=pollution_errors,
+            )
 
         self.compiledb.index_project(project_dir, use_cache=False)
         self.compiledb.save_cache(project_dir)
@@ -531,6 +631,7 @@ class Phase4GenerateCode(PhaseInterface):
         cached_context: List[str],
         client,
     ) -> PhaseResult:
+        planned_paths = [item.path for item in file_plan]
         tasks = [
             ParallelTask(
                 task_id=f"phase4:{item.path}",
@@ -542,6 +643,7 @@ class Phase4GenerateCode(PhaseInterface):
                     "system_prompt": system_prompt,
                     "base_user_message": base_user_message,
                     "cached_context": cached_context,
+                    "planned_paths": planned_paths,
                 },
                 dependencies=[f"phase4:{dep}" for dep in item.dependencies],
             )
@@ -573,7 +675,11 @@ class Phase4GenerateCode(PhaseInterface):
                 summary,
                 executor.max_concurrency,
             )
-        ai_files = [result.artifact_path for result in results if result.success and result.artifact_path]
+        ai_files = [
+            result.artifact_path
+            for result in results
+            if result.success and result.artifact_path
+        ]
         errors = infra_errors + [
             result.error for result in results if not result.success and result.error
         ]
@@ -589,10 +695,18 @@ class Phase4GenerateCode(PhaseInterface):
             self.context.update_requirement_status(req.get("id", ""), "IN_PROGRESS")
         self.context.generated_files.extend(infra_files + ai_files)
         self._update_artifact_graph(project_dir, ai_files)
+        sanitize_report = self._sanitize_landed_files(infra_files + ai_files)
+        pollution_errors = self._diff_pollution_errors(sanitize_report)
+        if pollution_errors:
+            self._restore_parallel_targets(snapshots)
+            return PhaseResult.fail(
+                "Phase 4 blocked diff pollution in landed files",
+                errors=pollution_errors,
+            )
         self.compiledb.index_project(project_dir, use_cache=False)
         self.compiledb.save_cache(project_dir)
         self._update_parallel_usage_stats(results)
-        self.log(f"  [PARALLEL] generated {len(ai_files)} files")
+        self.log(f"  [PHASE-PARALLEL] generated {len(ai_files)} files")
         return PhaseResult.ok(
             "Phase 4 complete (parallel)",
             infra_count=len(infra_files),
@@ -606,11 +720,134 @@ class Phase4GenerateCode(PhaseInterface):
             llm_output_tokens=self.context.llm_output_tokens,
         )
 
-    def _snapshot_parallel_targets(self, file_plan, project_dir: Path) -> Dict[Path, Optional[str]]:
+    def _try_generate_files_multi_agent(
+        self,
+        file_plan,
+        project_dir: Path,
+        infra_files: List[Path],
+        infra_errors: List[str],
+        system_prompt: str,
+        base_user_message: str,
+        cached_context: List[str],
+    ) -> PhaseResult:
+        from devpal.core.multi_agent import AgentPolicy, MultiAgentCoordinator
+
+        planned_paths = [item.path for item in file_plan]
+        tasks = [
+            ParallelTask(
+                task_id=f"phase4:{item.path}",
+                phase_number=self.phase_number,
+                task_type="code_file",
+                input_payload={
+                    "plan_item": item,
+                    "project_dir": project_dir,
+                    "system_prompt": system_prompt,
+                    "base_user_message": base_user_message,
+                    "cached_context": cached_context,
+                    "planned_paths": planned_paths,
+                },
+                dependencies=[f"phase4:{dep}" for dep in item.dependencies],
+            )
+            for item in file_plan
+        ]
+        snapshots = self._snapshot_parallel_targets(file_plan, project_dir)
+        policy = AgentPolicy(
+            enabled=True,
+            sandbox_level=getattr(self.context, "sandbox_level", "staging"),
+            max_concurrency=getattr(
+                self.context,
+                "agent_pool_size",
+                getattr(self.context, "phase4_max_concurrency", 2),
+            ),
+            retry_limit=0,
+            allowed_tools=["write_file"],
+            timeout_seconds=120,
+            merge_strategy="delta_spec",
+        )
+        coordinator = MultiAgentCoordinator(
+            policy=policy,
+            client_factory=self._create_parallel_llm_client,
+            log=self.log,
+            event_integration=getattr(self.context, "event_integration", None),
+        )
+        try:
+            results, summary = coordinator.execute_codegen_tasks(tasks)
+            ai_files, merge_errors = coordinator.merge_successful_results(
+                results, project_dir
+            )
+        except Exception as exc:
+            self._restore_parallel_targets(snapshots)
+            return PhaseResult.fail(
+                "Phase 4 multi-agent generation failed",
+                errors=[str(exc)],
+            )
+
+        self.context.parallel_execution_stats[str(self.phase_number)] = summary
+        event_integration = getattr(self.context, "event_integration", None)
+        if event_integration:
+            event_integration.emit_phase_parallel_summary(
+                self.phase_number,
+                summary,
+                policy.max_concurrency,
+            )
+        errors = (
+            infra_errors
+            + merge_errors
+            + [
+                result.error
+                for result in results
+                if not result.success and result.error
+            ]
+        )
+        if errors:
+            self._restore_parallel_targets(snapshots)
+            return PhaseResult.fail(
+                "Phase 4 multi-agent generation failed",
+                errors=errors,
+            )
+
+        self.context.ai_generated_files.extend(ai_files)
+        for req in self.context.structured_requirements or []:
+            self.context.update_requirement_status(req.get("id", ""), "IN_PROGRESS")
+        self.context.generated_files.extend(infra_files + ai_files)
+        self._update_artifact_graph(project_dir, ai_files)
+        sanitize_report = self._sanitize_landed_files(infra_files + ai_files)
+        pollution_errors = self._diff_pollution_errors(sanitize_report)
+        if pollution_errors:
+            self._restore_parallel_targets(snapshots)
+            return PhaseResult.fail(
+                "Phase 4 blocked diff pollution in landed files",
+                errors=pollution_errors,
+            )
+        self.compiledb.index_project(project_dir, use_cache=False)
+        self.compiledb.save_cache(project_dir)
+        self._update_parallel_usage_stats(results)
+        self.log(f"  [MULTI-AGENT] generated {len(ai_files)} files")
+        return PhaseResult.ok(
+            "Phase 4 complete (multi-agent)",
+            infra_count=len(infra_files),
+            ai_count=len(ai_files),
+            total_files=len(infra_files) + len(ai_files),
+            file_plan=[item.to_dict() for item in file_plan],
+            file_plan_count=len(file_plan),
+            parallel_summary=summary,
+            multi_agent=True,
+            sandbox_level=policy.sandbox_level,
+            agent_pool_size=policy.max_concurrency,
+            llm_calls=self.context.llm_calls,
+            llm_input_tokens=self.context.llm_input_tokens,
+            llm_output_tokens=self.context.llm_output_tokens,
+        )
+
+    def _snapshot_parallel_targets(
+        self, file_plan, project_dir: Path
+    ) -> Dict[Path, Optional[str]]:
         snapshots: Dict[Path, Optional[str]] = {}
         for item in file_plan:
             target = (project_dir / item.path).resolve()
-            snapshots[target] = target.read_text(encoding="utf-8") if target.exists() else None
+            snapshots[target] = (
+                target.read_text(encoding="utf-8") if target.exists() else None
+            )
         return snapshots
 
     def _restore_parallel_targets(self, snapshots: Dict[Path, Optional[str]]) -> None:
@@ -639,6 +876,7 @@ class Phase4GenerateCode(PhaseInterface):
             )
 
         single_file_content = []
+
         def single_file_tool_handler(tool_name, tool_input):
             if tool_name != "write_file":
                 return "[error] unknown tool {}".format(tool_name)
@@ -648,16 +886,46 @@ class Phase4GenerateCode(PhaseInterface):
                 return "[error] this task may only write {}".format(item.path)
             if not content:
                 return "[error] content is required"
+            if has_unified_diff_markers(content):
+                return "[error] content must be the complete file body, not a diff or patch"
+
+            content, sanitized = sanitize_generated_content(content)
+            if sanitized:
+                self.log(f"    [PARALLEL AI] stripped code fence for {rel}")
+            if not content.strip():
+                return "[error] content is empty"
+            missing_includes = missing_local_includes(
+                content,
+                item.path,
+                project_dir,
+                task.input_payload.get("planned_paths", []),
+            )
+            if missing_includes:
+                return (
+                    "[error] local include(s) are not generated or planned: "
+                    + ", ".join(missing_includes)
+                )
+            incomplete_errors = cpp_header_public_incomplete_type_errors(content)
+            if incomplete_errors:
+                return "[error] " + "; ".join(incomplete_errors)
+
             single_file_content.append(content)
             return "accepted {}".format(rel)
 
+        dependency_context = self._build_dependency_context(
+            project_dir,
+            item.dependencies,
+        )
         user_message = (
             task.input_payload["base_user_message"]
             + "\n\n=== SINGLE FILE TASK ===\n"
             + f"Generate exactly one file: {item.path}\n"
             + f"Purpose: {item.purpose}\n"
             + f"Stage: {item.stage}\n"
+            + dependency_context
             + "Call write_file exactly once for this path and do not write any other file.\n"
+            + "The content must be the complete file body, not a diff or patch.\n"
+            + "Do not include local project headers unless they exist or are in the file generation plan.\n"
         )
 
         task_client = self._create_parallel_llm_client()
@@ -689,7 +957,11 @@ class Phase4GenerateCode(PhaseInterface):
 
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(single_file_content[-1], encoding="utf-8")
-        self.log("    [PARALLEL AI] wrote {} ({} chars)".format(item.path, len(single_file_content[-1])))
+        self.log(
+            "    [PARALLEL AI] wrote {} ({} chars)".format(
+                item.path, len(single_file_content[-1])
+            )
+        )
         return ParallelTaskResult(
             task_id=task.task_id,
             success=True,
@@ -705,11 +977,34 @@ class Phase4GenerateCode(PhaseInterface):
             },
         )
 
+    def _build_dependency_context(self, project_dir: Path, dependencies: List[str]) -> str:
+        if not dependencies:
+            return ""
+        sections = ["\n=== GENERATED DEPENDENCY FILES ===\n"]
+        for rel_path in dependencies:
+            path = project_dir / rel_path
+            if not path.exists() or not path.is_file():
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            sections.append(f"--- {rel_path} ---\n{content}\n")
+        if len(sections) == 1:
+            return ""
+        sections.append(
+            "Match these public interfaces exactly when generating the current file.\n"
+        )
+        return "".join(sections)
+
     def _create_parallel_llm_client(self):
         from devpal.config import get_config
 
         config = get_config()
-        provider = getattr(self.context, "phase4_parallel_provider", None) or config.llm_default_provider
+        provider = (
+            getattr(self.context, "phase4_parallel_provider", None)
+            or config.llm_default_provider
+        )
         provider_config = config.get_provider_config(provider)
         return get_llm_client(
             provider=provider,
@@ -718,11 +1013,22 @@ class Phase4GenerateCode(PhaseInterface):
         )
 
     def _update_parallel_usage_stats(self, results: List[ParallelTaskResult]) -> None:
-        self.context.llm_calls = sum(int(result.metadata.get("llm_calls", 0)) for result in results)
-        self.context.llm_input_tokens = sum(int(result.metadata.get("llm_input_tokens", 0)) for result in results)
-        self.context.llm_output_tokens = sum(int(result.metadata.get("llm_output_tokens", 0)) for result in results)
-        self.context.llm_cache_read_tokens = sum(int(result.metadata.get("llm_cache_read_tokens", 0)) for result in results)
-        self.context.llm_cache_creation_tokens = sum(int(result.metadata.get("llm_cache_creation_tokens", 0)) for result in results)
+        self.context.llm_calls = sum(
+            int(result.metadata.get("llm_calls", 0)) for result in results
+        )
+        self.context.llm_input_tokens = sum(
+            int(result.metadata.get("llm_input_tokens", 0)) for result in results
+        )
+        self.context.llm_output_tokens = sum(
+            int(result.metadata.get("llm_output_tokens", 0)) for result in results
+        )
+        self.context.llm_cache_read_tokens = sum(
+            int(result.metadata.get("llm_cache_read_tokens", 0)) for result in results
+        )
+        self.context.llm_cache_creation_tokens = sum(
+            int(result.metadata.get("llm_cache_creation_tokens", 0))
+            for result in results
+        )
 
     def _is_installer_project(self) -> bool:
         project_type = getattr(self.context, "project_type", "")

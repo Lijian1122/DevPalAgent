@@ -459,3 +459,58 @@ void copy_user(char *buffer, const char *input) {
     assert phase.heal_attempts == 2
     assert phase.heal_success == 1
     assert "std::strncpy" in unsafe_file.read_text(encoding="utf-8")
+
+
+def test_quality_gate_uses_review_agent_when_multi_agent_enabled(context, temp_project, tool_registry):
+    _write_valid_quality_gate_project(temp_project)
+    reviewed_file = temp_project / "src" / "unsafe.cpp"
+    reviewed_file.write_text("void f(char* b, const char* s) { strcpy(b, s); }", encoding="utf-8")
+    context.ai_generated_files = [reviewed_file]
+    context.enable_multi_agent = True
+    context.agent_pool_size = 2
+
+    phase = Phase9QualityGate(context, tool_registry)
+    result = phase.execute()
+
+    assert result.success is True
+    assert result.data["review_issues"] >= 1
+    assert context.parallel_execution_stats["9"]["total_tasks"] == 1
+    assert context.parallel_execution_stats["9"]["success_count"] == 1
+
+
+def test_quality_gate_review_agent_falls_back_to_local_review(context, temp_project, tool_registry, monkeypatch):
+    _write_valid_quality_gate_project(temp_project)
+    reviewed_file = temp_project / "src" / "todo.cpp"
+    reviewed_file.write_text("// TODO: fix later", encoding="utf-8")
+    context.ai_generated_files = [reviewed_file]
+    context.enable_multi_agent = True
+
+    def fail_agent(self):
+        raise RuntimeError("agent unavailable")
+
+    monkeypatch.setattr(Phase9QualityGate, "_run_code_review_with_agent", fail_agent)
+    phase = Phase9QualityGate(context, tool_registry)
+    result = phase.execute()
+
+    assert result.success is True
+    assert result.data["review_issues"] >= 1
+
+
+def test_quality_gate_blocks_diff_pollution_before_compile(context, temp_project, tool_registry):
+    _write_valid_quality_gate_project(temp_project)
+    polluted_file = temp_project / "src" / "user.cpp"
+    polluted_file.write_text(
+        "--- a/src/user.cpp\n"
+        "+++ b/src/user.cpp\n"
+        "@@ -1,3 +1,3 @@\n"
+        "-bool login() { return false; }\n"
+        "+bool login() { return true; }\n",
+        encoding="utf-8",
+    )
+    context.ai_generated_files = [Path("src/user.cpp")]
+
+    phase = Phase9QualityGate(context, tool_registry)
+    result = phase.execute()
+
+    assert result.success is False
+    assert any("Diff pollution detected" in error for error in result.errors)

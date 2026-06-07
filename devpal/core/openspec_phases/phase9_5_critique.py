@@ -76,8 +76,15 @@ class Phase9_5Critique(PhaseInterface):
         self.weights = self.config.get("dimension_weights", DEFAULT_DIMENSION_WEIGHTS)
 
         # 配置选项
-        self.max_files_to_review = self.config.get("max_files_to_review", 10)
+        self.max_files_to_review = self.config.get("max_files_to_review", 6)
         self.skip_test_files = self.config.get("skip_test_files", True)
+        self.max_chars_per_file = int(self.config.get("max_chars_per_file", 6000))
+        self.review_extensions = set(
+            self.config.get(
+                "review_extensions",
+                [".c", ".cc", ".cpp", ".h", ".hpp", ".py", ".js", ".ts", ".tsx", ".java", ".go", ".rs"],
+            )
+        )
 
     def execute(self) -> PhaseResult:
         """执行 Critique Phase"""
@@ -140,64 +147,92 @@ class Phase9_5Critique(PhaseInterface):
             return PhaseResult.fail(f"Critique Phase 执行失败: {e}", errors=[str(e)])
 
     def _collect_files(self) -> List[Path]:
-        """收集需要评审的文件"""
-        files_to_review = []
+        """收集需要评审的代码文件。"""
+        files_to_review: List[Path] = []
+        seen = set()
 
-        # 从 context.generated_files 获取文件列表
-        if hasattr(self.context, "generated_files") and self.context.generated_files:
-            for file_rel_path in self.context.generated_files:
-                file_path = self.context.project_dir / file_rel_path
-
-                # 跳过测试文件
-                if self.skip_test_files and ("test" in str(file_path).lower()):
-                    continue
-
-                # 检查文件是否存在
-                if file_path.exists() and file_path.is_file():
+        for attr_name in ("ai_generated_files", "generated_files"):
+            for file_item in getattr(self.context, attr_name, []) or []:
+                file_path = Path(file_item) if isinstance(file_item, str) else file_item
+                if self._should_review_file(file_path) and file_path not in seen:
                     files_to_review.append(file_path)
+                    seen.add(file_path)
+            if files_to_review:
+                break
 
-        # 限制文件数量
+        files_to_review.sort(key=self._review_priority)
         if len(files_to_review) > self.max_files_to_review:
             self.log(
-                f"文件数量超过限制 ({self.max_files_to_review})，只评审前 {self.max_files_to_review} 个"
+                f"代码文件数量超过限制 ({self.max_files_to_review})，只评审前 {self.max_files_to_review} 个"
             )
             files_to_review = files_to_review[: self.max_files_to_review]
 
         return files_to_review
 
-    def _critique_file(self, file_path: Path) -> Dict:
-        """评审单个文件"""
-        # 读取文件内容
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                code_content = f.read()
-        except Exception as e:
-            self.log_error(f"读取文件 {file_path} 失败: {e}")
-            raise
+    def _should_review_file(self, file_path: Path) -> bool:
+        if not file_path.exists() or not file_path.is_file():
+            return False
+        if file_path.suffix.lower() not in self.review_extensions:
+            return False
+        normalized = file_path.as_posix().lower()
+        if self.skip_test_files and (
+            "/test" in normalized or "tests/" in normalized or file_path.name.startswith("test_")
+        ):
+            return False
+        if "/docs/" in normalized or "/openspec/" in normalized or "/.spec/" in normalized:
+            return False
+        return True
 
-        # 构建 Prompt
+    def _review_priority(self, file_path: Path) -> tuple:
+        normalized = file_path.as_posix().lower()
+        if "/src/" in normalized:
+            group = 0
+        elif "/include/" in normalized:
+            group = 1
+        else:
+            group = 2
+        return (group, file_path.name)
+
+    def _critique_file(self, file_path: Path) -> Dict:
+        """评审单个文件。"""
+        try:
+            code_content = file_path.read_text(encoding="utf-8")
+        except Exception as e:
+            self.log(f"读取文件 {file_path.name} 失败，使用默认评分: {e}")
+            critique_data = self._get_default_critique(reason=f"读取文件失败: {e}")
+            self._attach_file_path(critique_data, file_path)
+            return critique_data
+
+        if len(code_content) > self.max_chars_per_file:
+            self.log(
+                f"文件 {file_path.name} 内容过长 ({len(code_content)} chars)，截断到 {self.max_chars_per_file} chars"
+            )
+            code_content = code_content[: self.max_chars_per_file] + "\n// ... truncated for critique ...\n"
+
         retrieved_context = self._build_retrieved_context_section(file_path, code_content)
         prompt = self._build_critique_prompt(file_path, code_content, retrieved_context)
 
-        # 调用 LLM
         try:
-            response = self.llm_client.create_message(
-                messages=[{"role": "user", "content": prompt}],
+            response_text = self.llm_client.generate(
+                user_message=prompt,
                 system=CRITIQUE_SYSTEM_PROMPT,
-                max_tokens=4096,
+                max_tokens=1800,
             )
-
-            # 解析响应
-            response_text = response.content[0].text
             critique_data = self._parse_critique_response(response_text)
-            critique_data["file_path"] = str(
-                file_path.relative_to(self.context.project_dir)
-            )
-            return critique_data
-
         except Exception as e:
-            self.log_error(f"LLM 评审失败: {e}")
-            raise
+            self.log(f"LLM 评审不可用，使用默认评分: {file_path.name}: {e}")
+            critique_data = self._get_default_critique(reason=f"LLM 评审失败: {e}")
+
+        self._attach_file_path(critique_data, file_path)
+        return critique_data
+
+    def _attach_file_path(self, critique_data: Dict, file_path: Path) -> None:
+        try:
+            project_dir_abs = Path(self.context.project_dir).resolve()
+            file_path_abs = Path(file_path).resolve()
+            critique_data["file_path"] = str(file_path_abs.relative_to(project_dir_abs))
+        except ValueError:
+            critique_data["file_path"] = file_path.name
 
     def _build_critique_prompt(
         self,
@@ -227,39 +262,21 @@ class Phase9_5Critique(PhaseInterface):
 4. **Performance** (性能): 是否有性能问题，算法是否高效，资源使用是否合理
 5. **Maintainability** (可维护性): 代码是否易于维护和扩展，是否有技术债务
 
-**输出格式** (严格的 JSON):
-```json
+**输出格式**:
+只输出一个 JSON 对象，不要 markdown，不要代码块，不要解释。格式如下：
 {{
-    "readability": {{
-        "score": 85,
-        "reasoning": "代码可读性评价...",
-        "suggestions": ["建议1", "建议2"]
-    }},
-    "architecture": {{
-        "score": 80,
-        "reasoning": "架构评价...",
-        "suggestions": ["建议1", "建议2"]
-    }},
-    "security": {{
-        "score": 90,
-        "reasoning": "安全性评价...",
-        "suggestions": ["建议1", "建议2"]
-    }},
-    "performance": {{
-        "score": 75,
-        "reasoning": "性能评价...",
-        "suggestions": ["建议1", "建议2"]
-    }},
-    "maintainability": {{
-        "score": 82,
-        "reasoning": "可维护性评价...",
-        "suggestions": ["建议1", "建议2"]
-    }}
+  "readability": {{"score": 85, "reasoning": "...", "suggestions": ["..."]}},
+  "architecture": {{"score": 80, "reasoning": "...", "suggestions": ["..."]}},
+  "security": {{"score": 90, "reasoning": "...", "suggestions": ["..."]}},
+  "performance": {{"score": 75, "reasoning": "...", "suggestions": ["..."]}},
+  "maintainability": {{"score": 82, "reasoning": "...", "suggestions": ["..."]}}
 }}
 """
         return prompt
 
-    def _build_retrieved_context_section(self, file_path: Path, code_content: str) -> str:
+    def _build_retrieved_context_section(
+        self, file_path: Path, code_content: str
+    ) -> str:
         if not bool(getattr(self.context, "vector_retrieval_enabled", False)):
             return ""
         try:
@@ -292,24 +309,66 @@ class Phase9_5Critique(PhaseInterface):
             return ""
 
     def _parse_critique_response(self, response_text: str) -> Dict:
-        """解析 LLM 响应"""
-        # 尝试提取 JSON
-        json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(0)
-            try:
-                return json.loads(json_str)
-            except json.JSONDecodeError as e:
-                self.log_error(f"JSON 解析失败: {e}")
-                return self._get_default_critique()
-        else:
-            self.log_error("未找到 JSON 响应")
-            return self._get_default_critique()
+        """解析 LLM 响应。"""
+        candidates: List[str] = []
+        fence_match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", response_text)
+        if fence_match:
+            candidates.append(fence_match.group(1))
+        candidates.extend(self._extract_json_objects(response_text))
 
-    def _get_default_critique(self) -> Dict:
-        """获取默认评审结果"""
+        for json_str in candidates:
+            try:
+                data = json.loads(json_str)
+                return self._normalize_critique(data)
+            except json.JSONDecodeError:
+                continue
+
+        self.log("JSON 解析失败，使用默认评分")
+        return self._get_default_critique(reason="JSON 解析失败")
+
+    def _extract_json_objects(self, text: str) -> List[str]:
+        decoder = json.JSONDecoder()
+        objects: List[str] = []
+        for index, char in enumerate(text):
+            if char != "{":
+                continue
+            try:
+                _, end = decoder.raw_decode(text[index:])
+                objects.append(text[index : index + end])
+            except json.JSONDecodeError:
+                continue
+        return objects
+
+    def _normalize_critique(self, data: Dict) -> Dict:
+        normalized: Dict[str, Any] = {}
+        for dim in self.dimensions:
+            dim_data = data.get(dim) if isinstance(data, dict) else None
+            if not isinstance(dim_data, dict):
+                normalized[dim] = {
+                    "score": 70,
+                    "reasoning": "响应缺少该维度，使用默认评分",
+                    "suggestions": [],
+                }
+                continue
+            score = dim_data.get("score", 70)
+            try:
+                score = max(0, min(100, int(score)))
+            except (TypeError, ValueError):
+                score = 70
+            suggestions = dim_data.get("suggestions", [])
+            if not isinstance(suggestions, list):
+                suggestions = []
+            normalized[dim] = {
+                "score": score,
+                "reasoning": str(dim_data.get("reasoning", ""))[:500],
+                "suggestions": [str(item)[:200] for item in suggestions[:3]],
+            }
+        return normalized
+
+    def _get_default_critique(self, reason: str = "评审失败，使用默认评分") -> Dict:
+        """获取默认评审结果。"""
         return {
-            dim: {"score": 70, "reasoning": "评审失败，使用默认评分", "suggestions": []}
+            dim: {"score": 70, "reasoning": reason, "suggestions": []}
             for dim in self.dimensions
         }
 
