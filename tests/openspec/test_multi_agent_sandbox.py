@@ -70,6 +70,85 @@ def test_sandbox_prepares_workspace_and_writes_manifest(tmp_path):
     assert "generated" in content
 
 
+def test_strict_sandbox_requires_explicit_allowed_paths(tmp_path):
+    sandbox = SandboxSession(
+        project_dir=tmp_path,
+        task_id="phase4:src/example.cpp",
+        phase_number=4,
+        role="codegen",
+        sandbox_level="strict",
+    )
+
+    with pytest.raises(ValueError, match="strict sandbox requires explicit allowed_paths"):
+        sandbox.resolve_target("src/example.cpp")
+
+
+def test_strict_sandbox_accepts_explicit_allowed_path(tmp_path):
+    sandbox = SandboxSession(
+        project_dir=tmp_path,
+        task_id="phase4:src/example.cpp",
+        phase_number=4,
+        role="codegen",
+        sandbox_level="strict",
+        allowed_paths=["src/example.cpp"],
+    )
+
+    assert sandbox.resolve_target("src/example.cpp") == (tmp_path / "src/example.cpp").resolve()
+
+
+def test_production_sandbox_requires_explicit_allowed_paths(tmp_path):
+    sandbox = SandboxSession(
+        project_dir=tmp_path,
+        task_id="phase4:src/example.cpp",
+        phase_number=4,
+        role="codegen",
+        sandbox_level="production",
+    )
+
+    with pytest.raises(ValueError, match="production sandbox requires explicit allowed_paths"):
+        sandbox.resolve_target("src/example.cpp")
+
+
+def test_production_sandbox_accepts_explicit_allowed_path(tmp_path):
+    sandbox = SandboxSession(
+        project_dir=tmp_path,
+        task_id="phase4:src/example.cpp",
+        phase_number=4,
+        role="codegen",
+        sandbox_level="production",
+        allowed_paths=["src/example.cpp"],
+    )
+
+    assert sandbox.resolve_target("src/example.cpp") == (tmp_path / "src/example.cpp").resolve()
+
+
+def test_production_sandbox_rejects_local_command_execution(tmp_path):
+    sandbox = SandboxSession(
+        project_dir=tmp_path,
+        task_id="phase10:test",
+        phase_number=10,
+        role="test",
+        sandbox_level="production",
+        allowed_paths=["tests/test_example.py"],
+    )
+
+    with pytest.raises(ValueError, match="production sandbox does not allow local command execution"):
+        sandbox.validate_command(CommandSpec(argv=["pytest", "tests"], cwd=tmp_path))
+
+
+def test_sandbox_rejects_unknown_level(tmp_path):
+    sandbox = SandboxSession(
+        project_dir=tmp_path,
+        task_id="phase4:src/example.cpp",
+        phase_number=4,
+        role="codegen",
+        sandbox_level="unknown",
+    )
+
+    with pytest.raises(ValueError, match="unsupported sandbox level"):
+        sandbox.resolve_target("src/example.cpp")
+
+
 def test_sandbox_accepts_pytest_command_at_project_root(tmp_path):
     sandbox = _sandbox(tmp_path)
     command = CommandSpec(argv=["pytest", "tests", "-v"], cwd=tmp_path)

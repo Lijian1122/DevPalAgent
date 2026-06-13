@@ -13,6 +13,7 @@ from .models import CommandSpec
 
 
 _ALLOWED_ROOTS = ("src/", "include/", "tests/", "scripts/")
+_ALLOWED_SANDBOX_LEVELS = {"staging", "strict", "production"}
 _ALLOWED_TOOL_COMMANDS = {"pytest", "python", "python.exe", "cmake"}
 _DENIED_COMMANDS = {
     "cmd",
@@ -92,7 +93,11 @@ class SandboxSession:
         normalized = candidate.as_posix()
         if not self._is_allowed_root(normalized):
             raise ValueError(f"path is outside allowed write roots: {rel_path}")
+        if self.sandbox_level not in _ALLOWED_SANDBOX_LEVELS:
+            raise ValueError(f"unsupported sandbox level: {self.sandbox_level}")
         allowed = [path.replace("\\", "/") for path in (self.allowed_paths or [])]
+        if self.sandbox_level in {"strict", "production"} and not allowed:
+            raise ValueError(f"{self.sandbox_level} sandbox requires explicit allowed_paths")
         if allowed and normalized not in allowed:
             raise ValueError(f"path is not allowed for this task: {rel_path}")
         return normalized
@@ -108,6 +113,10 @@ class SandboxSession:
         return target
 
     def validate_command(self, command: CommandSpec) -> CommandSpec:
+        if self.sandbox_level not in _ALLOWED_SANDBOX_LEVELS:
+            raise ValueError(f"unsupported sandbox level: {self.sandbox_level}")
+        if self.sandbox_level == "production":
+            raise ValueError("production sandbox does not allow local command execution")
         if isinstance(command.argv, str) or not isinstance(command.argv, list):
             raise ValueError("command argv must be a list")
         if not command.argv or not command.argv[0]:

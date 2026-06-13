@@ -145,6 +145,7 @@ class Phase11FinalReport(PhaseInterface):
         ]
         lines.extend(self._generate_vector_retrieval_section())
         lines.extend(self._generate_parallel_execution_section())
+        lines.extend(self._generate_fallback_event_section())
         lines.extend(self._generate_multi_agent_sandbox_section())
         lines.extend(self._generate_archive_section())
         lines.extend(
@@ -366,6 +367,46 @@ class Phase11FinalReport(PhaseInterface):
                     summary.get("total_task_duration_ms", 0),
                 )
             )
+        lines.append("")
+        return lines
+
+    def _generate_fallback_event_section(self) -> List[str]:
+        integration = getattr(self.context, "event_integration", None)
+        if not integration or not hasattr(integration, "get_statistics_summary"):
+            return []
+        try:
+            summary = integration.get_statistics_summary()
+        except Exception:
+            return []
+        fallbacks = dict(summary.get("agent_fallbacks", {}) or {})
+        details = list(summary.get("agent_fallback_details", []) or [])
+        if not fallbacks and not details:
+            return []
+        lines = [
+            "### Fallback Events",
+            "",
+            "| Fallback | Count |",
+            "|----------|-------|",
+        ]
+        for fallback, count in sorted(fallbacks.items()):
+            lines.append(f"| `{fallback}` | {count} |")
+        if details:
+            lines.extend([
+                "",
+                "| Phase | Fallback | Reason |",
+                "|-------|----------|--------|",
+            ])
+            for detail in details[:10]:
+                reason = str(detail.get("reason", "")).replace("|", "\\|")
+                if len(reason) > 160:
+                    reason = reason[:157] + "..."
+                lines.append(
+                    "| {} | `{}` | {} |".format(
+                        detail.get("phase_num", ""),
+                        detail.get("fallback", ""),
+                        reason,
+                    )
+                )
         lines.append("")
         return lines
 

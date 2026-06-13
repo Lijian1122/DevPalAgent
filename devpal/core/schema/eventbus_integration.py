@@ -12,6 +12,10 @@ from pathlib import Path
 from devpal.core.schema.event_bus import get_global_event_bus
 from devpal.core.schema.event_logger import EventLogger, EventStatistics
 from devpal.core.schema.workflow_events import (
+    AgentCompletedEvent,
+    AgentFallbackUsedEvent,
+    AgentMergeCompletedEvent,
+    AgentStartedEvent,
     ArchiveLifecycleEvent,
     CheckpointCreatedEvent,
     FileTaskCompletedEvent,
@@ -22,6 +26,7 @@ from devpal.core.schema.workflow_events import (
     PhaseParallelSummaryEvent,
     PhaseSkippedEvent,
     PhaseStartedEvent,
+    SandboxViolationEvent,
     VectorIndexCompletedEvent,
     VectorIndexStartedEvent,
     VectorSearchCompletedEvent,
@@ -276,6 +281,90 @@ class EventBusIntegration:
             retry_count=int(summary.get("retry_count", 0) or 0),
             max_concurrency=max_concurrency,
             total_task_duration_ms=int(summary.get("total_task_duration_ms", 0) or 0),
+        )
+        self.event_bus.publish(event)
+
+    def emit_agent_started(self, phase_num: int, task_id: str, role: str, task_type: str, sandbox_id: str = ""):
+        event = AgentStartedEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            task_id=task_id,
+            role=role,
+            task_type=task_type,
+            sandbox_id=sandbox_id,
+        )
+        self.event_bus.publish(event)
+
+    def emit_agent_completed(
+        self,
+        phase_num: int,
+        task_id: str,
+        role: str,
+        task_type: str,
+        sandbox_id: str = "",
+        success: bool = True,
+        duration_ms: int = 0,
+        error: str = "",
+    ):
+        event = AgentCompletedEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            task_id=task_id,
+            role=role,
+            task_type=task_type,
+            sandbox_id=sandbox_id,
+            success=success,
+            duration_ms=duration_ms,
+            error=error,
+        )
+        self.event_bus.publish(event)
+
+    def emit_agent_merge_completed(
+        self,
+        phase_num: int,
+        task_id: str,
+        sandbox_id: str = "",
+        artifact_path: str = "",
+        success: bool = True,
+        error: str = "",
+    ):
+        event = AgentMergeCompletedEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            task_id=task_id,
+            sandbox_id=sandbox_id,
+            artifact_path=artifact_path,
+            success=success,
+            error=error,
+        )
+        self.event_bus.publish(event)
+
+    def emit_agent_fallback_used(self, phase_num: int, reason: str, fallback: str):
+        event = AgentFallbackUsedEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            reason=reason,
+            fallback=fallback,
+        )
+        self.event_bus.publish(event)
+
+    def emit_sandbox_violation(
+        self,
+        phase_num: int,
+        task_id: str,
+        sandbox_id: str = "",
+        reason: str = "",
+        path: str = "",
+        command: list | None = None,
+    ):
+        event = SandboxViolationEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            task_id=task_id,
+            sandbox_id=sandbox_id,
+            reason=reason,
+            path=path,
+            command=command or [],
         )
         self.event_bus.publish(event)
 

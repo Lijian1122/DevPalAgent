@@ -193,6 +193,34 @@ class TestEventBusIntegration:
             integration.emit_vector_index_completed("demo", indexed_documents=3, duration_ms=5)
             integration.emit_vector_search_started("demo", top_k=2, artifact_types=["source"])
             integration.emit_vector_search_completed("demo", top_k=2, result_count=1, retrieval_latency_ms=4)
+            integration.emit_agent_started(4, "phase4:src/main.py", "codegen", "code_file", "sandbox-1")
+            integration.emit_agent_completed(
+                4,
+                "phase4:src/main.py",
+                "codegen",
+                "code_file",
+                sandbox_id="sandbox-1",
+                success=True,
+                duration_ms=42,
+            )
+            integration.emit_agent_merge_completed(
+                4,
+                "phase4:src/main.py",
+                sandbox_id="sandbox-1",
+                artifact_path="src/main.py",
+            )
+            integration.emit_agent_fallback_used(
+                4,
+                reason="multi-agent generation failed",
+                fallback="phase4.serial_tool_loop",
+            )
+            integration.emit_sandbox_violation(
+                10,
+                "phase10:test",
+                sandbox_id="sandbox-2",
+                reason="denied command",
+                command=["curl", "https://example.com"],
+            )
             integration.emit_workflow_completed(
                 success=True, phases_completed=1, phases_failed=0, phases_skipped=0
             )
@@ -201,6 +229,8 @@ class TestEventBusIntegration:
             assert summary["total_events"] >= 4
             assert len(summary["phase_durations"]) == 1
             assert summary["phase_durations"][4] == 5000
+            assert summary["agent_fallbacks"]["phase4.serial_tool_loop"] == 1
+            assert summary["agent_fallback_details"][0]["reason"] == "multi-agent generation failed"
             run_log = integration.event_logger.log_file
             latest_log = integration.event_logger.latest_log_file
             assert run_log.parent.name == "events"
@@ -217,6 +247,11 @@ class TestEventBusIntegration:
             assert "vector.index_completed" in log_content
             assert "vector.search_started" in log_content
             assert "vector.search_completed" in log_content
+            assert "agent.started" in log_content
+            assert "agent.completed" in log_content
+            assert "agent.merge_completed" in log_content
+            assert "agent.fallback_used" in log_content
+            assert "sandbox.violation" in log_content
 
     def test_eventbus_integration_filters_other_workflows(self):
         """测试 EventBusIntegration 只统计当前 workflow_id 的事件"""

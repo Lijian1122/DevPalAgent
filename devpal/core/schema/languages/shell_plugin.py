@@ -254,13 +254,12 @@ teardown() {
             "config.sh": "#!/usr/bin/env bash\n# Configuration file\n",
         }
 
-    def get_test_command(self, project_dir: Path) -> List[str]:
+    def get_test_command(self, project_dir: Optional[Path] = None) -> List[str]:
         """获取测试命令（Phase 10 使用）"""
         return ["bats", "tests/"]
 
-    def get_build_command(self, project_dir: Path) -> List[str]:
+    def get_build_command(self, project_dir: Optional[Path] = None) -> List[str]:
         """获取构建命令（Phase 10 使用）"""
-        # Shell scripts don't need building
         return []
 
     def get_quality_checks(self) -> List[Callable]:

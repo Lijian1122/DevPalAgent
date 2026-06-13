@@ -4,6 +4,20 @@ from devpal.core.openspec_phases.base import OpenSpecContext
 from devpal.core.openspec_phases.phase11_final_report import Phase11FinalReport
 
 
+class _FallbackStats:
+    def get_statistics_summary(self):
+        return {
+            "agent_fallbacks": {"phase4.serial_tool_loop": 1},
+            "agent_fallback_details": [
+                {
+                    "phase_num": 4,
+                    "fallback": "phase4.serial_tool_loop",
+                    "reason": "multi-agent generation failed",
+                }
+            ],
+        }
+
+
 def test_phase11_report_includes_test_documentation_and_sandbox_summary(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
@@ -15,6 +29,7 @@ def test_phase11_report_includes_test_documentation_and_sandbox_summary(tmp_path
     context.sandbox_level = "staging"
     context.agent_pool_size = 3
     context.agent_backend = "local"
+    context.event_integration = _FallbackStats()
     context.test_doc_summary = {
         "phase": 5,
         "test_count": 2,
@@ -55,6 +70,8 @@ def test_phase11_report_includes_test_documentation_and_sandbox_summary(tmp_path
     assert "Multi-Agent Sandbox Summary" in report
     assert "phase10-test-abc" in report
     assert ".spec/sandboxes/phase10-test-abc/manifest.json" in report
+    assert "Fallback Events" in report
+    assert "phase4.serial_tool_loop" in report
     assert result.data["sandbox_task_count"] == 1
     assert result.data["agent_backend"] == "local"
 

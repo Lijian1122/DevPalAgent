@@ -1,3 +1,4 @@
+
 # DevPalAgent
 
 > Spec-first Agentic SDLC Runtime：把需求文档转成可验证、可追踪、可自愈的软件项目。
@@ -91,7 +92,7 @@ DevPalAgent 不是单一的"问答式 Agent"，而是由两条互补执行链组
 ┌───────────────────────────────────────────┐
 │ Core engines: ValidationEngine / DeltaSpec / ArtifactGraph / EventBus│
 │ LLM client / PromptEngine / Templates / Language plugins / Memory    │
-│ Multi-Agent: Coordinator / AgentPool / MessageBus / DependencyResolver│
+│ Multi-Agent: Coordinator / LocalThreadBackend / SandboxSession        │
 └───────────────────────────────────────────────────┘
 ```
 
@@ -118,6 +119,7 @@ workspace artifact / manifest → merge / report
 - **可选多 Agent**: `--enable-multi-agent` 后，Phase 4 可用 CodegenAgent，Phase 9 可用 ReviewAgent，Phase 10 可用 TestAgent。
 - **沙箱策略**: `SandboxSession` 限制写入根目录、精确 allowed paths、命令 argv/cwd/CMake 路径，并拒绝 shell/network/destructive 命令。
 - **审计产物**: 每个 sandbox task 可写入 `.spec/sandboxes/<sandbox_id>/manifest.json`，Phase 11 汇总 sandbox id、manifest 和 policy violation。
+- **Production merge**: `--sandbox-level production` 下不会自动写主工作区，而是生成 `merge_pending` manifest；使用 `python -m devpal.openspec merge-sandbox <manifest> --apply` 显式合并。
 - **Fallback**: 多 Agent 或并行任务失败时回退到现有 phase-local 执行路径。
 
 性能收益依赖文件数量、LLM 延迟和依赖图形状；README 不固定承诺倍数，实际以 final report 的 parallel summary 和 benchmark 为准。
@@ -201,7 +203,7 @@ Deliverables
 | Scheduler | `enhanced_scheduler.py`、`scheduler.py` | 阶段调度、重试、超时、checkpoint、恢复 |
 | Shared State | `base.py`、`openspec_context.py` | `OpenSpecContext`、`PhaseResult`、成功策略、阶段产物 |
 | Phase Layer | `openspec_phases/phase*.py` | 11 阶段需求解析、生成、验证、测试、报告 |
-| **Multi-Agent Layer** | `multi_agent/coordinator.py`、`agent_pool.py` | **Phase 4/5 并行执行协调** |
+| **Multi-Agent Layer** | `multi_agent/coordinator.py`、`backend.py`、`sandbox.py` | Phase 4/9/10 的可选本地多 Agent 执行与审计 |
 | Intelligence Layer | `llm_client.py`、`prompt_engine.py`、`templates/` | LLM 调用、动态 Prompt、语言/项目模板 |
 | Verification Layer | `validation_engine.py`、`phase9_quality_gate.py`、`phase10_run_tests.py` | 四层质量门禁、测试执行、编译/pytest/shell 检查 |
 | Traceability Layer | `artifact_graph.py`、`delta_spec.py`、`requirements.py` | 需求、代码、测试、报告之间的关系追踪 |
@@ -218,12 +220,12 @@ Deliverables
   │
   ├─ Phase 3: design
   │
-  ├─ Phase 4: **多智能体并行生成代码** (3-4x 加速)
+  ├─ Phase 4: **文件级并行 / 可选多 Agent 代码生成**
   │     ├─ 依赖解析 → 分阶段
-  │     ├─ 智能体池并行执行
+  │     ├─ LocalThreadBackend / PhaseParallelExecutor 执行
   │     └─ 结果聚合
   │
-  ├─ Phase 5: **多智能体并行审查** (3-4x 加速)
+  ├─ Phase 5: **并行测试/文档生成**
   │
   ├─ Phase 6-8: build config / test docs / README
   │
@@ -234,7 +236,7 @@ Deliverables
   └─ Phase 11: final_report / artifact_graph / CLAUDE.md
 ```
 
-这条数据流里，`OpenSpecContext` 是所有阶段的状态总线，`ArtifactGraph` 负责记录工件关系，`ValidationEngine` 负责质量判断，`PhaseResult` 负责把每个阶段的成功、失败、跳过原因持久化。**新增的 `AgentPoolManager` 和 `MessageBus` 负责 Phase 4/5 的并行执行协调**。
+这条数据流里，`OpenSpecContext` 是所有阶段的状态总线，`ArtifactGraph` 负责记录工件关系，`ValidationEngine` 负责质量判断，`PhaseResult` 负责把每个阶段的成功、失败、跳过原因持久化。当前多 Agent 路径由 `MultiAgentCoordinator`、`LocalThreadBackend`、`CodegenAgent`、`ReviewAgent`、`TestAgent` 和 `SandboxSession` 组成；性能收益以 benchmark 和 final report 为准，不固定承诺倍数。
 
 更详细的架构说明见：
 
@@ -274,22 +276,20 @@ Deliverables
 ### 3.3 多智能体核心模块（新增）
 
 | 文件 | 说明 |
-|---|
+|---|---|
 | `devpal/core/multi_agent/coordinator.py` | Phase 协调器基类，负责多智能体执行编排 |
-| `devpal/core/multi_agent/agent_pool.py` | 智能体池管理器，负责智能体生命周期 |
-| `devpal/core/multi_agent/worker_agent.py` | 工作智能体基类 |
-| `devpal/core/multi_agent/code_generator_agent.py` | 代码生成智能体（Phase 4） |
-| `devpal/core/multi_agent/code_reviewer_agent.py` | 代码审查智能体（Phase 5） |
-| `devpal/core/multi_agent/dependency_resolver.py` | 依赖解析器，拓扑排序 |
-| `devpal/core/multi_agent/events.py` | 事件定义（命令、事件、心跳） |
-| `devpal/core/multi_agent/retry_policy.py` | 重试策略 |
-| `devpal/core/multi_agent/circuit_breaker.py` | 断路器，防止级联故障 |
-| `devpal/core/openspec_phases/phase4_multi_agent.py` | Phase 4 多智能体协调器 |
-| `devpal/core/openspec_phases/phase5_multi_agent.py` | Phase 5 多智能体协调器 |
+| `devpal/core/multi_agent/backend.py` | 本地线程后端，复用 `PhaseParallelExecutor` |
+| `devpal/core/multi_agent/models.py` | `AgentTask`、`AgentResult`、`AgentPolicy`、命令模型 |
+| `devpal/core/multi_agent/sandbox.py` | 路径/命令策略、workspace、manifest 和 sandbox level |
+| `devpal/core/multi_agent/codegen_agent.py` | 代码生成智能体（Phase 4） |
+| `devpal/core/multi_agent/review_agent.py` | 代码审查智能体（Phase 9） |
+| `devpal/core/multi_agent/test_agent.py` | 测试执行智能体（Phase 10） |
+| `devpal/core/multi_agent/adapters.py` | Phase parallel task 与 Agent task/result 的适配 |
+| `devpal/core/multi_agent/content_sanitizer.py` | 生成内容清洗与安全检查 |
 
 **配置文件**:
-- `config/agent_pool.yaml` - 智能体池配置（池大小、超时、重试策略）
-- `config/file_dependencies.yaml` - 文件依赖规则
+- CLI 参数：`--enable-multi-agent`、`--agent-pool-size`、`--sandbox-level`
+- 当前后端：`local`，主要通过 `AgentPolicy` 和 `OpenSpecContext` 传递运行策略
 
 ### 3.4 OpenSpec 11 阶段实现
 
@@ -298,8 +298,8 @@ Deliverables
 | 1 | `phase1_parse_requirements.py` | 解析需求文本，提取 structured requirements、project_type、language、features，输出 `.spec/delta.json` |
 | 2 | `phase2_create_structure.py` | 创建语言感知目录结构，写入 `.spec/requirements.json` |
 | 3 | `phase3_technical_design.py` | 生成技术设计，可根据 installer/tooling 等项目类型跳过 |
-| 4 | `phase4_generate_code.py` / `phase4_multi_agent.py` | **通过多智能体并行生成核心代码（可配置）** |
-| 5 | `phase5_generate_tests.py` / `phase5_multi_agent.py` | **通过多智能体并行生成测试代码（可配置）** |
+| 4 | `phase4_generate_code.py` | 文件级并行 / 可选 CodegenAgent 生成核心代码 |
+| 5 | `phase5_generate_tests.py` | 并行生成测试文件和测试文档 |
 | 6 | `phase6_cmake_config.py` | 生成 CMake/build 配置，非 C++ 项目可跳过 |
 | 7 | `phase7_test_docs.py` | 生成或补充测试文档 |
 | 8 | `phase8_readme.py` | 生成目标项目 README |
@@ -340,9 +340,9 @@ Deliverables
 | 能力 | 状态 | 说明 |
 |---|---:|---|
 | OpenSpec 11 阶段流水线 | ✅ | Phase 1-11 已实现 |
-| **多智能体并行执行** | ✅ | **Phase 4/5 支持 4-16 智能体并行，3-4x 加速** |
-| **依赖解析与调度** | ✅ | **拓扑排序、分阶段执行、智能负载均衡** |
-| **故障隔离与恢复** | ✅ | **智能体级别重试、工作重分配、断路器** |
+| **多智能体并行执行** | ✅ MVP | Phase 4 可选 CodegenAgent，Phase 9/10 可选 Review/Test Agent；并发度由 CLI 控制 |
+| **依赖解析与调度** | ✅ | 文件计划支持依赖分阶段执行，底层使用 `PhaseParallelExecutor` |
+| **故障隔离与恢复** | ✅ MVP | sandbox manifest、路径/命令策略、fallback 事件和 final report 汇总；非容器级隔离 |
 | Enhanced Scheduler | ✅ | timeout / retry / checkpoint / progress |
 | Structured Requirements | ✅ | 解析 id/title/description/acceptance/scenarios/priority/status |
 | Delta JSON | ✅ | Phase 1 输出 `.spec/delta.json` |
@@ -612,14 +612,14 @@ python -m pytest tests/e2e/test_multi_agent_flow.py
 
 重点亮点：
 
-1. **Multi-Agent Orchestration**：Phase 4/5 支持 4-16 智能体并行，3-4 倍加速
+1. **Multi-Agent Orchestration**：Phase 4/9/10 提供可选本地多 Agent 路径，并通过 sandbox manifest 审计
 2. **Intelligent Scheduling**：依赖解析、拓扑排序、分阶段执行
-3. **Fault Isolation**：智能体级别故障隔离、自动重试、工作重分配
+3. **Fault Isolation**：sandbox path/command policy、staging workspace、fallback event 和报告汇总
 4. **Message-driven Architecture**：事件总线、命令/事件分离、异步通信
 5. **Agent workflow orchestration**：不是单 prompt，而是 11 阶段状态机
 6. **Tool use**：Phase 4 通过 tool loop 写文件
 7. **State management**：OpenSpecContext + checkpoint/resume
-8. **Reliability**：success policy、skipped 语义、quality gate、断路器
+8. **Reliability**：success policy、skipped 语义、quality gate、checkpoint/resume
 9. **Evaluation**：Phase 9/10/11 把生成结果变成可验证报告
 10. **Multi-language awareness**：C++/Python/installer 分支已稳定
 11. **Traceability**：ArtifactGraph 追踪需求到代码/测试/文档

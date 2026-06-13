@@ -456,6 +456,10 @@ class Phase4GenerateCode(PhaseInterface):
             )
             if multi_agent_result.success:
                 return multi_agent_result
+            self._emit_agent_fallback_used(
+                reason=self._phase_result_error_summary(multi_agent_result),
+                fallback="phase4.serial_tool_loop",
+            )
             self.log(
                 "  [MULTI-AGENT] fallback to serial tool loop after multi-agent failure"
             )
@@ -480,6 +484,10 @@ class Phase4GenerateCode(PhaseInterface):
             )
             if parallel_result.success:
                 return parallel_result
+            self._emit_agent_fallback_used(
+                reason=self._phase_result_error_summary(parallel_result),
+                fallback="phase4.serial_tool_loop",
+            )
             self.log("  [PHASE-PARALLEL] fallback to serial tool loop after parallel failure")
 
         try:
@@ -806,6 +814,36 @@ class Phase4GenerateCode(PhaseInterface):
                 errors=errors,
             )
 
+        pending_merge_manifests = list(getattr(coordinator, "pending_merge_manifests", []) or [])
+        if policy.sandbox_level == "production":
+            self._update_parallel_usage_stats(results)
+            for req in self.context.structured_requirements or []:
+                self.context.update_requirement_status(req.get("id", ""), "IN_PROGRESS")
+            self.context.generated_files.extend(infra_files)
+            self.log(
+                "  [MULTI-AGENT] production sandbox generated {} merge manifest(s); manual merge required".format(
+                    len(pending_merge_manifests)
+                )
+            )
+            return PhaseResult.ok(
+                "Phase 4 complete (production sandbox pending manual merge)",
+                infra_count=len(infra_files),
+                ai_count=0,
+                total_files=len(infra_files),
+                file_plan=[item.to_dict() for item in file_plan],
+                file_plan_count=len(file_plan),
+                parallel_summary=summary,
+                multi_agent=True,
+                sandbox_level=policy.sandbox_level,
+                agent_pool_size=policy.max_concurrency,
+                manual_merge_required=True,
+                pending_merge_count=len(pending_merge_manifests),
+                pending_merge_manifests=[path.as_posix() for path in pending_merge_manifests],
+                llm_calls=self.context.llm_calls,
+                llm_input_tokens=self.context.llm_input_tokens,
+                llm_output_tokens=self.context.llm_output_tokens,
+            )
+
         self.context.ai_generated_files.extend(ai_files)
         for req in self.context.structured_requirements or []:
             self.context.update_requirement_status(req.get("id", ""), "IN_PROGRESS")
@@ -861,6 +899,20 @@ class Phase4GenerateCode(PhaseInterface):
                 target.write_text(content, encoding="utf-8")
             except Exception as exc:
                 self.log(f"  [WARN] Failed to restore {target}: {exc}")
+
+    def _phase_result_error_summary(self, result: PhaseResult) -> str:
+        if result.errors:
+            return "; ".join(str(error) for error in result.errors)
+        return result.message or "phase result failed"
+
+    def _emit_agent_fallback_used(self, reason: str, fallback: str) -> None:
+        event_integration = getattr(self.context, "event_integration", None)
+        if event_integration and hasattr(event_integration, "emit_agent_fallback_used"):
+            event_integration.emit_agent_fallback_used(
+                self.phase_number,
+                reason=reason,
+                fallback=fallback,
+            )
 
     def _generate_single_file_task(self, task: ParallelTask) -> ParallelTaskResult:
         item = task.input_payload["plan_item"]

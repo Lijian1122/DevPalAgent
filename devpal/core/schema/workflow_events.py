@@ -55,6 +55,13 @@ class WorkflowEventType(Enum):
     FILE_TASK_RETRYING = "file_task.retrying"
     PHASE_PARALLEL_SUMMARY = "phase.parallel_summary"
 
+    # Multi-agent / sandbox 级别
+    AGENT_STARTED = "agent.started"
+    AGENT_COMPLETED = "agent.completed"
+    AGENT_MERGE_COMPLETED = "agent.merge_completed"
+    AGENT_FALLBACK_USED = "agent.fallback_used"
+    SANDBOX_VIOLATION = "sandbox.violation"
+
     # 向量检索级别
     VECTOR_INDEX_STARTED = "vector.index_started"
     VECTOR_INDEX_COMPLETED = "vector.index_completed"
@@ -521,6 +528,94 @@ class PhaseParallelSummaryEvent(Event):
         self.event_type = WorkflowEventType.PHASE_PARALLEL_SUMMARY.value
         if not self.source:
             self.source = f"phase{self.phase_num}"
+
+
+@dataclass
+class AgentStartedEvent(Event):
+    """Multi-agent task started event"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    task_id: str = ""
+    role: str = ""
+    task_type: str = ""
+    sandbox_id: str = ""
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.AGENT_STARTED.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}.{self.role or 'agent'}"
+
+
+@dataclass
+class AgentCompletedEvent(Event):
+    """Multi-agent task completed event"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    task_id: str = ""
+    role: str = ""
+    task_type: str = ""
+    sandbox_id: str = ""
+    success: bool = True
+    duration_ms: int = 0
+    error: str = ""
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.AGENT_COMPLETED.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}.{self.role or 'agent'}"
+
+
+@dataclass
+class AgentMergeCompletedEvent(Event):
+    """Multi-agent merge completed event"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    task_id: str = ""
+    sandbox_id: str = ""
+    artifact_path: str = ""
+    success: bool = True
+    error: str = ""
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.AGENT_MERGE_COMPLETED.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}.merge"
+
+
+@dataclass
+class AgentFallbackUsedEvent(Event):
+    """Multi-agent fallback used event"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    reason: str = ""
+    fallback: str = ""
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.AGENT_FALLBACK_USED.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}.agent"
+
+
+@dataclass
+class SandboxViolationEvent(Event):
+    """Sandbox policy violation event"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    task_id: str = ""
+    sandbox_id: str = ""
+    reason: str = ""
+    path: str = ""
+    command: List[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.SANDBOX_VIOLATION.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}.sandbox"
 
 
 @dataclass

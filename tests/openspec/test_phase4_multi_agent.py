@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import json
 from pathlib import Path
 
 from devpal.core.multi_agent import AgentPolicy, CodegenAgent
@@ -12,6 +13,52 @@ from devpal.core.openspec_phases.phase4_generate_code import Phase4GenerateCode
 
 class _DummyRegistry:
     pass
+
+
+class _EventRecorder:
+    def __init__(self):
+        self.fallbacks = []
+        self.merges = []
+
+    def emit_agent_fallback_used(self, phase_num, reason, fallback):
+        self.fallbacks.append(
+            {"phase_num": phase_num, "reason": reason, "fallback": fallback}
+        )
+
+    def emit_file_task_started(self, *args, **kwargs):
+        pass
+
+    def emit_file_task_completed(self, *args, **kwargs):
+        pass
+
+    def emit_file_task_failed(self, *args, **kwargs):
+        pass
+
+    def emit_file_task_retrying(self, *args, **kwargs):
+        pass
+
+    def emit_phase_parallel_summary(self, *args, **kwargs):
+        pass
+
+    def emit_agent_merge_completed(
+        self,
+        phase_num,
+        task_id,
+        sandbox_id="",
+        artifact_path="",
+        success=True,
+        error="",
+    ):
+        self.merges.append(
+            {
+                "phase_num": phase_num,
+                "task_id": task_id,
+                "sandbox_id": sandbox_id,
+                "artifact_path": artifact_path,
+                "success": success,
+                "error": error,
+            }
+        )
 
 
 class _Usage:
@@ -271,6 +318,63 @@ def test_phase4_multi_agent_generates_and_merges_files(tmp_path, monkeypatch):
     assert context.llm_calls == 2
     manifests = list((tmp_path / ".spec" / "sandboxes").glob("*/manifest.json"))
     assert manifests
+
+
+def test_phase4_production_sandbox_requires_manual_merge(tmp_path, monkeypatch):
+    context = _make_context(tmp_path)
+    context.sandbox_level = "production"
+    context.event_integration = _EventRecorder()
+    phase = Phase4GenerateCode(context, _DummyRegistry())
+    monkeypatch.setattr(phase, "_create_parallel_llm_client", lambda: _FakeClient())
+    monkeypatch.setattr(phase.compiledb, "index_project", lambda *args, **kwargs: None)
+    monkeypatch.setattr(phase.compiledb, "save_cache", lambda *args, **kwargs: None)
+    monkeypatch.setattr(phase, "_update_artifact_graph", lambda *args, **kwargs: None)
+
+    result = phase._try_generate_files_multi_agent(
+        file_plan=[
+            FileGenerationPlanItem(
+                path="src/simple_login.py",
+                purpose="module",
+                stage="implementation",
+            )
+        ],
+        project_dir=tmp_path,
+        infra_files=[],
+        infra_errors=[],
+        system_prompt="system",
+        base_user_message="base",
+        cached_context=[],
+    )
+
+    assert result.success is True
+    assert result.data["manual_merge_required"] is True
+    assert result.data["pending_merge_count"] == 1
+    assert not (tmp_path / "src/simple_login.py").exists()
+    manifest_path = Path(result.data["pending_merge_manifests"][0])
+    assert manifest_path.exists()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["status"] == "merge_pending"
+    assert manifest["requires_manual_merge"] is True
+    assert manifest["merge_mode"] == "manual"
+    assert Path(manifest["workspace_artifact"]).exists()
+    assert context.event_integration.merges
+    assert context.event_integration.merges[0]["success"] is False
+
+
+def test_phase4_emits_agent_fallback_event(tmp_path):
+    context = _make_context(tmp_path)
+    context.event_integration = _EventRecorder()
+    phase = Phase4GenerateCode(context, _DummyRegistry())
+
+    phase._emit_agent_fallback_used("multi-agent failed", "phase4.serial_tool_loop")
+
+    assert context.event_integration.fallbacks == [
+        {
+            "phase_num": 4,
+            "reason": "multi-agent failed",
+            "fallback": "phase4.serial_tool_loop",
+        }
+    ]
 
 
 def test_phase4_multi_agent_merge_preserves_complete_content_when_unchanged(tmp_path, monkeypatch):

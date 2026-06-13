@@ -25,5 +25,6 @@ def pytest_collection_modifyitems(config, items):
 
     skip_golden = pytest.mark.skip(reason="need --run-golden option to run")
     for item in items:
-        if "golden" in item.keywords:
+        marker_names = {mark.name for mark in item.iter_markers()}
+        if "golden" in marker_names:
             item.add_marker(skip_golden)

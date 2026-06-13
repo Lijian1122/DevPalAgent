@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from .event_bus import Event
 from .workflow_events import (
+    AgentFallbackUsedEvent,
     LLMRequestCompletedEvent,
     PhaseCompletedEvent,
     ToolCompletedEvent,
@@ -136,6 +137,8 @@ class EventStatistics:
             "cache_read": 0,
         }
         self.llm_calls = []
+        self.agent_fallbacks = defaultdict(int)
+        self.agent_fallback_details = []
         self.workflow_start_time = None
         self.workflow_end_time = None
         self.workflow_total_duration_ms = 0
@@ -180,6 +183,17 @@ class EventStatistics:
                     "duration_ms": event.duration_ms,
                     "tokens": event.total_tokens,
                     "cache_hit": event.cache_hit,
+                }
+            )
+
+        if isinstance(event, AgentFallbackUsedEvent):
+            fallback = event.fallback or "unknown"
+            self.agent_fallbacks[fallback] += 1
+            self.agent_fallback_details.append(
+                {
+                    "phase_num": event.phase_num,
+                    "reason": event.reason,
+                    "fallback": fallback,
                 }
             )
 
@@ -236,6 +250,8 @@ class EventStatistics:
             else None,
             "tool_stats": tool_stats,
             "llm_stats": llm_stats,
+            "agent_fallbacks": dict(self.agent_fallbacks),
+            "agent_fallback_details": list(self.agent_fallback_details),
         }
 
     def reset(self):
@@ -252,6 +268,8 @@ class EventStatistics:
             "cache_read": 0,
         }
         self.llm_calls.clear()
+        self.agent_fallbacks.clear()
+        self.agent_fallback_details.clear()
         self.workflow_start_time = None
         self.workflow_end_time = None
         self.workflow_total_duration_ms = 0

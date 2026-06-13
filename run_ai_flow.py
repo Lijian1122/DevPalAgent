@@ -208,7 +208,7 @@ def main() -> int:
                      help="启用多Agent模式 (ReviewAgent, CodegenAgent, TestAgent)")
     parser.add_argument("--agent-pool-size", type=int,
                         help="Agent 池大小 (默认: 等于 max-concurrency)")
-    parser.add_argument("--sandbox-level", choices=["staging", "production"], default="staging",
+    parser.add_argument("--sandbox-level", choices=["staging", "strict", "production"], default="staging",
                   help="沙箱隔离级别 (默认: staging)")
     parser.add_argument("--resume", action="store_true",
                  help="从 .spec/checkpoint.json 恢复执行")

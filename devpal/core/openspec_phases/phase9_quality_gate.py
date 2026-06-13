@@ -416,6 +416,13 @@ class Phase9QualityGate(PhaseInterface):
                 self.log(
                     f"    [WARN] ReviewAgent failed, falling back to local review: {exc}"
                 )
+                event_integration = getattr(self.context, "event_integration", None)
+                if event_integration and hasattr(event_integration, "emit_agent_fallback_used"):
+                    event_integration.emit_agent_fallback_used(
+                        self.phase_number,
+                        reason=str(exc),
+                        fallback="phase9.local_review",
+                    )
         return self._run_code_review_local()
 
     def _should_run_review_agent(self) -> bool:
