@@ -39,6 +39,8 @@ class GoldenFlowReport:
     dry_run: bool
     steps: List[GoldenStep]
     checks: List[GoldenCheck] = field(default_factory=list)
+    success: bool = True
+    failure: str = ""
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -87,8 +89,6 @@ def run_step(step: GoldenStep, cwd: Path, timeout: int) -> GoldenStep:
     step.returncode = completed.returncode
     step.stdout_tail = (completed.stdout or "")[-2000:]
     step.stderr_tail = (completed.stderr or "")[-2000:]
-    if completed.returncode != 0:
-        raise RuntimeError(f"golden step failed: {step.name} rc={completed.returncode}\n{step.stderr_tail}")
     return step
 
 
@@ -199,6 +199,36 @@ def write_report(report: GoldenFlowReport, output_dir: Path) -> tuple[Path, Path
             lines.append(
                 f"| {check.name} | {status} | `{check.path}` | {check.detail} |"
             )
+    if not report.success:
+        lines.extend([
+            "",
+            "## Failure",
+            "",
+            report.failure or "Golden flow failed.",
+            "",
+            "## Step Output Tails",
+            "",
+        ])
+        for step in report.steps:
+            if step.returncode not in (None, 0) or step.stdout_tail or step.stderr_tail:
+                lines.extend([
+                    f"### {step.name}",
+                    "",
+                    f"- Return code: {step.returncode}",
+                    "",
+                    "Stdout tail:",
+                    "",
+                    "```text",
+                    step.stdout_tail or "",
+                    "```",
+                    "",
+                    "Stderr tail:",
+                    "",
+                    "```text",
+                    step.stderr_tail or "",
+                    "```",
+                    "",
+                ])
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return json_path, md_path
 
@@ -217,15 +247,29 @@ def main(argv: list[str] | None = None) -> int:
     change_id = args.change_id or "<discover-after-propose>"
     steps = build_steps(args.requirements, change_id, project_dir)
 
+    success = True
+    failure = ""
     if not args.dry_run:
         steps[0] = run_step(steps[0], ROOT, args.timeout)
-        if args.change_id is None:
+        if steps[0].returncode != 0:
+            success = False
+            failure = f"golden step failed: {steps[0].name} rc={steps[0].returncode}"
+        if success and args.change_id is None:
             change_id = discover_latest_change(ROOT / "openspec" / "changes")
             steps = build_steps(args.requirements, change_id, project_dir)
             steps[0].returncode = 0
         for index in range(1, len(steps)):
+            if not success:
+                break
             steps[index] = run_step(steps[index], ROOT, args.timeout)
-    checks = [] if args.dry_run else validate_outputs(change_id, project_dir)
+            if steps[index].returncode != 0:
+                success = False
+                failure = f"golden step failed: {steps[index].name} rc={steps[index].returncode}"
+                break
+    checks = [] if args.dry_run or not success else validate_outputs(change_id, project_dir)
+    if any(not check.success for check in checks):
+        success = False
+        failure = "golden output validation failed"
 
     report = GoldenFlowReport(
         requirements=args.requirements,
@@ -234,10 +278,12 @@ def main(argv: list[str] | None = None) -> int:
         dry_run=args.dry_run,
         steps=steps,
         checks=checks,
+        success=success,
+        failure=failure,
     )
     json_path, md_path = write_report(report, ROOT / args.output_dir)
     print(json.dumps({"json": json_path.as_posix(), "markdown": md_path.as_posix(), "change_id": change_id}, ensure_ascii=False, indent=2))
-    return 1 if any(not check.success for check in checks) else 0
+    return 0 if success else 1
 
 
 if __name__ == "__main__":

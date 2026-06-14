@@ -4,6 +4,8 @@ config/config.yaml
 
 # ===== Python =====
 __pycache__/
+.pytest_cache/
+.ruff_cache/
 *.py[cod]
 *$py.class
 *.so
@@ -43,8 +45,12 @@ Thumbs.db
 # ===== 数据 =====
 data/
 *.log
+.tmp/
 
 # ===== OpenSpec generated projects =====
+.spec/
+requirements/.spec/
+simple_login/
 cpp_simple_login/
 cpp_simple_calculator/
 test_phase_skip/

@@ -60,6 +60,35 @@ def test_write_report_outputs_json_and_markdown(tmp_path):
     assert "final report" in markdown
 
 
+def test_write_report_includes_failure_details(tmp_path):
+    report = GoldenFlowReport(
+        requirements="requirements/simple_login.md",
+        project_dir="cpp_simple_login",
+        change_id="change-001",
+        dry_run=False,
+        success=False,
+        failure="golden step failed: apply rc=1",
+        steps=[
+            GoldenStep(
+                "apply",
+                ["python", "run_ai_flow.py", "--apply-change", "change-001"],
+                returncode=1,
+                stdout_tail="phase 4 failed",
+                stderr_tail="provider denied",
+            )
+        ],
+    )
+
+    json_path, md_path = write_report(report, tmp_path)
+
+    data = json.loads(json_path.read_text(encoding="utf-8"))
+    assert data["success"] is False
+    assert data["failure"] == "golden step failed: apply rc=1"
+    markdown = md_path.read_text(encoding="utf-8")
+    assert "## Failure" in markdown
+    assert "provider denied" in markdown
+
+
 def test_validate_outputs_reports_expected_artifacts(tmp_path, monkeypatch):
     from scripts import run_golden_openspec_flow as runner
 
