@@ -32,6 +32,11 @@ env/
 ENV/
 .venv/
 
+# ===== .NET / local SDK =====
+.dotnet/
+**/bin/
+**/obj/
+
 # ===== IDE =====
 .vscode/
 .idea/
