@@ -80,6 +80,7 @@ class Phase11FinalReport(PhaseInterface):
             vector_retrieval_stats=dict(self.context.vector_retrieval_stats),
             multi_agent_enabled=bool(getattr(self.context, "enable_multi_agent", False)),
             sandbox_level=getattr(self.context, "sandbox_level", "staging"),
+            sandbox_backend=getattr(self.context, "sandbox_backend", "policy"),
             agent_pool_size=getattr(self.context, "agent_pool_size", 0),
             agent_backend=getattr(self.context, "agent_backend", "local"),
             sandbox_task_count=sandbox_stats["task_count"],
@@ -448,7 +449,9 @@ class Phase11FinalReport(PhaseInterface):
             key=lambda item: float(item[0]),
         ):
             for result in summary.get("results", []) or []:
-                metadata = result.get("metadata", {}) if isinstance(result, dict) else {}
+                if not isinstance(result, dict):
+                    continue
+                metadata = result.get("metadata", {}) if isinstance(result.get("metadata", {}), dict) else {}
                 sandbox_id = metadata.get("sandbox_id") or result.get("sandbox_id")
                 sandbox = metadata.get("sandbox") or {}
                 if not sandbox_id and isinstance(sandbox, dict):
@@ -456,6 +459,19 @@ class Phase11FinalReport(PhaseInterface):
                 manifest_path = metadata.get("manifest_path")
                 if not manifest_path and isinstance(sandbox, dict):
                     manifest_path = sandbox.get("manifest_path")
+                backend = metadata.get("backend") or metadata.get("sandbox_backend")
+                isolation_level = metadata.get("isolation_level")
+                manifest_v2_path = metadata.get("manifest_v2_path")
+                runner_request_path = metadata.get("runner_request_path")
+                runner_result_path = metadata.get("runner_result_path")
+                cleanup_status = metadata.get("cleanup_status", "")
+                timed_out = bool(metadata.get("timed_out", False))
+                if isinstance(sandbox, dict):
+                    backend = backend or sandbox.get("backend", "")
+                    isolation_level = isolation_level or sandbox.get("isolation_level", "")
+                    manifest_v2_path = manifest_v2_path or sandbox.get("manifest_v2_path", "")
+                    runner_request_path = runner_request_path or sandbox.get("runner_request_path", "")
+                    runner_result_path = runner_result_path or sandbox.get("runner_result_path", "")
                 policy_violations = metadata.get("policy_violations") or result.get("policy_violations") or []
                 if not sandbox_id and not policy_violations:
                     continue
@@ -466,26 +482,44 @@ class Phase11FinalReport(PhaseInterface):
                         "phase": phase_num,
                         "task_id": result.get("task_id", ""),
                         "sandbox_id": sandbox_id or "",
+                        "backend": backend or "",
+                        "isolation_level": isolation_level or "",
                         "success": result.get("success", False),
                         "duration_ms": result.get("duration_ms", 0),
                         "violations": violation_count,
                         "manifest_path": manifest_path or "",
+                        "manifest_v2_path": manifest_v2_path or "",
+                        "runner_request_path": runner_request_path or "",
+                        "runner_result_path": runner_result_path or "",
+                        "cleanup_status": cleanup_status,
+                        "timed_out": timed_out,
                     }
                 )
         return {"rows": rows, "task_count": len(rows), "policy_violations": violations}
+
+    def _relative_report_path(self, path_value: Any) -> str:
+        path_text = str(path_value or "")
+        if not path_text:
+            return ""
+        try:
+            return Path(path_text).resolve().relative_to(self.context.project_dir.resolve()).as_posix()
+        except Exception:
+            return path_text
 
     def _generate_multi_agent_sandbox_section(self) -> List[str]:
         sandbox_stats = self._collect_sandbox_stats()
         rows = sandbox_stats["rows"]
         violations = sandbox_stats["policy_violations"]
-        if not rows and not getattr(self.context, "enable_multi_agent", False):
+        sandbox_backend = getattr(self.context, "sandbox_backend", "policy")
+        if not rows and not getattr(self.context, "enable_multi_agent", False) and sandbox_backend == "policy":
             return []
         lines = [
             "### Multi-Agent Sandbox Summary",
             "",
             "- Enabled: {}".format(bool(getattr(self.context, "enable_multi_agent", False))),
             "- Sandbox level: {}".format(getattr(self.context, "sandbox_level", "staging")),
-            "- Backend: {}".format(getattr(self.context, "agent_backend", "local")),
+            "- Agent backend: {}".format(getattr(self.context, "agent_backend", "local")),
+            "- Sandbox backend: {}".format(sandbox_backend),
             "- Agent pool size: {}".format(getattr(self.context, "agent_pool_size", 0)),
             "- Sandboxed tasks: {}".format(len(rows)),
             "- Policy violations: {}".format(violations),
@@ -493,19 +527,18 @@ class Phase11FinalReport(PhaseInterface):
         ]
         if rows:
             lines.extend([
-                "| Phase | Task | Sandbox | Success | Duration ms | Violations | Manifest |",
-                "|-------|------|---------|---------|-------------|------------|----------|",
+                "| Phase | Task | Backend | Isolation | Sandbox | Success | Duration ms | Violations | Timeout | Cleanup | Manifest | Manifest v2 | Runner Result |",
+                "|-------|------|---------|-----------|---------|---------|-------------|------------|---------|---------|----------|-------------|---------------|",
             ])
             for row in rows:
-                manifest = row.get("manifest_path") or ""
-                if manifest:
-                    try:
-                        manifest = Path(manifest).resolve().relative_to(self.context.project_dir.resolve()).as_posix()
-                    except Exception:
-                        manifest = str(manifest)
+                manifest = self._relative_report_path(row.get("manifest_path"))
+                manifest_v2 = self._relative_report_path(row.get("manifest_v2_path"))
+                runner_result = self._relative_report_path(row.get("runner_result_path"))
                 lines.append(
-                    "| {phase} | `{task_id}` | `{sandbox_id}` | {success} | {duration_ms} | {violations} | `{manifest}` |".format(
+                    "| {phase} | `{task_id}` | `{backend}` | `{isolation_level}` | `{sandbox_id}` | {success} | {duration_ms} | {violations} | {timed_out} | `{cleanup_status}` | `{manifest}` | `{manifest_v2}` | `{runner_result}` |".format(
                         manifest=manifest,
+                        manifest_v2=manifest_v2,
+                        runner_result=runner_result,
                         **row,
                     )
                 )

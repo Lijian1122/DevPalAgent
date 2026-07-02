@@ -210,6 +210,8 @@ def main() -> int:
                         help="Agent 池大小 (默认: 等于 max-concurrency)")
     parser.add_argument("--sandbox-level", choices=["staging", "strict", "production"], default="staging",
                   help="沙箱隔离级别 (默认: staging)")
+    parser.add_argument("--sandbox-backend", choices=["policy", "windows_process"], default="policy",
+                  help="Phase 10 沙箱执行后端 (默认: policy)")
     parser.add_argument("--resume", action="store_true",
                  help="从 .spec/checkpoint.json 恢复执行")
     parser.add_argument("--verbose", "-v", action="store_true",
@@ -304,6 +306,7 @@ def main() -> int:
             max_concurrency=args.max_concurrency,
             enable_multi_agent=args.enable_multi_agent,
          sandbox_level=args.sandbox_level,
+            sandbox_backend=args.sandbox_backend,
             agent_pool_size=args.agent_pool_size,
             verbose=args.verbose,
             debug=args.debug,

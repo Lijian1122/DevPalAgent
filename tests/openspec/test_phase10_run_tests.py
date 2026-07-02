@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 
 from pathlib import Path
+import sys
+import textwrap
 
 from devpal.core.openspec_phases.base import OpenSpecContext
 from devpal.core.openspec_phases.phase10_run_tests import Phase10RunTests
@@ -8,6 +10,39 @@ from devpal.core.openspec_phases.phase10_run_tests import Phase10RunTests
 
 class _DummyRegistry:
     pass
+
+
+def _fake_windows_runner(tmp_path, stdout="fake runner output\n", returncode=0):
+    runner = tmp_path / "fake_windows_runner.py"
+    runner.write_text(
+        textwrap.dedent(
+            f"""
+            import json
+            import sys
+            from pathlib import Path
+
+            request = json.loads(Path(sys.argv[-1]).read_text(encoding="utf-8"))
+            result_path = Path(request["result_path"])
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+            result_path.write_text(
+                json.dumps({{
+                    "schema_version": "devpal.sandbox.runner_result.v1",
+                    "argv": request["command"]["argv"],
+                    "cwd": request["command"]["cwd"],
+                    "exit_code": {returncode},
+                    "stdout": {stdout!r},
+                    "stderr": "",
+                    "duration_ms": 7,
+                    "timed_out": False,
+                    "cleanup_status": "clean"
+                }}),
+                encoding="utf-8",
+            )
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+    return runner
 
 
 def _make_python_project(tmp_path):
@@ -61,6 +96,34 @@ def test_phase10_runs_python_pytest_with_multi_agent(tmp_path):
     assert result.data["test_failed"] == 0
     assert "test_add" in context.test_output
     assert context.parallel_execution_stats["10"]["success_count"] == 1
+
+
+def test_phase10_runs_python_tests_with_windows_process_backend(tmp_path):
+    _, context = _make_python_project(tmp_path)
+    fake_runner = _fake_windows_runner(
+        tmp_path,
+        stdout="tests/test_main.py::test_add PASSED\n",
+    )
+    context.sandbox_backend = "windows_process"
+    context.sandbox_level = "strict"
+    context.sandbox_backend_options = {
+        "runner_path": sys.executable,
+        "runner_args": [str(fake_runner)],
+    }
+
+    result = Phase10RunTests(context, _DummyRegistry()).execute()
+
+    assert result.success is True
+    assert context.test_total == 1
+    assert context.test_passed == 1
+    assert "test_add" in context.test_output
+    summary = context.parallel_execution_stats["10"]
+    assert summary["success_count"] == 1
+    metadata = summary["results"][0]["metadata"]
+    assert metadata["backend"] == "windows_process"
+    assert metadata["isolation_level"] == "process"
+    assert metadata["cleanup_status"] == "clean"
+    assert Path(metadata["manifest_v2_path"]).exists()
 
 
 def _make_cpp_context(tmp_path):
@@ -142,6 +205,38 @@ def test_phase10_multi_agent_cpp_command_uses_coordinator(tmp_path, monkeypatch)
     assert seen["task"].task_type == "test_run"
     assert seen["task"].input_payload["commands"][0].argv[0] == "cmake"
     assert context.parallel_execution_stats["10"]["success_count"] == 1
+
+
+def test_phase10_command_can_use_windows_process_backend(tmp_path):
+    project_dir, context = _make_cpp_context(tmp_path)
+    fake_runner = _fake_windows_runner(tmp_path, stdout="Python 3.12.0\n")
+    context.sandbox_backend = "windows_process"
+    context.sandbox_level = "strict"
+    context.sandbox_backend_options = {
+        "runner_path": sys.executable,
+        "runner_args": [str(fake_runner)],
+    }
+    phase = Phase10RunTests(context, _DummyRegistry())
+
+    result = phase._run_phase10_command(
+        task_id="phase10:python:version",
+        argv=["python", "--version"],
+        timeout_seconds=30,
+        legacy_cwd=project_dir,
+        agent_cwd=project_dir,
+    )
+
+    assert result.returncode == 0
+    assert "Python" in result.stdout
+    summary = context.parallel_execution_stats["10"]
+    assert summary["total_tasks"] == 1
+    metadata = summary["results"][0]["metadata"]
+    assert metadata["backend"] == "windows_process"
+    assert metadata["isolation_level"] == "process"
+    assert metadata["cleanup_status"] == "clean"
+    assert Path(metadata["manifest_v2_path"]).exists()
+    assert Path(metadata["runner_request_path"]).exists()
+    assert Path(metadata["runner_result_path"]).exists()
 
 
 def test_phase10_compile_test_multi_agent_preserves_cmake_sections(tmp_path, monkeypatch):

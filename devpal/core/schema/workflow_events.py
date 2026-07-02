@@ -61,6 +61,13 @@ class WorkflowEventType(Enum):
     AGENT_MERGE_COMPLETED = "agent.merge_completed"
     AGENT_FALLBACK_USED = "agent.fallback_used"
     SANDBOX_VIOLATION = "sandbox.violation"
+    SANDBOX_CREATED = "sandbox.created"
+    SANDBOX_POLICY_APPLIED = "sandbox.policy_applied"
+    SANDBOX_COMMAND_STARTED = "sandbox.command_started"
+    SANDBOX_COMMAND_COMPLETED = "sandbox.command_completed"
+    SANDBOX_TIMEOUT = "sandbox.timeout"
+    SANDBOX_CLEANUP_COMPLETED = "sandbox.cleanup_completed"
+    SANDBOX_BACKEND_FALLBACK = "sandbox.backend_fallback"
 
     # 向量检索级别
     VECTOR_INDEX_STARTED = "vector.index_started"
@@ -614,6 +621,143 @@ class SandboxViolationEvent(Event):
 
     def __post_init__(self):
         self.event_type = WorkflowEventType.SANDBOX_VIOLATION.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}.sandbox"
+
+
+@dataclass
+class SandboxCreatedEvent(Event):
+    """Sandbox backend session created event"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    task_id: str = ""
+    sandbox_id: str = ""
+    backend: str = ""
+    isolation_level: str = ""
+    manifest_path: str = ""
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.SANDBOX_CREATED.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}.sandbox"
+
+
+@dataclass
+class SandboxPolicyAppliedEvent(Event):
+    """Sandbox policy checked/applied event"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    task_id: str = ""
+    sandbox_id: str = ""
+    backend: str = ""
+    isolation_level: str = ""
+    policy: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.SANDBOX_POLICY_APPLIED.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}.sandbox"
+
+
+@dataclass
+class SandboxCommandStartedEvent(Event):
+    """Sandbox command started event"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    task_id: str = ""
+    sandbox_id: str = ""
+    backend: str = ""
+    isolation_level: str = ""
+    command: List[str] = field(default_factory=list)
+    cwd: str = ""
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.SANDBOX_COMMAND_STARTED.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}.sandbox"
+
+
+@dataclass
+class SandboxCommandCompletedEvent(Event):
+    """Sandbox command completed event"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    task_id: str = ""
+    sandbox_id: str = ""
+    backend: str = ""
+    isolation_level: str = ""
+    command: List[str] = field(default_factory=list)
+    returncode: int = -1
+    duration_ms: int = 0
+    timed_out: bool = False
+    manifest_path: str = ""
+    runner_request_path: str = ""
+    runner_result_path: str = ""
+    cleanup_status: str = ""
+    error: str = ""
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.SANDBOX_COMMAND_COMPLETED.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}.sandbox"
+
+
+@dataclass
+class SandboxTimeoutEvent(Event):
+    """Sandbox command timeout event"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    task_id: str = ""
+    sandbox_id: str = ""
+    backend: str = ""
+    isolation_level: str = ""
+    command: List[str] = field(default_factory=list)
+    timeout_seconds: int = 0
+    manifest_path: str = ""
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.SANDBOX_TIMEOUT.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}.sandbox"
+
+
+@dataclass
+class SandboxCleanupCompletedEvent(Event):
+    """Sandbox cleanup completed event"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    task_id: str = ""
+    sandbox_id: str = ""
+    backend: str = ""
+    isolation_level: str = ""
+    cleanup_status: str = ""
+    manifest_path: str = ""
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.SANDBOX_CLEANUP_COMPLETED.value
+        if not self.source:
+            self.source = f"phase{self.phase_num}.sandbox"
+
+
+@dataclass
+class SandboxBackendFallbackEvent(Event):
+    """Sandbox backend fallback event"""
+
+    workflow_id: str = ""
+    phase_num: int = 0
+    task_id: str = ""
+    from_backend: str = ""
+    to_backend: str = ""
+    reason: str = ""
+
+    def __post_init__(self):
+        self.event_type = WorkflowEventType.SANDBOX_BACKEND_FALLBACK.value
         if not self.source:
             self.source = f"phase{self.phase_num}.sandbox"
 

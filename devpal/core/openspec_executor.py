@@ -25,6 +25,8 @@ class OpenSpecRunOptions:
     max_concurrency: int = 3
     enable_multi_agent: bool = False
     sandbox_level: str = "staging"
+    sandbox_backend: str = "policy"
+    sandbox_backend_options: Optional[Dict[str, Any]] = None
     agent_pool_size: Optional[int] = None
     verbose: bool = False
     debug: bool = False
@@ -61,6 +63,8 @@ class OpenSpecWorkflowExecutor:
             max_concurrency=opts.max_concurrency,
             enable_multi_agent=opts.enable_multi_agent,
             sandbox_level=opts.sandbox_level,
+            sandbox_backend=opts.sandbox_backend,
+            sandbox_backend_options=opts.sandbox_backend_options,
             agent_pool_size=opts.agent_pool_size,
             verbose=opts.verbose,
             debug=opts.debug,

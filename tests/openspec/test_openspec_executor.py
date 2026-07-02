@@ -129,12 +129,16 @@ def test_executor_passes_multi_agent_options_to_phase_context(tmp_path):
             max_concurrency=2,
             enable_multi_agent=True,
             sandbox_level="strict",
+            sandbox_backend="windows_process",
+            sandbox_backend_options={"runner_path": "fake-runner.exe"},
             agent_pool_size=4,
         ),
     )
 
     assert scheduler.context.enable_multi_agent is True
     assert scheduler.context.sandbox_level == "strict"
+    assert scheduler.context.sandbox_backend == "windows_process"
+    assert scheduler.context.sandbox_backend_options["runner_path"] == "fake-runner.exe"
     assert scheduler.context.agent_pool_size == 4
 
 
@@ -176,6 +180,8 @@ def test_context_checkpoint_preserves_multi_agent_options(tmp_path):
         OpenSpecRunOptions(
             enable_multi_agent=True,
             sandbox_level="strict",
+            sandbox_backend="windows_process",
+            sandbox_backend_options={"runner_path": "fake-runner.exe"},
             agent_pool_size=6,
         ),
     )
@@ -188,4 +194,6 @@ def test_context_checkpoint_preserves_multi_agent_options(tmp_path):
 
     assert restored.enable_multi_agent is True
     assert restored.sandbox_level == "strict"
+    assert restored.sandbox_backend == "windows_process"
+    assert restored.sandbox_backend_options["runner_path"] == "fake-runner.exe"
     assert restored.agent_pool_size == 6

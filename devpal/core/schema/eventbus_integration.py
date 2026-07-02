@@ -26,6 +26,13 @@ from devpal.core.schema.workflow_events import (
     PhaseParallelSummaryEvent,
     PhaseSkippedEvent,
     PhaseStartedEvent,
+    SandboxBackendFallbackEvent,
+    SandboxCleanupCompletedEvent,
+    SandboxCommandCompletedEvent,
+    SandboxCommandStartedEvent,
+    SandboxCreatedEvent,
+    SandboxPolicyAppliedEvent,
+    SandboxTimeoutEvent,
     SandboxViolationEvent,
     VectorIndexCompletedEvent,
     VectorIndexStartedEvent,
@@ -365,6 +372,168 @@ class EventBusIntegration:
             reason=reason,
             path=path,
             command=command or [],
+        )
+        self.event_bus.publish(event)
+
+    def emit_sandbox_created(
+        self,
+        phase_num: int,
+        task_id: str,
+        sandbox_id: str = "",
+        backend: str = "",
+        isolation_level: str = "",
+        manifest_path: str = "",
+    ):
+        event = SandboxCreatedEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            task_id=task_id,
+            sandbox_id=sandbox_id,
+            backend=backend,
+            isolation_level=isolation_level,
+            manifest_path=manifest_path,
+        )
+        self.event_bus.publish(event)
+
+    def emit_sandbox_policy_applied(
+        self,
+        phase_num: int,
+        task_id: str,
+        sandbox_id: str = "",
+        backend: str = "",
+        isolation_level: str = "",
+        policy: dict | None = None,
+    ):
+        event = SandboxPolicyAppliedEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            task_id=task_id,
+            sandbox_id=sandbox_id,
+            backend=backend,
+            isolation_level=isolation_level,
+            policy=policy or {},
+        )
+        self.event_bus.publish(event)
+
+    def emit_sandbox_command_started(
+        self,
+        phase_num: int,
+        task_id: str,
+        sandbox_id: str = "",
+        backend: str = "",
+        isolation_level: str = "",
+        command: list | None = None,
+        cwd: str = "",
+    ):
+        event = SandboxCommandStartedEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            task_id=task_id,
+            sandbox_id=sandbox_id,
+            backend=backend,
+            isolation_level=isolation_level,
+            command=command or [],
+            cwd=cwd,
+        )
+        self.event_bus.publish(event)
+
+    def emit_sandbox_command_completed(
+        self,
+        phase_num: int,
+        task_id: str,
+        sandbox_id: str = "",
+        backend: str = "",
+        isolation_level: str = "",
+        command: list | None = None,
+        returncode: int = -1,
+        duration_ms: int = 0,
+        timed_out: bool = False,
+        manifest_path: str = "",
+        runner_request_path: str = "",
+        runner_result_path: str = "",
+        cleanup_status: str = "",
+        error: str = "",
+    ):
+        event = SandboxCommandCompletedEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            task_id=task_id,
+            sandbox_id=sandbox_id,
+            backend=backend,
+            isolation_level=isolation_level,
+            command=command or [],
+            returncode=returncode,
+            duration_ms=duration_ms,
+            timed_out=timed_out,
+            manifest_path=manifest_path,
+            runner_request_path=runner_request_path,
+            runner_result_path=runner_result_path,
+            cleanup_status=cleanup_status,
+            error=error,
+        )
+        self.event_bus.publish(event)
+
+    def emit_sandbox_timeout(
+        self,
+        phase_num: int,
+        task_id: str,
+        sandbox_id: str = "",
+        backend: str = "",
+        isolation_level: str = "",
+        command: list | None = None,
+        timeout_seconds: int = 0,
+        manifest_path: str = "",
+    ):
+        event = SandboxTimeoutEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            task_id=task_id,
+            sandbox_id=sandbox_id,
+            backend=backend,
+            isolation_level=isolation_level,
+            command=command or [],
+            timeout_seconds=timeout_seconds,
+            manifest_path=manifest_path,
+        )
+        self.event_bus.publish(event)
+
+    def emit_sandbox_cleanup_completed(
+        self,
+        phase_num: int,
+        task_id: str,
+        sandbox_id: str = "",
+        backend: str = "",
+        isolation_level: str = "",
+        cleanup_status: str = "",
+        manifest_path: str = "",
+    ):
+        event = SandboxCleanupCompletedEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            task_id=task_id,
+            sandbox_id=sandbox_id,
+            backend=backend,
+            isolation_level=isolation_level,
+            cleanup_status=cleanup_status,
+            manifest_path=manifest_path,
+        )
+        self.event_bus.publish(event)
+
+    def emit_sandbox_backend_fallback(
+        self,
+        phase_num: int,
+        task_id: str,
+        from_backend: str = "",
+        to_backend: str = "",
+        reason: str = "",
+    ):
+        event = SandboxBackendFallbackEvent(
+            workflow_id=self.workflow_id,
+            phase_num=phase_num,
+            task_id=task_id,
+            from_backend=from_backend,
+            to_backend=to_backend,
+            reason=reason,
         )
         self.event_bus.publish(event)
 

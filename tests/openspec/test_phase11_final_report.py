@@ -27,9 +27,14 @@ def test_phase11_report_includes_test_documentation_and_sandbox_summary(tmp_path
     context = OpenSpecContext(project_dir=project, requirements_file=tmp_path / "requirements.md")
     context.enable_multi_agent = True
     context.sandbox_level = "staging"
+    context.sandbox_backend = "windows_process"
     context.agent_pool_size = 3
     context.agent_backend = "local"
     context.event_integration = _FallbackStats()
+    manifest_v1 = project / ".spec" / "sandboxes" / "phase10-test-abc" / "manifest.json"
+    manifest_v2 = project / ".spec" / "sandboxes" / "phase10-test-abc" / "manifest.v2.json"
+    runner_request = project / ".spec" / "sandboxes" / "phase10-test-abc" / "runner_request.json"
+    runner_result = project / ".spec" / "sandboxes" / "phase10-test-abc" / "runner_result.json"
     context.test_doc_summary = {
         "phase": 5,
         "test_count": 2,
@@ -53,7 +58,14 @@ def test_phase11_report_includes_test_documentation_and_sandbox_summary(tmp_path
                     "duration_ms": 12,
                     "metadata": {
                         "sandbox_id": "phase10-test-abc",
-                        "manifest_path": str(project / ".spec" / "sandboxes" / "phase10-test-abc" / "manifest.json"),
+                        "backend": "windows_process",
+                        "isolation_level": "process",
+                        "manifest_path": str(manifest_v1),
+                        "manifest_v2_path": str(manifest_v2),
+                        "runner_request_path": str(runner_request),
+                        "runner_result_path": str(runner_result),
+                        "cleanup_status": "clean",
+                        "timed_out": False,
                     },
                 }
             ],
@@ -70,9 +82,15 @@ def test_phase11_report_includes_test_documentation_and_sandbox_summary(tmp_path
     assert "Multi-Agent Sandbox Summary" in report
     assert "phase10-test-abc" in report
     assert ".spec/sandboxes/phase10-test-abc/manifest.json" in report
+    assert ".spec/sandboxes/phase10-test-abc/manifest.v2.json" in report
+    assert ".spec/sandboxes/phase10-test-abc/runner_result.json" in report
+    assert "windows_process" in report
+    assert "process" in report
+    assert "clean" in report
     assert "Fallback Events" in report
     assert "phase4.serial_tool_loop" in report
     assert result.data["sandbox_task_count"] == 1
+    assert result.data["sandbox_backend"] == "windows_process"
     assert result.data["agent_backend"] == "local"
 
 

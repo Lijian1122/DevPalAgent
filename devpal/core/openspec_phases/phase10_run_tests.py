@@ -9,13 +9,17 @@
 5. 如果测试失败，尝试自愈（可选）
 """
 
+import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from devpal.core.multi_agent.models import CommandResult
+from devpal.core.sandbox import SandboxRequest
+from devpal.core.sandbox.backends import WindowsProcessSandboxBackend
 from devpal.core.schema.languages.cpp_plugin import CppLanguagePlugin
 from devpal.core.schema.languages.python_plugin import PythonLanguagePlugin
 from devpal.core.schema.languages.shell_plugin import ShellLanguagePlugin
@@ -118,7 +122,7 @@ class Phase10RunTests(PhaseInterface):
 
         # Branch based on language
         if language == "python":
-            if bool(getattr(self.context, "enable_multi_agent", False)):
+            if bool(getattr(self.context, "enable_multi_agent", False)) and not self._is_windows_process_backend_enabled():
                 return self._try_run_python_tests_multi_agent(project_dir, tests_dir, test_files)
             return self._run_python_tests(project_dir, tests_dir, test_files)
         elif language == "cpp":
@@ -209,6 +213,9 @@ class Phase10RunTests(PhaseInterface):
     def _is_multi_agent_command_execution_enabled(self) -> bool:
         return bool(getattr(self.context, "enable_multi_agent", False))
 
+    def _is_windows_process_backend_enabled(self) -> bool:
+        return getattr(self.context, "sandbox_backend", "policy") == "windows_process"
+
     def _run_phase10_command(
         self,
         task_id: str,
@@ -220,6 +227,18 @@ class Phase10RunTests(PhaseInterface):
         encoding: Optional[str] = None,
         errors: Optional[str] = None,
     ) -> CommandResult:
+        if self._is_windows_process_backend_enabled():
+            return self._run_windows_process_backend_command(
+                task_id=task_id,
+                argv=argv,
+                timeout_seconds=timeout_seconds,
+                env=env,
+                legacy_cwd=legacy_cwd,
+                agent_cwd=agent_cwd,
+                encoding=encoding,
+                errors=errors,
+            )
+
         if not self._is_multi_agent_command_execution_enabled():
             try:
                 completed = subprocess.run(
@@ -320,6 +339,259 @@ class Phase10RunTests(PhaseInterface):
             "results": list(self._phase10_command_results),
         }
 
+    def _run_windows_process_backend_command(
+        self,
+        task_id: str,
+        argv: List[str],
+        timeout_seconds: int,
+        env: Optional[Dict] = None,
+        legacy_cwd: Optional[Path] = None,
+        agent_cwd: Optional[Path] = None,
+        encoding: Optional[str] = None,
+        errors: Optional[str] = None,
+    ) -> CommandResult:
+        from devpal.core.multi_agent import CommandSpec
+
+        project_dir = Path(self.context.project_dir).resolve()
+        command = CommandSpec(
+            argv=list(argv),
+            cwd=agent_cwd or legacy_cwd or project_dir,
+            timeout_seconds=timeout_seconds,
+            env=env,
+            encoding=encoding,
+            errors=errors,
+        )
+        options = dict(getattr(self.context, "sandbox_backend_options", {}) or {})
+        request = SandboxRequest.from_legacy(
+            project_dir=project_dir,
+            task_id=task_id,
+            phase_number=self.phase_number,
+            role="test",
+            sandbox_level=getattr(self.context, "sandbox_level", "staging"),
+            allowed_paths=list(options.get("allowed_paths", []) or []),
+            timeout_seconds=timeout_seconds,
+            execution_id=str(options.get("execution_id", "")),
+            trace_id=self.workflow_id,
+        )
+        event_logger = getattr(
+            getattr(self.context, "event_integration", None),
+            "event_logger",
+            None,
+        )
+        request.metadata.update(
+            {
+                "workflow_id": self.workflow_id,
+                "event_log": str(getattr(event_logger, "latest_log_file", "") or ""),
+            }
+        )
+        backend = WindowsProcessSandboxBackend(
+            runner_path=options.get("runner_path"),
+            runner_args=list(options.get("runner_args", []) or []),
+            runner_timeout_grace_seconds=int(options.get("runner_timeout_grace_seconds", 5) or 5),
+        )
+        session = backend.create_session(request)
+        self._emit_sandbox_created(task_id, session)
+        try:
+            session.validate_command(command)
+        except ValueError as exc:
+            self._emit_sandbox_violation(task_id, session, reason=str(exc), command=list(argv))
+            raise CommandPolicyViolation(str(exc)) from exc
+
+        self._emit_sandbox_policy_applied(task_id, session, request.policy.to_dict())
+        self._emit_sandbox_command_started(task_id, session, command)
+        try:
+            result = session.execute_command(command)
+        except FileNotFoundError as exc:
+            self._emit_sandbox_command_completed(
+                task_id,
+                session,
+                command,
+                CommandResult(argv=list(argv), cwd=command.cwd, error=str(exc)),
+                cleanup_status="not_started",
+            )
+            raise
+
+        runner_result = self._read_runner_result(session.runner_result_path)
+        cleanup_status = str(runner_result.get("cleanup_status", "unknown") or "unknown")
+        if result.timed_out:
+            self._emit_sandbox_timeout(task_id, session, command, timeout_seconds)
+        self._emit_sandbox_command_completed(
+            task_id,
+            session,
+            command,
+            result,
+            cleanup_status=cleanup_status,
+            runner_result=runner_result,
+        )
+        self._emit_sandbox_cleanup_completed(task_id, session, cleanup_status)
+        self._record_windows_process_result(task_id, session, command, result, runner_result, cleanup_status)
+        return result
+
+    def _read_runner_result(self, path: Path) -> Dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8-sig"))
+        except Exception:
+            return {}
+
+    def _record_windows_process_result(
+        self,
+        task_id: str,
+        session,
+        command,
+        result: CommandResult,
+        runner_result: Dict[str, Any],
+        cleanup_status: str,
+    ) -> None:
+        success = result.returncode == 0 and not result.timed_out and not result.error
+        metadata = {
+            "sandbox_id": session.sandbox_id,
+            "sandbox": session.manifest(),
+            "backend": session.backend_name,
+            "isolation_level": session.isolation_level,
+            "manifest_v2_path": str(session.manifest_v2_path),
+            "runner_request_path": str(session.runner_request_path),
+            "runner_result_path": str(session.runner_result_path),
+            "cleanup_status": cleanup_status,
+            "timed_out": result.timed_out,
+            "commands": [
+                {
+                    "argv": list(result.argv),
+                    "cwd": str(result.cwd),
+                    "returncode": result.returncode,
+                    "duration_ms": result.duration_ms,
+                    "timed_out": result.timed_out,
+                    "error": result.error,
+                }
+            ],
+        }
+        if runner_result:
+            metadata["runner_result"] = runner_result
+        self._record_phase10_command_result(
+            {
+                "total_tasks": 1,
+                "success_count": 1 if success else 0,
+                "failed_count": 0 if success else 1,
+                "retry_count": 0,
+                "max_concurrency": 1,
+                "fallback_used": False,
+                "total_task_duration_ms": int(result.duration_ms or 0),
+                "results": [
+                    {
+                        "task_id": task_id,
+                        "success": success,
+                        "duration_ms": int(result.duration_ms or 0),
+                        "sandbox_id": session.sandbox_id,
+                        "metadata": metadata,
+                    }
+                ],
+            }
+        )
+
+    def _emit_sandbox_created(self, task_id: str, session) -> None:
+        integration = getattr(self.context, "event_integration", None)
+        if integration and hasattr(integration, "emit_sandbox_created"):
+            integration.emit_sandbox_created(
+                self.phase_number,
+                task_id,
+                sandbox_id=session.sandbox_id,
+                backend=session.backend_name,
+                isolation_level=session.isolation_level,
+                manifest_path=str(session.manifest_v2_path),
+            )
+
+    def _emit_sandbox_policy_applied(self, task_id: str, session, policy: Dict[str, Any]) -> None:
+        integration = getattr(self.context, "event_integration", None)
+        if integration and hasattr(integration, "emit_sandbox_policy_applied"):
+            integration.emit_sandbox_policy_applied(
+                self.phase_number,
+                task_id,
+                sandbox_id=session.sandbox_id,
+                backend=session.backend_name,
+                isolation_level=session.isolation_level,
+                policy=policy,
+            )
+
+    def _emit_sandbox_command_started(self, task_id: str, session, command) -> None:
+        integration = getattr(self.context, "event_integration", None)
+        if integration and hasattr(integration, "emit_sandbox_command_started"):
+            integration.emit_sandbox_command_started(
+                self.phase_number,
+                task_id,
+                sandbox_id=session.sandbox_id,
+                backend=session.backend_name,
+                isolation_level=session.isolation_level,
+                command=list(command.argv),
+                cwd=str(command.cwd),
+            )
+
+    def _emit_sandbox_command_completed(
+        self,
+        task_id: str,
+        session,
+        command,
+        result: CommandResult,
+        cleanup_status: str = "",
+        runner_result: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        integration = getattr(self.context, "event_integration", None)
+        if integration and hasattr(integration, "emit_sandbox_command_completed"):
+            integration.emit_sandbox_command_completed(
+                self.phase_number,
+                task_id,
+                sandbox_id=session.sandbox_id,
+                backend=session.backend_name,
+                isolation_level=session.isolation_level,
+                command=list(command.argv),
+                returncode=result.returncode,
+                duration_ms=int(result.duration_ms or 0),
+                timed_out=bool(result.timed_out),
+                manifest_path=str(session.manifest_v2_path),
+                runner_request_path=str(session.runner_request_path),
+                runner_result_path=str(session.runner_result_path),
+                cleanup_status=cleanup_status,
+                error=result.error or str((runner_result or {}).get("error", "")),
+            )
+
+    def _emit_sandbox_timeout(self, task_id: str, session, command, timeout_seconds: int) -> None:
+        integration = getattr(self.context, "event_integration", None)
+        if integration and hasattr(integration, "emit_sandbox_timeout"):
+            integration.emit_sandbox_timeout(
+                self.phase_number,
+                task_id,
+                sandbox_id=session.sandbox_id,
+                backend=session.backend_name,
+                isolation_level=session.isolation_level,
+                command=list(command.argv),
+                timeout_seconds=timeout_seconds,
+                manifest_path=str(session.manifest_v2_path),
+            )
+
+    def _emit_sandbox_cleanup_completed(self, task_id: str, session, cleanup_status: str) -> None:
+        integration = getattr(self.context, "event_integration", None)
+        if integration and hasattr(integration, "emit_sandbox_cleanup_completed"):
+            integration.emit_sandbox_cleanup_completed(
+                self.phase_number,
+                task_id,
+                sandbox_id=session.sandbox_id,
+                backend=session.backend_name,
+                isolation_level=session.isolation_level,
+                cleanup_status=cleanup_status,
+                manifest_path=str(session.manifest_v2_path),
+            )
+
+    def _emit_sandbox_violation(self, task_id: str, session, reason: str, command: List[str]) -> None:
+        integration = getattr(self.context, "event_integration", None)
+        if integration and hasattr(integration, "emit_sandbox_violation"):
+            integration.emit_sandbox_violation(
+                self.phase_number,
+                task_id,
+                sandbox_id=session.sandbox_id,
+                reason=reason,
+                command=command,
+            )
+
     def _run_python_tests(
         self, project_dir: Path, tests_dir: Path, test_files: List[Path]
     ) -> PhaseResult:
@@ -328,15 +600,17 @@ class Phase10RunTests(PhaseInterface):
 
         try:
             env = self._build_python_test_env(project_dir)
+            if not self._is_windows_process_backend_enabled() and shutil.which("pytest") is None:
+                self.log("  [WARN] pytest not found, skipping tests")
+                return PhaseResult.ok("Tests skipped (pytest not installed)", skipped=True)
 
-            # Use relative path "tests" instead of absolute path
-            result = subprocess.run(
-                ["pytest", "tests", "-v"],
-                cwd=project_dir,
-                capture_output=True,
-                text=True,
-                timeout=300,
+            result = self._run_phase10_command(
+                task_id="phase10:python:pytest",
+                argv=["pytest", "tests", "-v"],
+                timeout_seconds=300,
                 env=env,
+                legacy_cwd=project_dir,
+                agent_cwd=project_dir,
             )
 
             output = (result.stdout or "") + (
@@ -363,8 +637,20 @@ class Phase10RunTests(PhaseInterface):
                 self.log("  [FAIL] Some Python tests failed")
                 self.log(f"  [OUTPUT] {result.stdout}")
                 self.log(f"  [ERROR] {result.stderr}")
-                return PhaseResult.fail("Python tests failed", errors=[result.stderr])
-        except FileNotFoundError:
+                return PhaseResult.fail(
+                    "Python tests failed",
+                    errors=[result.stderr or result.error or "Python tests failed"],
+                )
+        except CommandPolicyViolation as exc:
+            self.log(f"  [SECURITY] Command policy violation: {exc}")
+            return PhaseResult.fail("Command policy violation", errors=[str(exc)])
+        except FileNotFoundError as exc:
+            if self._is_windows_process_backend_enabled():
+                self.log(f"  [FAIL] Windows process sandbox runner not found: {exc}")
+                return PhaseResult.fail(
+                    "Sandbox runner not found",
+                    errors=[str(exc)],
+                )
             self.log("  [WARN] pytest not found, skipping tests")
             return PhaseResult.ok("Tests skipped (pytest not installed)", skipped=True)
         except subprocess.TimeoutExpired:

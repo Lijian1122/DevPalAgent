@@ -151,6 +151,8 @@ class OpenSpecContext:
     phase5_max_concurrency: int = 3
     enable_multi_agent: bool = False
     sandbox_level: str = "staging"
+    sandbox_backend: str = "policy"
+    sandbox_backend_options: Dict[str, Any] = field(default_factory=dict)
     agent_pool_size: int = 2
     agent_backend: str = "local"
     agent_backend_options: Dict[str, Any] = field(default_factory=dict)
@@ -231,6 +233,8 @@ class OpenSpecContext:
             "phase5_max_concurrency": self.phase5_max_concurrency,
             "enable_multi_agent": self.enable_multi_agent,
             "sandbox_level": self.sandbox_level,
+            "sandbox_backend": self.sandbox_backend,
+            "sandbox_backend_options": _json_safe(self.sandbox_backend_options),
             "agent_pool_size": self.agent_pool_size,
             "agent_backend": self.agent_backend,
             "agent_backend_options": _json_safe(self.agent_backend_options),
@@ -333,6 +337,10 @@ class OpenSpecContext:
             data.get("enable_multi_agent", self.enable_multi_agent)
         )
         self.sandbox_level = data.get("sandbox_level", self.sandbox_level) or "staging"
+        self.sandbox_backend = data.get("sandbox_backend", self.sandbox_backend) or "policy"
+        self.sandbox_backend_options = dict(
+            data.get("sandbox_backend_options", self.sandbox_backend_options) or {}
+        )
         self.agent_pool_size = int(
             data.get("agent_pool_size", self.agent_pool_size) or self.phase4_max_concurrency
         )

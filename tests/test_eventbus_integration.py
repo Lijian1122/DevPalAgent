@@ -221,6 +221,54 @@ class TestEventBusIntegration:
                 reason="denied command",
                 command=["curl", "https://example.com"],
             )
+            integration.emit_sandbox_created(
+                10,
+                "phase10:python:pytest",
+                sandbox_id="sandbox-3",
+                backend="windows_process",
+                isolation_level="process",
+                manifest_path=".spec/sandboxes/sandbox-3/manifest.v2.json",
+            )
+            integration.emit_sandbox_policy_applied(
+                10,
+                "phase10:python:pytest",
+                sandbox_id="sandbox-3",
+                backend="windows_process",
+                isolation_level="process",
+                policy={"sandbox_level": "strict"},
+            )
+            integration.emit_sandbox_command_started(
+                10,
+                "phase10:python:pytest",
+                sandbox_id="sandbox-3",
+                backend="windows_process",
+                isolation_level="process",
+                command=["pytest", "tests", "-v"],
+                cwd=".",
+            )
+            integration.emit_sandbox_command_completed(
+                10,
+                "phase10:python:pytest",
+                sandbox_id="sandbox-3",
+                backend="windows_process",
+                isolation_level="process",
+                command=["pytest", "tests", "-v"],
+                returncode=0,
+                duration_ms=7,
+                manifest_path=".spec/sandboxes/sandbox-3/manifest.v2.json",
+                runner_request_path=".spec/sandboxes/sandbox-3/runner_request.json",
+                runner_result_path=".spec/sandboxes/sandbox-3/runner_result.json",
+                cleanup_status="clean",
+            )
+            integration.emit_sandbox_cleanup_completed(
+                10,
+                "phase10:python:pytest",
+                sandbox_id="sandbox-3",
+                backend="windows_process",
+                isolation_level="process",
+                cleanup_status="clean",
+                manifest_path=".spec/sandboxes/sandbox-3/manifest.v2.json",
+            )
             integration.emit_workflow_completed(
                 success=True, phases_completed=1, phases_failed=0, phases_skipped=0
             )
@@ -252,6 +300,12 @@ class TestEventBusIntegration:
             assert "agent.merge_completed" in log_content
             assert "agent.fallback_used" in log_content
             assert "sandbox.violation" in log_content
+            assert "sandbox.created" in log_content
+            assert "sandbox.policy_applied" in log_content
+            assert "sandbox.command_started" in log_content
+            assert "sandbox.command_completed" in log_content
+            assert "sandbox.cleanup_completed" in log_content
+            assert "windows_process" in log_content
 
     def test_eventbus_integration_filters_other_workflows(self):
         """测试 EventBusIntegration 只统计当前 workflow_id 的事件"""

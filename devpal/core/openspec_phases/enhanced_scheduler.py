@@ -332,6 +332,8 @@ class EnhancedOpenSpecScheduler:
         max_concurrency: int = 3,
         enable_multi_agent: bool = False,
         sandbox_level: str = "staging",
+        sandbox_backend: str = "policy",
+        sandbox_backend_options: Dict[str, object] | None = None,
         agent_pool_size: int | None = None,
         verbose: bool = False,
         debug: bool = False,
@@ -358,6 +360,8 @@ class EnhancedOpenSpecScheduler:
         self.max_concurrency = max(1, int(max_concurrency or 1))
         self.enable_multi_agent = bool(enable_multi_agent)
         self.sandbox_level = sandbox_level or "staging"
+        self.sandbox_backend = sandbox_backend or "policy"
+        self.sandbox_backend_options = dict(sandbox_backend_options or {})
         self.agent_pool_size = max(1, int(agent_pool_size or self.max_concurrency))
         self._apply_vector_options()
         self.config = get_config()
@@ -422,6 +426,8 @@ class EnhancedOpenSpecScheduler:
         self.context.phase5_max_concurrency = self.max_concurrency
         self.context.enable_multi_agent = self.enable_multi_agent
         self.context.sandbox_level = self.sandbox_level
+        self.context.sandbox_backend = self.sandbox_backend
+        self.context.sandbox_backend_options = dict(self.sandbox_backend_options)
         self.context.agent_pool_size = self.agent_pool_size
 
     def _multi_agent_status_message(self) -> str:
@@ -429,7 +435,9 @@ class EnhancedOpenSpecScheduler:
             return (
                 "[MULTI-AGENT] enabled "
                 f"(backend={getattr(self.context, 'agent_backend', 'local')}, "
-                f"pool_size={self.agent_pool_size}, sandbox={self.sandbox_level})"
+                f"pool_size={self.agent_pool_size}, "
+                f"sandbox={self.sandbox_level}, "
+                f"sandbox_backend={self.sandbox_backend})"
             )
         return "[MULTI-AGENT] disabled; using phase-local execution only"
 
