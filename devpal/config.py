@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 配置加载模块
-支持从配置文件和环境变量加载配置
+支持从配置文件加载配置，并在配置缺失时使用环境变量兜底
 """
 import os
 import yaml
-from typing import Optional
+from typing import Any, Optional
 from pathlib import Path
 
 
@@ -22,10 +22,20 @@ class Config:
             # 基于当前模块路径查找，确保从任意目录运行都能找到
             base_dir = Path(__file__).resolve().parent.parent
             config_path = base_dir / "config" / "config.yaml"
+        else:
+            base_dir = Path(config_path).resolve().parent.parent
 
         self.config_path = Path(config_path)
         self.base_dir = base_dir
         self.config = self._load_config()
+
+    @staticmethod
+    def _first_configured(*values: Any, default=None) -> Any:
+        """Return the first non-empty value, preserving config-before-env order."""
+        for value in values:
+            if value is not None and value != "":
+                return value
+        return default
 
     def _load_config(self) -> dict:
         """加载配置文件"""
@@ -60,26 +70,33 @@ class Config:
     @property
     def anthropic_auth_token(self) -> Optional[str]:
         """获取 Anthropic API Token"""
-        # 优先级：环境变量 > 配置文件
-        token = os.getenv("ANTHROPIC_AUTH_TOKEN") or os.getenv("ANTHROPIC_API_KEY")
-        if token:
-            return token
-
-        return self.get("anthropic.auth_token")
+        # 优先级：配置文件 > 环境变量兜底
+        return self._first_configured(
+            self.get("llm.anthropic.auth_token"),
+            self.get("anthropic.auth_token"),
+            os.getenv("ANTHROPIC_AUTH_TOKEN"),
+            os.getenv("ANTHROPIC_API_KEY"),
+        )
 
     @property
     def anthropic_base_url(self) -> str:
         """获取 Anthropic API 基础 URL"""
-        url = os.getenv("ANTHROPIC_BASE_URL")
-        if url:
-            return url
-
-        return self.get("anthropic.base_url", "https://api.anthropic.com")
+        return self._first_configured(
+            self.get("llm.anthropic.base_url"),
+            self.get("anthropic.base_url"),
+            os.getenv("ANTHROPIC_BASE_URL"),
+            default="https://api.anthropic.com",
+        )
 
     @property
     def anthropic_model(self) -> str:
         """获取使用的模型"""
-        return self.get("anthropic.model", "claude-3-sonnet-20240229")
+        return self._first_configured(
+            self.get("llm.anthropic.model"),
+            self.get("anthropic.model"),
+            os.getenv("OPENSPEC_MODEL"),
+            default="claude-3-sonnet-20240229",
+        )
 
     @property
     def max_iterations(self) -> int:
@@ -105,7 +122,7 @@ class Config:
     @property
     def llm_default_provider(self) -> str:
         """获取默认 LLM Provider"""
-        return self.get("llm.default_provider", "anthropic")
+        return self.get("llm.default_provider", "openai")
 
     @property
     def llm_fallback_providers(self) -> list:
@@ -121,22 +138,54 @@ class Config:
         Returns:
             Provider 配置字典
         """
-        config = self.get(f"llm.{provider}", {})
+        config = dict(self.get(f"llm.{provider}", {}) or {})
 
-        # 处理环境变量
+        # 优先使用 config.yaml 中的 provider 配置；环境变量只在缺失时兜底。
         if provider == "anthropic":
-            if not config.get("auth_token"):
-                config["auth_token"] = self.anthropic_auth_token
-            if not config.get("base_url"):
-                config["base_url"] = self.anthropic_base_url
-            if not config.get("model"):
-                config["model"] = self.anthropic_model
+            config["auth_token"] = (
+                self._first_configured(
+                    config.get("auth_token"),
+                    self.get("anthropic.auth_token"),
+                    os.getenv("ANTHROPIC_AUTH_TOKEN"),
+                    os.getenv("ANTHROPIC_API_KEY"),
+                )
+            )
+            config["base_url"] = (
+                self._first_configured(
+                    config.get("base_url"),
+                    self.get("anthropic.base_url"),
+                    os.getenv("ANTHROPIC_BASE_URL"),
+                    default="https://api.anthropic.com",
+                )
+            )
+            config["model"] = (
+                self._first_configured(
+                    config.get("model"),
+                    self.get("anthropic.model"),
+                    os.getenv("OPENSPEC_MODEL"),
+                    default="claude-3-sonnet-20240229",
+                )
+            )
         elif provider == "openai":
-            if not config.get("api_key"):
-                config["api_key"] = os.getenv("OPENAI_API_KEY")
+            config["api_key"] = self._first_configured(
+                config.get("api_key"),
+                os.getenv("OPENAI_API_KEY"),
+            )
+            config["base_url"] = self._first_configured(
+                config.get("base_url"),
+                os.getenv("OPENAI_BASE_URL"),
+                default="https://api.openai.com/v1",
+            )
+            config["model"] = self._first_configured(
+                config.get("model"),
+                os.getenv("OPENSPEC_MODEL"),
+                default="gpt-5.5-pro",
+            )
         elif provider == "gemini":
-            if not config.get("api_key"):
-                config["api_key"] = os.getenv("GOOGLE_API_KEY")
+            config["api_key"] = self._first_configured(
+                config.get("api_key"),
+                os.getenv("GOOGLE_API_KEY"),
+            )
 
         return config
 

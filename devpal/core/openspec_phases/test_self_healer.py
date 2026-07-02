@@ -19,12 +19,12 @@ class TestSelfHealer:
         project_dir: Path,
         llm_client: LLMClient,
         logger=None,
-        fallback_model: str = "claude-opus-4-7",
+        fallback_model: Optional[str] = None,
         context=None,
     ):
         self.project_dir = project_dir
         self.llm_client = llm_client
-        self.fallback_model = fallback_model  # 备用模型
+        self.fallback_model = fallback_model  # 备用模型；未指定时使用当前 provider 配置模型
         self.context = context
         self.logger = logger or print
         self.heal_attempts = 0
@@ -71,23 +71,25 @@ class TestSelfHealer:
             getattr(self.llm_client, "kwargs", {})
             or config.get_provider_config(provider)
         )
+        fallback_model = self.fallback_model or provider_config.get("model")
+        provider_config.pop("model", None)
         client = LLMClient(
             provider=provider,
-            model=self.fallback_model,
+            model=fallback_model,
             fallback_providers=fallback_providers,
             **provider_config,
         )
         if not self.model_switched:
             self.model_switched = True
             self.model_switches += 1
-            self.log(f" [HEAL] Switched to fallback model: {self.fallback_model}")
+            self.log(f" [HEAL] Switched to fallback model: {fallback_model}")
         return client
 
     def heal_compile_error(
         self, test_file: Path, error_output: str, use_fallback: bool = False
     ) -> bool:
         self.heal_attempts += 1
-        model_label = f" (using {self.fallback_model})" if use_fallback else ""
+        model_label = f" (using {self.fallback_model or 'configured fallback model'})" if use_fallback else ""
         self.log(
             f"  [HEAL] Attempting to fix compile error in {test_file.name} (attempt #{self.heal_attempts}){model_label}"
         )
@@ -163,7 +165,7 @@ class TestSelfHealer:
         use_fallback: bool = False,
     ) -> bool:
         self.heal_attempts += 1
-        model_label = f" (using {self.fallback_model})" if use_fallback else ""
+        model_label = f" (using {self.fallback_model or 'configured fallback model'})" if use_fallback else ""
         self.log(
             f" [HEAL] Attempting to fix test failures in {test_file.name} ({passed}/{total} passed, attempt #{self.heal_attempts}){model_label}"
         )

@@ -1,18 +1,38 @@
 # DevPal Agent 配置文件示例
 # 复制此文件为 config.yaml 并填写实际值
 
-# Anthropic API 配置
-anthropic:
-  auth_token: "your-api-key-here"
-  base_url: "https://api.anthropic.com"  # 默认地址，可修改为代理地址
-  model: "claude-3-sonnet-20240229"      # 使用的模型
+# =========================
+# LLM Provider 配置（多 Provider 支持）
+# =========================
+llm:
+  # 默认 Provider（openai / anthropic / gemini）
+  default_provider: openai
+
+  # Fallback Provider 列表（主 Provider 失败时的备用顺序）
+  fallback_providers: []
+
+  # OpenAI GPT 配置
+  openai:
+    api_key: ""  # 建议设置环境变量 OPENAI_API_KEY，或在本地 config.yaml 填写
+    base_url: "https://api.openai.com/v1"
+    model: "gpt-5.5-pro"
+    enable_caching: false
+    max_tokens: 8192
+
+  # Anthropic Claude 配置（可选 fallback）
+  # anthropic:
+  #   auth_token: ""
+  #   base_url: "https://api.anthropic.com"
+  #   model: "claude-3-5-sonnet-20241022"
+  #   enable_caching: true
+  #   max_tokens: 8192
 
 # Agent 运行配置
 agent:
-  max_iterations: 5                       # 最大工具调用轮数
-  max_tokens: 4096                        # LLM 输出最大 token 数
-  temperature: 0.7                        # 温度参数，0-1
+  max_iterations: 20
+  max_tokens: 8192
+  temperature: 0.7
 
 # 工具配置
 tools:
-  command_timeout: 30                     # 命令执行超时时间（秒）
+  command_timeout: 30

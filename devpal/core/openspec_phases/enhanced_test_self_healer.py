@@ -39,7 +39,7 @@ class EnhancedTestSelfHealer(TestSelfHealer):
         context: "OpenSpecContext",
         artifact_graph: "ArtifactGraph",
         logger=None,
-        fallback_model: str = "claude-opus-4-7",
+        fallback_model: Optional[str] = None,
     ):
         super().__init__(project_dir, llm_client, logger, fallback_model, context=context)
 

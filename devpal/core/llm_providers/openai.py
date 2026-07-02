@@ -16,14 +16,15 @@ except ImportError:
 from .base import BaseLLMProvider, LLMUsage, ToolUseResult
 
 
-DEFAULT_MAX_TOKENS = 4096
+DEFAULT_OPENAI_MODEL = "gpt-5.5-pro"
+DEFAULT_MAX_TOKENS = 8192
 
 
 class OpenAIProvider(BaseLLMProvider):
     """OpenAI GPT Provider"""
 
-    def __init__(self, model: str = "gpt-4-turbo-2024-04-09", **kwargs):
-        super().__init__(model, **kwargs)
+    def __init__(self, model: str = DEFAULT_OPENAI_MODEL, **kwargs):
+        super().__init__(model or DEFAULT_OPENAI_MODEL, **kwargs)
         
         if not _OPENAI_AVAILABLE:
             raise RuntimeError(

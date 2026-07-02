@@ -5,8 +5,8 @@ OpenSpec 完整工作流入口
 使用 OpenSpecWorkflowExecutor 执行完整的 11 阶段流程。
 
 Prerequisites:
-  1. pip install anthropic pyyaml
-  2. Set env ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN)
+  1. pip install openai pyyaml
+  2. Set OPENAI_API_KEY or fill config/config.yaml
   3. A requirements file under requirements/*.md
 """
 
@@ -26,43 +26,70 @@ from devpal.tools.registry import registry as tool_registry
 
 
 # --------------------------------------
-# P2.3: Environment variable config support
+# P2.3: Environment variable fallback support
 # ---------------------------------------------
 
 def _apply_env_overrides() -> None:
-    """Apply environment variable overrides to config.yaml values at runtime."""
-    config_path = ROOT / "config" / "config.yaml"
-    if not config_path.exists():
-        return
+    """Keep config.yaml authoritative and use environment only as a fallback.
+
+    Some SDKs and legacy paths may still inspect process-level environment
+    variables. After missing config values are filled from env, mirror the
+    effective active provider config back into this process environment so stale
+    env vars cannot shadow config.yaml during a workflow run.
+    """
     try:
-        import yaml
-        with open(config_path, encoding="utf-8") as f:
-            config = yaml.safe_load(f) or {}
+        from devpal.config import get_config
 
-        changed = False
-        anthropic = config.setdefault("anthropic", {})
+        instance = get_config()
+        config = instance.config
+        llm = config.setdefault("llm", {})
 
-        for env_key, cfg_key in [
-            ("ANTHROPIC_API_KEY", "api_key"),
-            ("ANTHROPIC_AUTH_TOKEN", "auth_token"),
-            ("OPENSPEC_MODEL", "model"),
-    ]:
-            val = os.environ.get(env_key)
-        if val:
-                anthropic[cfg_key] = val
-                changed = True
+        openai = llm.setdefault("openai", {})
+        if not openai.get("api_key") and os.environ.get("OPENAI_API_KEY"):
+            openai["api_key"] = os.environ["OPENAI_API_KEY"]
+        if not openai.get("base_url") and os.environ.get("OPENAI_BASE_URL"):
+            openai["base_url"] = os.environ["OPENAI_BASE_URL"]
+        if not openai.get("model") and os.environ.get("OPENSPEC_MODEL"):
+            openai["model"] = os.environ["OPENSPEC_MODEL"]
 
-                timeout_val = os.environ.get("OPENSPEC_TIMEOUT")
-        if timeout_val:
+        anthropic = llm.setdefault("anthropic", {})
+        token = os.environ.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")
+        if not anthropic.get("auth_token") and token:
+            anthropic["auth_token"] = token
+        if not anthropic.get("base_url") and os.environ.get("ANTHROPIC_BASE_URL"):
+            anthropic["base_url"] = os.environ["ANTHROPIC_BASE_URL"]
+        if not anthropic.get("model") and os.environ.get("OPENSPEC_MODEL"):
+            anthropic["model"] = os.environ["OPENSPEC_MODEL"]
+
+        timeout_val = os.environ.get("OPENSPEC_TIMEOUT")
+        if timeout_val and not config.get("timeout"):
             try:
-              config["timeout"] = int(timeout_val)
-              changed = True
+                config["timeout"] = int(timeout_val)
             except ValueError:
                 pass
 
-        if changed:
-            with open(config_path, "w", encoding="utf-8") as f:
-                yaml.dump(config, f, allow_unicode=True)
+        provider = instance.llm_default_provider
+        provider_config = instance.get_provider_config(provider)
+        model = provider_config.get("model")
+        if provider == "anthropic":
+            token = provider_config.get("auth_token") or provider_config.get("api_key")
+            base_url = provider_config.get("base_url")
+            if token:
+                os.environ["ANTHROPIC_AUTH_TOKEN"] = str(token)
+                os.environ["ANTHROPIC_API_KEY"] = str(token)
+            if base_url:
+                os.environ["ANTHROPIC_BASE_URL"] = str(base_url)
+            if model:
+                os.environ["OPENSPEC_MODEL"] = str(model)
+        elif provider == "openai":
+            api_key = provider_config.get("api_key")
+            base_url = provider_config.get("base_url")
+            if api_key:
+                os.environ["OPENAI_API_KEY"] = str(api_key)
+            if base_url:
+                os.environ["OPENAI_BASE_URL"] = str(base_url)
+            if model:
+                os.environ["OPENSPEC_MODEL"] = str(model)
     except Exception:
         pass  # non-fatal
 
@@ -78,10 +105,15 @@ def _run_health_check() -> int:
     ok = True
 
     # API key
+    from devpal.config import get_config
+
+    config = get_config()
+    default_provider = config.llm_default_provider
+    provider_config = config.get_provider_config(default_provider)
     has_key = bool(
-        os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        provider_config.get("api_key") or provider_config.get("auth_token")
     )
-    _check("API key configured", has_key)
+    _check(f"{default_provider} API key configured", has_key)
     if not has_key:
         ok = False
 
@@ -94,9 +126,12 @@ def _run_health_check() -> int:
     cl = shutil.which("cl")
     has_compiler = bool(gpp or cl)
     _check("C++ compiler (g++ or cl)", has_compiler, gpp or cl or "not found")
+    if not has_compiler:
+        ok = False
 
     # Python deps
-    for pkg in ["anthropic", "yaml"]:
+    provider_pkg = "openai" if default_provider == "openai" else default_provider
+    for pkg in [provider_pkg, "yaml"]:
         try:
             __import__(pkg)
             _check(f"Python package: {pkg}", True)
@@ -112,7 +147,7 @@ def _run_health_check() -> int:
     if ok:
       print("[OK] All checks passed")
     else:
-        print("[WARN] Some checks failed — see above")
+        print("[WARN] Some checks failed - see above")
     return 0 if ok else 1
 
 
@@ -179,11 +214,13 @@ def main() -> int:
   python run_ai_flow.py --verbose          # 详细输出
   python run_ai_flow.py --debug        # DEBUG 级别日志
 
-环境变量:
-  ANTHROPIC_API_KEY    Anthropic API 密钥
-  ANTHROPIC_AUTH_TOKEN 同上（备用）
-  OPENSPEC_MODEL       覆盖 config.yaml 中的模型名
-  OPENSPEC_TIMEOUT     覆盖全局超时（秒）""",
+环境变量（仅当 config.yaml 缺少对应值时作为兜底）:
+  OPENAI_API_KEY       OpenAI API 密钥
+  OPENAI_BASE_URL      OpenAI API base_url
+  ANTHROPIC_AUTH_TOKEN Anthropic API 密钥
+  ANTHROPIC_BASE_URL   Anthropic API base_url
+  OPENSPEC_MODEL       模型名
+  OPENSPEC_TIMEOUT     全局超时（秒）""",
     )
     parser.add_argument(
         "--requirements", "-r",
@@ -269,9 +306,14 @@ def main() -> int:
     if args.dry_run:
         return _run_dry_run(requirements_file)
 
-    # Warn if no API key
-    if not os.environ.get("ANTHROPIC_AUTH_TOKEN") and not os.environ.get("ANTHROPIC_API_KEY"):
-        print("[WARNING] ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY 未设置")
+    # Warn if no API key for the configured default provider
+    from devpal.config import get_config
+
+    config = get_config()
+    default_provider = config.llm_default_provider
+    provider_config = config.get_provider_config(default_provider)
+    if not (provider_config.get("api_key") or provider_config.get("auth_token")):
+        print(f"[WARNING] {default_provider} API key 未设置")
         print("          请设置环境变量或填充 config/config.yaml 后再运行")
         print()
 

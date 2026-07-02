@@ -17,7 +17,7 @@ class LLMClient:
     
     def __init__(
         self,
-        provider: str = "anthropic",
+        provider: str = "openai",
         model: Optional[str] = None,
         fallback_providers: Optional[List[str]] = None,
         **kwargs
@@ -25,7 +25,7 @@ class LLMClient:
         """Initialize LLM Client
 
         Args:
-            provider: Provider name ("anthropic", "openai", etc.)
+        provider: Provider name ("openai", "anthropic", etc.)
             model: Model name (if None, use provider default)
             fallback_providers: List of fallback provider names
             **kwargs: Provider-specific configuration
@@ -181,7 +181,7 @@ def get_llm_client(
 
     # Create new instance with provided parameters
     return LLMClient(
-        provider=provider or "anthropic",
+        provider=provider or "openai",
         model=model,
         fallback_providers=fallback_providers,
         **kwargs

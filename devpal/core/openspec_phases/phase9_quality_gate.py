@@ -66,6 +66,7 @@ class Phase9QualityGate(PhaseInterface):
 
     def _load_config(self) -> Dict[str, Any]:
         """加载配置"""
+        provider_model = self._default_llm_model()
         default_config = {
             "code_review": {
                 "enabled": True,  # 默认启用代码审查
@@ -82,7 +83,7 @@ class Phase9QualityGate(PhaseInterface):
                     "max_attempts": 3,  # 最大尝试次数
                     "only_critical": True,  # 只修复 Critical 问题
                     "switch_model_after": 2,  # 2次失败后切换模型
-                    "fallback_model": "claude-opus-4-7",
+                    "fallback_model": provider_model,
                     "require_approval": False,  # 是否需要用户确认
                     "create_backup": True,
                     "max_fixes_per_attempt": 10,
@@ -98,6 +99,20 @@ class Phase9QualityGate(PhaseInterface):
         self._validate_config(default_config)
 
         return default_config
+
+    def _default_llm_model(self) -> str:
+        try:
+            from devpal.config import get_config
+
+            config = get_config()
+            provider = config.llm_default_provider
+            provider_config = config.get_provider_config(provider)
+            model = provider_config.get("model")
+            if model:
+                return str(model)
+        except Exception:
+            pass
+        return "gpt-5.5-pro"
 
     def _deep_merge_config(
         self, base: Dict[str, Any], override: Dict[str, Any]
@@ -1383,6 +1398,22 @@ class Phase9QualityGate(PhaseInterface):
     def _get_fix_plan_client(self, use_fallback: bool = False) -> LLMClient:
         """Return the LLM client for a fix-plan attempt."""
         if use_fallback:
+            try:
+                from devpal.config import get_config
+
+                config = get_config()
+                provider = config.llm_default_provider
+                provider_config = dict(config.get_provider_config(provider))
+                fallback_model = self.fallback_model or provider_config.get("model")
+                provider_config.pop("model", None)
+                return self.llm_client_factory(
+                    provider=provider,
+                    model=fallback_model,
+                    fallback_providers=list(config.llm_fallback_providers),
+                    **provider_config,
+                )
+            except TypeError:
+                pass
             try:
                 return self.llm_client_factory(model=self.fallback_model)
             except TypeError:
