@@ -30,10 +30,7 @@ internal static class Program
         {
             var json = await File.ReadAllTextAsync(requestPath, Encoding.UTF8);
             request = JsonSerializer.Deserialize<RunnerRequest>(json, JsonOptions);
-            if (request?.Command?.Argv is null || request.Command.Argv.Count == 0)
-            {
-                throw new InvalidOperationException("command.argv is required");
-            }
+            NormalizeAndValidateRequest(request, requestPath);
         }
         catch (Exception ex)
         {
@@ -41,12 +38,13 @@ internal static class Program
             return 2;
         }
 
-        Directory.CreateDirectory(request.WorkspaceDir ?? Path.GetDirectoryName(requestPath)!);
-        Directory.CreateDirectory(Path.GetDirectoryName(request.ResultPath)!);
+        var validatedRequest = request!;
+        Directory.CreateDirectory(validatedRequest.WorkspaceDir);
+        Directory.CreateDirectory(Path.GetDirectoryName(validatedRequest.ResultPath)!);
 
-        var result = await RunCommandAsync(request);
+        var result = await RunCommandAsync(validatedRequest);
         await File.WriteAllTextAsync(
-            request.ResultPath,
+            validatedRequest.ResultPath,
             JsonSerializer.Serialize(result, JsonOptions),
             Utf8NoBom);
         return result.Success ? 0 : 1;
@@ -57,6 +55,7 @@ internal static class Program
         var command = request.Command!;
         var started = Stopwatch.StartNew();
         using var job = JobObject.TryCreate(request.SandboxId, request.Policy?.MaxProcesses);
+        var jobAssigned = false;
 
         var psi = new ProcessStartInfo
         {
@@ -75,6 +74,7 @@ internal static class Program
             psi.ArgumentList.Add(arg);
         }
 
+        psi.Environment.Clear();
         if (command.Env is not null)
         {
             foreach (var item in command.Env)
@@ -90,7 +90,7 @@ internal static class Program
         try
         {
             process.Start();
-            job?.Assign(process);
+            jobAssigned = job?.Assign(process) ?? false;
 
             if (command.CaptureOutput)
             {
@@ -112,7 +112,13 @@ internal static class Program
                 }
 
                 started.Stop();
-                return RunnerResult.Timeout(request, command, process.Id, started.ElapsedMilliseconds);
+                return RunnerResult.Timeout(
+                    request,
+                    command,
+                    process.Id,
+                    started.ElapsedMilliseconds,
+                    job?.Name,
+                    jobAssigned);
             }
 
             started.Stop();
@@ -132,7 +138,8 @@ internal static class Program
                 DurationMs = started.ElapsedMilliseconds,
                 TimedOut = false,
                 CleanupStatus = "clean",
-                JobObject = job?.Name
+                JobObject = job?.Name,
+                JobAssigned = job is null ? null : jobAssigned
             };
         }
         catch (Exception ex)
@@ -154,8 +161,84 @@ internal static class Program
                 TimedOut = false,
                 CleanupStatus = "best_effort",
                 Error = ex.Message,
-                JobObject = job?.Name
+                JobObject = job?.Name,
+                JobAssigned = job is null ? null : jobAssigned
             };
+        }
+    }
+
+    private static void NormalizeAndValidateRequest(RunnerRequest? request, string requestPath)
+    {
+        if (request is null)
+        {
+            throw new InvalidOperationException("request is required");
+        }
+
+        if (request.Command?.Argv is null || request.Command.Argv.Count == 0)
+        {
+            throw new InvalidOperationException("command.argv is required");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.SandboxId))
+        {
+            throw new InvalidOperationException("sandbox_id is required");
+        }
+
+        var requestDir = Path.GetDirectoryName(requestPath)!;
+        if (string.IsNullOrWhiteSpace(request.SandboxDir))
+        {
+            request.SandboxDir = requestDir;
+        }
+        request.SandboxDir = Path.GetFullPath(request.SandboxDir);
+
+        if (string.IsNullOrWhiteSpace(request.WorkspaceDir))
+        {
+            request.WorkspaceDir = Path.Combine(request.SandboxDir, "workspace");
+        }
+        request.WorkspaceDir = Path.GetFullPath(request.WorkspaceDir);
+        EnsureWithin(request.WorkspaceDir, request.SandboxDir, "workspace_dir");
+
+        if (string.IsNullOrWhiteSpace(request.ResultPath))
+        {
+            throw new InvalidOperationException("result_path is required");
+        }
+        request.ResultPath = Path.GetFullPath(request.ResultPath);
+        EnsureWithin(request.ResultPath, request.SandboxDir, "result_path");
+
+        if (!string.IsNullOrWhiteSpace(request.ProjectDir))
+        {
+            request.ProjectDir = Path.GetFullPath(request.ProjectDir);
+            if (!string.IsNullOrWhiteSpace(request.Command.Cwd))
+            {
+                request.Command.Cwd = Path.GetFullPath(request.Command.Cwd);
+                EnsureWithin(request.Command.Cwd, request.ProjectDir, "command.cwd");
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(request.Command.Cwd))
+        {
+            request.Command.Cwd = Path.GetFullPath(request.Command.Cwd);
+        }
+
+        if (request.Command.TimeoutSeconds <= 0)
+        {
+            request.Command.TimeoutSeconds = 300;
+        }
+    }
+
+    private static void EnsureWithin(string child, string parent, string fieldName)
+    {
+        var relative = Path.GetRelativePath(parent, child);
+        if (relative == ".")
+        {
+            return;
+        }
+        if (
+            relative == ".." ||
+            relative.StartsWith(".." + Path.DirectorySeparatorChar) ||
+            relative.StartsWith(".." + Path.AltDirectorySeparatorChar) ||
+            Path.IsPathRooted(relative))
+        {
+            throw new InvalidOperationException($"{fieldName} escapes sandbox boundary");
         }
     }
 }
@@ -165,6 +248,8 @@ internal sealed class RunnerRequest
     public string SchemaVersion { get; set; } = "";
     public string SandboxId { get; set; } = "";
     public string ExecutionId { get; set; } = "";
+    public string ProjectDir { get; set; } = "";
+    public string SandboxDir { get; set; } = "";
     public string WorkspaceDir { get; set; } = "";
     public string ResultPath { get; set; } = "";
     public CommandRequest? Command { get; set; }
@@ -203,12 +288,15 @@ internal sealed class RunnerResult
     public string CleanupStatus { get; set; } = "";
     public string? Error { get; set; }
     public string? JobObject { get; set; }
+    public bool? JobAssigned { get; set; }
 
     public static RunnerResult Timeout(
         RunnerRequest request,
         CommandRequest command,
         int pid,
-        long durationMs)
+        long durationMs,
+        string? jobObject,
+        bool? jobAssigned)
     {
         return new RunnerResult
         {
@@ -226,7 +314,9 @@ internal sealed class RunnerResult
             DurationMs = durationMs,
             TimedOut = true,
             CleanupStatus = "killed",
-            Error = $"timeout after {command.TimeoutSeconds}s"
+            Error = $"timeout after {command.TimeoutSeconds}s",
+            JobObject = jobObject,
+            JobAssigned = jobAssigned
         };
     }
 }
@@ -284,12 +374,13 @@ internal sealed class JobObject : IDisposable
         return new JobObject(handle, name);
     }
 
-    public void Assign(Process process)
+    public bool Assign(Process process)
     {
         if (_handle != IntPtr.Zero)
         {
-            AssignProcessToJobObject(_handle, process.Handle);
+            return AssignProcessToJobObject(_handle, process.Handle);
         }
+        return false;
     }
 
     public void Dispose()

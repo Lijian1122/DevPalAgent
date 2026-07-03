@@ -7,6 +7,20 @@ import os
 from typing import Tuple, Dict, Optional
 
 
+def _path_contains_executable(path_env: str, executable_name: str) -> bool:
+    for path_dir in path_env.split(os.pathsep):
+        if os.path.exists(os.path.join(path_dir, executable_name)):
+            return True
+    return False
+
+
+def _select_path_with_executable(path_candidates, executable_name: str) -> str:
+    for path_env in path_candidates:
+        if _path_contains_executable(path_env, executable_name):
+            return path_env
+    return path_candidates[-1] if path_candidates else ""
+
+
 def find_visual_studio_compiler() -> Tuple[bool, str, Dict[str, str]]:
     """规范化查找 Visual Studio MSVC 编译器
 
@@ -87,11 +101,17 @@ def find_visual_studio_compiler() -> Tuple[bool, str, Dict[str, str]]:
             return False, f"vcvarsall.bat 执行失败: {result.stderr[:200]}", {}
 
         # 解析环境变量
-        new_env = dict(os.environ)
+        new_env = {key.upper(): value for key, value in os.environ.items()}
+        path_candidates = []
         for line in result.stdout.splitlines():
             if '=' in line:
                 key, value = line.split('=', 1)
-                new_env[key.upper()] = value  # Windows 环境变量不区分大小写
+                key_upper = key.upper()
+                if key_upper == "PATH":
+                    path_candidates.append(value)
+                new_env[key_upper] = value  # Windows 环境变量不区分大小写
+        if path_candidates:
+            new_env["PATH"] = _select_path_with_executable(path_candidates, "cl.exe")
 
         # 验证 cl.exe 是否在 PATH 中
         path_env = new_env.get('PATH', '')

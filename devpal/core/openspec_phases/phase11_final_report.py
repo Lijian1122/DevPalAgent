@@ -513,10 +513,12 @@ class Phase11FinalReport(PhaseInterface):
         sandbox_backend = getattr(self.context, "sandbox_backend", "policy")
         if not rows and not getattr(self.context, "enable_multi_agent", False) and sandbox_backend == "policy":
             return []
+        sandbox_execution_enabled = bool(rows)
         lines = [
             "### Multi-Agent Sandbox Summary",
             "",
-            "- Enabled: {}".format(bool(getattr(self.context, "enable_multi_agent", False))),
+            "- Multi-agent enabled: {}".format(bool(getattr(self.context, "enable_multi_agent", False))),
+            "- Sandbox execution enabled: {}".format(sandbox_execution_enabled),
             "- Sandbox level: {}".format(getattr(self.context, "sandbox_level", "staging")),
             "- Agent backend: {}".format(getattr(self.context, "agent_backend", "local")),
             "- Sandbox backend: {}".format(sandbox_backend),

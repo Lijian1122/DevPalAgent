@@ -102,6 +102,10 @@ Output rules:
 - Use only C++17 STL unless the design mandates otherwise
 - src/main.cpp must include a working main() function that exercises the primary workflow
 - For every non-trivial class, emit at least one tests/test_<class>.cpp that includes "test_base.h"
+- Test files may ONLY use macros defined in tests/test_base.h: ASSERT_TRUE, ASSERT_EQ, TEST_MAIN_BEGIN, RUN_TEST, TEST_MAIN_END.
+- Do NOT use ASSERT_THROW, ASSERT_NE, EXPECT_*, GoogleTest, Catch2, or any external test framework macro.
+- To test exceptions, write explicit try/catch code and assert a boolean with ASSERT_TRUE.
+- Tests must only call public methods that are declared in the generated header for the class.
 - Do NOT regenerate CMakeLists.txt, README.md, include/<project>.h, or tests/test_base.h - they already exist
 
 C++ Standard Library Headers (CRITICAL):

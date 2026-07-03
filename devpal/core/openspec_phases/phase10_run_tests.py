@@ -611,6 +611,8 @@ class Phase10RunTests(PhaseInterface):
                 env=env,
                 legacy_cwd=project_dir,
                 agent_cwd=project_dir,
+                encoding="utf-8",
+                errors="replace",
             )
 
             output = (result.stdout or "") + (
@@ -981,7 +983,7 @@ class Phase10RunTests(PhaseInterface):
 
         # CMake 生成的可执行文件位置
         if compiler == "msvc":
-            exe_path = build_dir / "Release" / exe_name
+            exe_path = build_dir / exe_name
         else:
             exe_path = build_dir / exe_name
 
@@ -1003,13 +1005,11 @@ class Phase10RunTests(PhaseInterface):
                 self.log("  [CMAKE] Configuring...")
 
                 if compiler == "msvc":
-                    # MSVC: 使用 Visual Studio generator
+                    # MSVC: use vcvars-provided environment with a version-neutral generator.
                     configure_cmd = [
                         "cmake",
                         "-G",
-                        "Visual Studio 16 2019",  # 或 "Visual Studio 16 2019"
-                        "-A",
-                        "x64",
+                        "NMake Makefiles",
                         "-S",
                         str(project_dir),
                         "-B",
@@ -1033,6 +1033,8 @@ class Phase10RunTests(PhaseInterface):
                     timeout_seconds=120,
                     env=compiler_env,
                     agent_cwd=project_dir,
+                    encoding="utf-8",
+                    errors="replace",
                 )
 
                 output_lines.append("=== CMake Configure ===")
@@ -1061,11 +1063,16 @@ class Phase10RunTests(PhaseInterface):
                 timeout_seconds=120,
                 env=compiler_env,
                 agent_cwd=project_dir,
+                encoding="utf-8",
+                errors="replace",
             )
 
             output_lines.append("=== CMake Build ===")
             output_lines.append(result.stdout)
             output_lines.append(result.stderr)
+
+            if result.returncode != 0:
+                return None, False, "\n".join(output_lines)
 
             if exe_path.exists():
                 return exe_path, True, "\n".join(output_lines)
@@ -1258,9 +1265,7 @@ class Phase10RunTests(PhaseInterface):
                 configure_cmd = [
                     "cmake",
                     "-G",
-                    "Visual Studio 16 2019",
-                    "-A",
-                    "x64",
+                    "NMake Makefiles",
                     "-S",
                     str(project_dir),
                     "-B",
@@ -1283,6 +1288,8 @@ class Phase10RunTests(PhaseInterface):
                 timeout_seconds=120,
                 env=compiler_env,
                 agent_cwd=project_dir,
+                encoding="utf-8",
+                errors="replace",
             )
 
             output_lines.append("=== CMake Configure ===")
@@ -1310,6 +1317,8 @@ class Phase10RunTests(PhaseInterface):
                 timeout_seconds=120,
                 env=compiler_env,
                 agent_cwd=project_dir,
+                encoding="utf-8",
+                errors="replace",
             )
 
             output_lines.append("=== CMake Build ===")

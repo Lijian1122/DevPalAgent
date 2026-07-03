@@ -80,6 +80,8 @@ def test_phase11_report_includes_test_documentation_and_sandbox_summary(tmp_path
     assert "test_doc.md" in report
     assert "failed to generate one doc" in report
     assert "Multi-Agent Sandbox Summary" in report
+    assert "Multi-agent enabled: True" in report
+    assert "Sandbox execution enabled: True" in report
     assert "phase10-test-abc" in report
     assert ".spec/sandboxes/phase10-test-abc/manifest.json" in report
     assert ".spec/sandboxes/phase10-test-abc/manifest.v2.json" in report

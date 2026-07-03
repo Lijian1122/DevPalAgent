@@ -26,6 +26,18 @@ from ..models import SandboxArtifact, SandboxPolicy, SandboxRequest
 
 RUNNER_REQUEST_SCHEMA_VERSION = "devpal.sandbox.runner_request.v1"
 RUNNER_RESULT_SCHEMA_VERSION = "devpal.sandbox.runner_result.v1"
+_SENSITIVE_ENV_TOKENS = (
+    "API",
+    "AUTH",
+    "CLAUDE",
+    "CODEX",
+    "CREDENTIAL",
+    "KEY",
+    "OPENAI",
+    "PASSWORD",
+    "SECRET",
+    "TOKEN",
+)
 
 
 def _now_utc() -> str:
@@ -52,6 +64,25 @@ def _default_runner_path() -> Path:
         / "net8.0"
         / "devpal-sandbox-runner.exe"
     )
+
+
+def _sanitize_runner_env(env: Optional[Dict[str, str]]) -> Dict[str, str]:
+    """Remove secrets before writing env into runner_request.json."""
+    sanitized: Dict[str, str] = {}
+    for key, value in dict(env or {}).items():
+        key_text = str(key)
+        upper = key_text.upper()
+        if any(token in upper for token in _SENSITIVE_ENV_TOKENS):
+            continue
+        if value is None:
+            continue
+        sanitized[key_text] = str(value)
+    return sanitized
+
+
+def _build_runner_env(env: Optional[Dict[str, str]]) -> Dict[str, str]:
+    source = os.environ if env is None else env
+    return _sanitize_runner_env(dict(source))
 
 
 class WindowsProcessSandboxSession:
@@ -156,7 +187,7 @@ class WindowsProcessSandboxSession:
                 "argv": list(command.argv),
                 "cwd": _path_to_string(command.cwd),
                 "timeout_seconds": int(command.timeout_seconds),
-                "env": dict(command.env or {}),
+                "env": _build_runner_env(command.env),
                 "capture_output": bool(command.capture_output),
                 "text": bool(command.text),
                 "encoding": command.encoding or "utf-8",

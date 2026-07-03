@@ -269,6 +269,83 @@ def test_phase10_compile_test_multi_agent_preserves_cmake_sections(tmp_path, mon
     assert "=== CMake Build ===" in output
 
 
+def test_phase10_compile_test_msvc_uses_version_neutral_nmake_generator(
+    tmp_path, monkeypatch
+):
+    project_dir, context = _make_cpp_context(tmp_path)
+    test_file = project_dir / "tests" / "test_sample.cpp"
+    test_file.write_text("int main() { return 0; }", encoding="utf-8")
+    build_dir = project_dir / "build_test"
+    build_dir.mkdir()
+    exe = build_dir / "test_sample.exe"
+    phase = Phase10RunTests(context, _DummyRegistry())
+    captured_argv = []
+
+    def fake_command(**kwargs):
+        captured_argv.append(kwargs["argv"])
+        if str(kwargs.get("task_id", "")).endswith(":build"):
+            exe.write_text("binary", encoding="utf-8")
+        return type("CommandResultLike", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(phase, "_run_phase10_command", fake_command)
+
+    exe_path, success, _ = phase._compile_test(
+        test_file,
+        project_dir,
+        build_dir,
+        compiler="msvc",
+        force_rebuild=True,
+    )
+
+    configure_argv = captured_argv[0]
+    assert success is True
+    assert exe_path == exe
+    assert configure_argv[:3] == ["cmake", "-G", "NMake Makefiles"]
+    assert "-A" not in configure_argv
+
+
+def test_phase10_compile_test_fails_when_build_command_fails_even_if_stale_exe_exists(
+    tmp_path, monkeypatch
+):
+    project_dir, context = _make_cpp_context(tmp_path)
+    test_file = project_dir / "tests" / "test_sample.cpp"
+    test_file.write_text("int main() { return 0; }", encoding="utf-8")
+    build_dir = project_dir / "build_test"
+    build_dir.mkdir()
+    (build_dir / "CMakeCache.txt").write_text("cached", encoding="utf-8")
+    exe = build_dir / "test_sample.exe"
+    exe.write_text("stale binary", encoding="utf-8")
+    phase = Phase10RunTests(context, _DummyRegistry())
+
+    def fake_command(**kwargs):
+        if str(kwargs.get("task_id", "")).endswith(":configure"):
+            return type(
+                "CommandResultLike",
+                (),
+                {"returncode": 0, "stdout": "configured", "stderr": ""},
+            )()
+        return type(
+            "CommandResultLike",
+            (),
+            {"returncode": 1, "stdout": "build failed", "stderr": "compiler error"},
+        )()
+
+    monkeypatch.setattr(phase, "_run_phase10_command", fake_command)
+
+    exe_path, success, output = phase._compile_test(
+        test_file,
+        project_dir,
+        build_dir,
+        compiler="g++",
+        force_rebuild=True,
+    )
+
+    assert success is False
+    assert exe_path is None
+    assert "build failed" in output
+    assert "compiler error" in output
+
+
 def test_phase10_run_test_multi_agent_parses_results(tmp_path, monkeypatch):
     project_dir, context = _make_cpp_context(tmp_path)
     context.enable_multi_agent = True

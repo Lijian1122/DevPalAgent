@@ -3,6 +3,7 @@
 import json
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -63,7 +64,18 @@ def test_windows_process_backend_builds_runner_request(tmp_path):
         runner_path=sys.executable,
         runner_args=[str(_fake_runner(tmp_path))],
     ).create_session(request)
-    command = CommandSpec(argv=["python", "-m", "pytest"], cwd=tmp_path, timeout_seconds=10)
+    command = CommandSpec(
+        argv=["python", "-m", "pytest"],
+        cwd=tmp_path,
+        timeout_seconds=10,
+        env={
+            "PATH": "safe-path",
+            "INCLUDE": "safe-include",
+            "ANTHROPIC_AUTH_TOKEN": "secret-token",
+            "OPENAI_API_KEY": "secret-key",
+            "CUSTOM_PASSWORD": "secret-password",
+        },
+    )
 
     request_path = session.write_runner_request(command)
     data = json.loads(request_path.read_text(encoding="utf-8"))
@@ -72,9 +84,44 @@ def test_windows_process_backend_builds_runner_request(tmp_path):
     assert data["backend"] == "windows_process"
     assert data["isolation_level"] == "process"
     assert data["execution_id"] == "exec-windows-process"
+    assert Path(data["project_dir"]) == tmp_path
+    assert Path(data["sandbox_dir"]) == session.sandbox_dir
     assert data["command"]["argv"] == ["python", "-m", "pytest"]
+    assert data["command"]["env"]["PATH"] == "safe-path"
+    assert data["command"]["env"]["INCLUDE"] == "safe-include"
+    assert "ANTHROPIC_AUTH_TOKEN" not in data["command"]["env"]
+    assert "OPENAI_API_KEY" not in data["command"]["env"]
+    assert "CUSTOM_PASSWORD" not in data["command"]["env"]
     assert data["policy"]["backend"] == "windows_process"
     assert data["policy"]["isolation_level"] == "process"
+
+
+def test_windows_process_backend_sanitizes_current_env_when_command_env_absent(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("DEVPAL_SAFE_ENV", "safe-value")
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-key")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "secret-token")
+    request = SandboxRequest.from_legacy(
+        tmp_path,
+        task_id="phase10:test",
+        phase_number=10,
+        role="test",
+        sandbox_level="strict",
+        allowed_paths=["tests/test_example.py"],
+    )
+    session = WindowsProcessSandboxBackend(
+        runner_path=sys.executable,
+        runner_args=[str(_fake_runner(tmp_path))],
+    ).create_session(request)
+    command = CommandSpec(argv=["python", "-m", "pytest"], cwd=tmp_path, timeout_seconds=10)
+
+    request_path = session.write_runner_request(command)
+    data = json.loads(request_path.read_text(encoding="utf-8"))
+
+    assert data["command"]["env"]["DEVPAL_SAFE_ENV"] == "safe-value"
+    assert "OPENAI_API_KEY" not in data["command"]["env"]
+    assert "ANTHROPIC_AUTH_TOKEN" not in data["command"]["env"]
 
 
 def test_windows_process_backend_executes_fake_runner_and_writes_manifest_v2(tmp_path):
