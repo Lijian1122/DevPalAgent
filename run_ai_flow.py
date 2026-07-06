@@ -157,6 +157,16 @@ def _check(label: str, passed: bool, detail: str = "") -> None:
     print(f"  {status} {label}{suffix}")
 
 
+def _config_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
 # ---------------------------------------------------
 # P2.1: Dry-run
 # ------------------------------------------------
@@ -212,7 +222,9 @@ def main() -> int:
   python run_ai_flow.py --no-abort         # 关键阶段失败时不终止
   python run_ai_flow.py --resume           # 从 checkpoint 恢复
   python run_ai_flow.py --verbose          # 详细输出
-  python run_ai_flow.py --debug        # DEBUG 级别日志
+  python run_ai_flow.py --debug            # DEBUG 级别日志
+  python run_ai_flow.py --sandbox-backend windows_process --phase10-workspace-execution
+  python run_ai_flow.py --sandbox-backend windows_process --sandbox-low-integrity --sandbox-harden-workspace-acl
 
 环境变量（仅当 config.yaml 缺少对应值时作为兜底）:
   OPENAI_API_KEY       OpenAI API 密钥
@@ -245,10 +257,42 @@ def main() -> int:
                      help="启用多Agent模式 (ReviewAgent, CodegenAgent, TestAgent)")
     parser.add_argument("--agent-pool-size", type=int,
                         help="Agent 池大小 (默认: 等于 max-concurrency)")
-    parser.add_argument("--sandbox-level", choices=["staging", "strict", "production"], default="staging",
-                  help="沙箱隔离级别 (默认: staging)")
-    parser.add_argument("--sandbox-backend", choices=["policy", "windows_process"], default="policy",
-                  help="Phase 10 沙箱执行后端 (默认: policy)")
+    parser.add_argument("--sandbox-level", choices=["staging", "strict", "production"],
+                  help="沙箱隔离级别 (默认: config.sandbox.level 或 staging)")
+    parser.add_argument("--sandbox-backend", choices=["policy", "windows_process", "windows_container"],
+                  help="Phase 10 沙箱执行后端 (默认: config.sandbox.backend 或 policy)")
+    parser.add_argument("--phase10-workspace-execution", dest="phase10_workspace_execution",
+                  action="store_true", default=None,
+                  help="Phase 10 在拷贝后的 sandbox workspace 中执行 C++ 编译/测试")
+    parser.add_argument("--no-phase10-workspace-execution", dest="phase10_workspace_execution",
+                  action="store_false",
+                  help="禁用 config.sandbox.phase10_workspace_execution")
+    parser.add_argument("--sandbox-low-integrity", dest="sandbox_low_integrity",
+                  action="store_true", default=None,
+                  help="Windows runner 尝试以 low integrity token 启动子进程")
+    parser.add_argument("--no-sandbox-low-integrity", dest="sandbox_low_integrity",
+                  action="store_false",
+                  help="禁用 config.sandbox.low_integrity")
+    parser.add_argument("--sandbox-harden-workspace-acl", dest="sandbox_harden_workspace_acl",
+                  action="store_true", default=None,
+                  help="Windows runner 尝试给 sandbox workspace 设置低完整性可写标签")
+    parser.add_argument("--no-sandbox-harden-workspace-acl", dest="sandbox_harden_workspace_acl",
+                  action="store_false",
+                  help="禁用 config.sandbox.harden_workspace_acl")
+    parser.add_argument("--sandbox-network-deny", dest="sandbox_network_deny",
+                  action="store_true", default=None,
+                  help="Windows runner 尝试创建临时 Windows Firewall 出站阻断规则")
+    parser.add_argument("--no-sandbox-network-deny", dest="sandbox_network_deny",
+                  action="store_false",
+                  help="禁用 config.sandbox.network_deny")
+    parser.add_argument("--sandbox-restricted-token", dest="sandbox_restricted_token",
+                  action="store_true", default=None,
+                  help="Windows runner 尝试使用 restricted token 移除高危 SID/权限")
+    parser.add_argument("--no-sandbox-restricted-token", dest="sandbox_restricted_token",
+                  action="store_false",
+                  help="禁用 config.sandbox.restricted_token")
+    parser.add_argument("--sandbox-max-memory-mb", type=int,
+                  help="Windows Job Object 最大内存限制 MB（默认: config.sandbox.max_memory_mb 或不限制）")
     parser.add_argument("--resume", action="store_true",
                  help="从 .spec/checkpoint.json 恢复执行")
     parser.add_argument("--verbose", "-v", action="store_true",
@@ -310,6 +354,50 @@ def main() -> int:
     from devpal.config import get_config
 
     config = get_config()
+    sandbox_config = config.get("sandbox", {}) or {}
+    sandbox_backend = args.sandbox_backend or sandbox_config.get("backend", "policy")
+    sandbox_level = args.sandbox_level or sandbox_config.get("level", "staging")
+    phase10_workspace_execution = args.phase10_workspace_execution
+    if phase10_workspace_execution is None:
+        phase10_workspace_execution = _config_bool(
+            sandbox_config.get("phase10_workspace_execution"),
+            default=False,
+        )
+    sandbox_low_integrity = args.sandbox_low_integrity
+    if sandbox_low_integrity is None:
+        sandbox_low_integrity = _config_bool(
+            sandbox_config.get("low_integrity"),
+            default=False,
+        )
+    sandbox_harden_workspace_acl = args.sandbox_harden_workspace_acl
+    if sandbox_harden_workspace_acl is None:
+        sandbox_harden_workspace_acl = _config_bool(
+            sandbox_config.get("harden_workspace_acl"),
+            default=False,
+        )
+    sandbox_network_deny = args.sandbox_network_deny
+    if sandbox_network_deny is None:
+        sandbox_network_deny = _config_bool(
+            sandbox_config.get("network_deny"),
+            default=False,
+        )
+    sandbox_restricted_token = args.sandbox_restricted_token
+    if sandbox_restricted_token is None:
+        sandbox_restricted_token = _config_bool(
+            sandbox_config.get("restricted_token"),
+            default=False,
+        )
+    sandbox_max_memory_mb = args.sandbox_max_memory_mb
+    if sandbox_max_memory_mb is None and sandbox_config.get("max_memory_mb") is not None:
+        sandbox_max_memory_mb = int(sandbox_config.get("max_memory_mb"))
+    sandbox_backend_options = dict(sandbox_config.get("backend_options", {}) or {})
+    if sandbox_backend not in {"policy", "windows_process", "windows_container"}:
+        print(f"[ERROR] config.sandbox.backend 不支持: {sandbox_backend}")
+        return 1
+    if sandbox_level not in {"staging", "strict", "production"}:
+        print(f"[ERROR] config.sandbox.level 不支持: {sandbox_level}")
+        return 1
+
     default_provider = config.llm_default_provider
     provider_config = config.get_provider_config(default_provider)
     if not (provider_config.get("api_key") or provider_config.get("auth_token")):
@@ -344,15 +432,22 @@ def main() -> int:
             vector_retrieval_enabled=args.vector_retrieval,
             vector_persist_dir=args.vector_persist_dir,
             vector_top_k=args.vector_top_k,
-         vector_prefer_chroma=not args.no_vector_chroma,
+            vector_prefer_chroma=not args.no_vector_chroma,
             max_concurrency=args.max_concurrency,
             enable_multi_agent=args.enable_multi_agent,
-         sandbox_level=args.sandbox_level,
-            sandbox_backend=args.sandbox_backend,
+            sandbox_level=sandbox_level,
+            sandbox_backend=sandbox_backend,
+            sandbox_backend_options=sandbox_backend_options,
+            phase10_workspace_execution=phase10_workspace_execution,
+            sandbox_low_integrity=sandbox_low_integrity,
+            sandbox_harden_workspace_acl=sandbox_harden_workspace_acl,
+            sandbox_network_deny=sandbox_network_deny,
+            sandbox_restricted_token=sandbox_restricted_token,
+            sandbox_max_memory_mb=sandbox_max_memory_mb,
             agent_pool_size=args.agent_pool_size,
             verbose=args.verbose,
             debug=args.debug,
-       run_mode=run_mode,
+            run_mode=run_mode,
             change_id=change_id,
         ),
     )

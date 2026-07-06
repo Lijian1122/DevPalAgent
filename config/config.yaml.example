@@ -36,3 +36,22 @@ agent:
 # 工具配置
 tools:
   command_timeout: 30
+
+# Phase 10 沙箱执行配置
+# CLI 参数优先级高于这里的默认值。
+sandbox:
+  # policy: 只使用 Python 侧 policy 校验与本地命令执行
+  # windows_process: Phase 10 命令交给 Windows C# runner 执行并生成审计资产
+  backend: "policy"
+  level: "staging"
+  # 开启后，C++ Phase 10 会先 copy-in 到 .spec/sandboxes/phase10-workspace-execution/workspace
+  # 再在该 workspace 内执行 CMake build/test，避免直接污染项目根目录。
+  phase10_workspace_execution: false
+  # Windows process backend 可选安全增强。默认关闭，避免在无权限环境中破坏现有流程。
+  low_integrity: false
+  harden_workspace_acl: false
+  network_deny: false
+  restricted_token: false
+  # Windows Job Object 最大内存限制；null/空表示不限制。
+  max_memory_mb:
+  backend_options: {}

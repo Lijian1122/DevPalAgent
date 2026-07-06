@@ -35,6 +35,7 @@ def test_phase11_report_includes_test_documentation_and_sandbox_summary(tmp_path
     manifest_v2 = project / ".spec" / "sandboxes" / "phase10-test-abc" / "manifest.v2.json"
     runner_request = project / ".spec" / "sandboxes" / "phase10-test-abc" / "runner_request.json"
     runner_result = project / ".spec" / "sandboxes" / "phase10-test-abc" / "runner_result.json"
+    copy_out_manifest = project / ".spec" / "sandboxes" / "phase10-workspace-execution" / "copy_out_manifest.json"
     context.test_doc_summary = {
         "phase": 5,
         "test_count": 2,
@@ -66,9 +67,48 @@ def test_phase11_report_includes_test_documentation_and_sandbox_summary(tmp_path
                         "runner_result_path": str(runner_result),
                         "cleanup_status": "clean",
                         "timed_out": False,
+                        "runner_result": {
+                            "schema_version": "devpal.sandbox.runner_result.v1",
+                            "sandbox_id": "phase10-test-abc",
+                            "execution_id": "phase10-test-abc-e1",
+                            "status": "completed",
+                            "success": True,
+                            "argv": ["python", "-m", "pytest"],
+                            "cwd": str(project),
+                            "exit_code": 0,
+                            "stdout": "",
+                            "stderr": "",
+                            "duration_ms": 12,
+                            "timed_out": False,
+                            "cleanup_status": "clean",
+                            "error_code": "",
+                            "job_assigned": True,
+                            "job_memory_limit_mb": 128,
+                            "isolation": {
+                                "low_integrity_requested": True,
+                                "low_integrity_applied": True,
+                                "workspace_acl_requested": True,
+                                "workspace_acl_hardened": False,
+                                "workspace_acl_path": str(project),
+                                "workspace_acl_error": "Access is denied.",
+                                "network_deny_requested": False,
+                                "network_deny_applied": False,
+                                "restricted_token_requested": True,
+                                "restricted_token_applied": True,
+                                "process_launcher": "low_integrity",
+                            },
+                        },
                     },
                 }
             ],
+            "copy_out": {
+                "manifest_path": str(copy_out_manifest),
+                "status": "copy_out_pending",
+                "artifact_count": 2,
+                "total_bytes": 42,
+                "requires_manual_apply": True,
+                "applied": False,
+            },
         }
     }
 
@@ -89,9 +129,23 @@ def test_phase11_report_includes_test_documentation_and_sandbox_summary(tmp_path
     assert "windows_process" in report
     assert "process" in report
     assert "clean" in report
+    assert "Sandbox Isolation Details" in report
+    assert "Restricted Token" in report
+    assert "Memory MB" in report
+    assert "`128`" in report
+    assert "Sandbox Copy-Out Gate" in report
+    assert "copy_out_pending" in report
+    assert "copy_out_manifest.json" in report
+    assert "`applied`" in report
+    assert "`failed`" in report
+    assert "`off`" in report
+    assert "`.`" in report
+    assert "`low_integrity`" in report
+    assert "`completed`" in report
     assert "Fallback Events" in report
     assert "phase4.serial_tool_loop" in report
     assert result.data["sandbox_task_count"] == 1
+    assert result.data["sandbox_copy_out_artifacts"] == 2
     assert result.data["sandbox_backend"] == "windows_process"
     assert result.data["agent_backend"] == "local"
 

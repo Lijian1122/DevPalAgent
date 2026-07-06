@@ -142,6 +142,35 @@ def test_executor_passes_multi_agent_options_to_phase_context(tmp_path):
     assert scheduler.context.agent_pool_size == 4
 
 
+def test_executor_maps_phase10_workspace_execution_to_backend_options(tmp_path):
+    req_file = tmp_path / "requirements.md"
+    req_file.write_text("C++ login requirement", encoding="utf-8")
+
+    executor = OpenSpecWorkflowExecutor(_DummyRegistry())
+    scheduler = executor.create_scheduler(
+        str(req_file),
+        OpenSpecRunOptions(
+            sandbox_backend="windows_process",
+            sandbox_backend_options={"runner_path": "fake-runner.exe"},
+            phase10_workspace_execution=True,
+            sandbox_low_integrity=True,
+            sandbox_harden_workspace_acl=True,
+            sandbox_network_deny=True,
+            sandbox_restricted_token=True,
+            sandbox_max_memory_mb=256,
+        ),
+    )
+
+    assert scheduler.context.sandbox_backend == "windows_process"
+    assert scheduler.context.sandbox_backend_options["runner_path"] == "fake-runner.exe"
+    assert scheduler.context.sandbox_backend_options["phase10_workspace_execution"] is True
+    assert scheduler.context.sandbox_backend_options["low_integrity"] is True
+    assert scheduler.context.sandbox_backend_options["harden_workspace_acl"] is True
+    assert scheduler.context.sandbox_backend_options["network_deny"] is True
+    assert scheduler.context.sandbox_backend_options["restricted_token"] is True
+    assert scheduler.context.sandbox_backend_options["max_memory_mb"] == 256
+
+
 def test_executor_defaults_agent_pool_size_to_max_concurrency(tmp_path):
     req_file = tmp_path / "requirements.md"
     req_file.write_text("C++ login requirement", encoding="utf-8")

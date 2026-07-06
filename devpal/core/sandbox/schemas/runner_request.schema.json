@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://devpal.local/schemas/runner_request.schema.json",
+  "title": "DevPal Sandbox Runner Request",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "sandbox_id",
+    "execution_id",
+    "project_dir",
+    "sandbox_dir",
+    "workspace_dir",
+    "result_path",
+    "command"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "devpal.sandbox.runner_request.v1"
+    },
+    "sandbox_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "execution_id": {
+      "type": "string"
+    },
+    "backend": {
+      "type": "string"
+    },
+    "isolation_level": {
+      "type": "string"
+    },
+    "project_dir": {
+      "type": "string"
+    },
+    "sandbox_dir": {
+      "type": "string"
+    },
+    "workspace_dir": {
+      "type": "string"
+    },
+    "result_path": {
+      "type": "string"
+    },
+    "command": {
+      "type": "object",
+      "required": ["argv", "timeout_seconds"],
+      "properties": {
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "cwd": {
+          "type": ["string", "null"]
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "capture_output": {
+          "type": "boolean"
+        },
+        "text": {
+          "type": "boolean"
+        },
+        "encoding": {
+          "type": "string"
+        },
+        "errors": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "isolation": {
+      "type": "object",
+      "properties": {
+        "low_integrity": {
+          "type": "boolean"
+        },
+        "harden_workspace_acl": {
+          "type": "boolean"
+        },
+        "network_deny": {
+          "type": "boolean"
+        },
+        "restricted_token": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "max_processes": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "max_memory_mb": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "trace": {
+      "type": "object"
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true
+}

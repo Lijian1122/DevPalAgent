@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 
+import json
 from pathlib import Path
 import sys
 import textwrap
 
-from devpal.core.openspec_phases.base import OpenSpecContext
+from devpal.core.openspec_phases.base import OpenSpecContext, PhaseResult
 from devpal.core.openspec_phases.phase10_run_tests import Phase10RunTests
 
 
@@ -27,6 +28,10 @@ def _fake_windows_runner(tmp_path, stdout="fake runner output\n", returncode=0):
             result_path.write_text(
                 json.dumps({{
                     "schema_version": "devpal.sandbox.runner_result.v1",
+                    "sandbox_id": request["sandbox_id"],
+                    "execution_id": request["execution_id"],
+                    "status": "completed" if {returncode} == 0 else "failed",
+                    "success": {returncode} == 0,
                     "argv": request["command"]["argv"],
                     "cwd": request["command"]["cwd"],
                     "exit_code": {returncode},
@@ -124,6 +129,33 @@ def test_phase10_runs_python_tests_with_windows_process_backend(tmp_path):
     assert metadata["isolation_level"] == "process"
     assert metadata["cleanup_status"] == "clean"
     assert Path(metadata["manifest_v2_path"]).exists()
+
+
+def test_phase10_runs_python_tests_with_windows_process_workspace_execution(tmp_path):
+    project_dir, context = _make_python_project(tmp_path)
+    fake_runner = _fake_windows_runner(
+        tmp_path,
+        stdout="tests/test_main.py::test_add PASSED\n",
+    )
+    context.sandbox_backend = "windows_process"
+    context.sandbox_level = "strict"
+    context.sandbox_backend_options = {
+        "phase10_workspace_execution": True,
+        "runner_path": sys.executable,
+        "runner_args": [str(fake_runner)],
+    }
+
+    result = Phase10RunTests(context, _DummyRegistry()).execute()
+
+    assert result.success is True
+    metadata = context.parallel_execution_stats["10"]["results"][0]["metadata"]
+    request = json.loads(Path(metadata["runner_request_path"]).read_text(encoding="utf-8"))
+    workspace_root = Path(context.sandbox_backend_options["phase10_workspace_dir"])
+    assert Path(request["project_dir"]) == workspace_root
+    assert Path(request["command"]["cwd"]) == workspace_root
+    assert (workspace_root / "src" / "main.py").exists()
+    assert (workspace_root / "tests" / "test_main.py").exists()
+    assert request["command"]["env"]["PYTHONPATH"].split(";")[0] == str(workspace_root / "src")
 
 
 def _make_cpp_context(tmp_path):
@@ -237,6 +269,83 @@ def test_phase10_command_can_use_windows_process_backend(tmp_path):
     assert Path(metadata["manifest_v2_path"]).exists()
     assert Path(metadata["runner_request_path"]).exists()
     assert Path(metadata["runner_result_path"]).exists()
+
+
+def test_phase10_workspace_execution_uses_copied_project_root(tmp_path):
+    project_dir, context = _make_cpp_context(tmp_path)
+    (project_dir / "src").mkdir()
+    (project_dir / "include").mkdir()
+    (project_dir / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.14)\n", encoding="utf-8")
+    (project_dir / "src" / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+    (project_dir / "tests" / "test_sample.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+    fake_runner = _fake_windows_runner(tmp_path, stdout="ok\n")
+    context.sandbox_backend = "windows_process"
+    context.sandbox_level = "strict"
+    context.sandbox_backend_options = {
+        "phase10_workspace_execution": True,
+        "runner_path": sys.executable,
+        "runner_args": [str(fake_runner)],
+    }
+    phase = Phase10RunTests(context, _DummyRegistry())
+
+    workspace_context = phase._prepare_phase10_workspace_execution(
+        project_dir,
+        language="cpp",
+    )
+    assert workspace_context is not None
+    workspace_root, workspace_tests_dir, workspace_test_files = workspace_context
+    assert (workspace_root / "CMakeLists.txt").exists()
+    assert (workspace_root / "src" / "main.cpp").exists()
+    assert workspace_tests_dir == workspace_root / "tests"
+    assert [path.name for path in workspace_test_files] == ["test_sample.cpp"]
+    assert Path(context.sandbox_backend_options["execution_project_dir"]) == workspace_root
+
+    result = phase._run_phase10_command(
+        task_id="phase10:workspace:probe",
+        argv=["python", "--version"],
+        timeout_seconds=30,
+        legacy_cwd=workspace_root,
+        agent_cwd=workspace_root,
+    )
+
+    metadata = context.parallel_execution_stats["10"]["results"][0]["metadata"]
+    request_path = Path(metadata["runner_request_path"])
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    assert result.returncode == 0
+    assert Path(request["project_dir"]) == workspace_root
+    assert Path(request["command"]["cwd"]) == workspace_root
+
+
+def test_phase10_workspace_execution_writes_copy_out_manifest(tmp_path):
+    project_dir, context = _make_cpp_context(tmp_path)
+    (project_dir / "src").mkdir()
+    (project_dir / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.14)\n", encoding="utf-8")
+    (project_dir / "src" / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+    (project_dir / "tests" / "test_sample.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+    context.sandbox_backend = "windows_process"
+    context.sandbox_backend_options = {"phase10_workspace_execution": True}
+    phase = Phase10RunTests(context, _DummyRegistry())
+
+    workspace_context = phase._prepare_phase10_workspace_execution(
+        project_dir,
+        language="cpp",
+    )
+    assert workspace_context is not None
+    workspace_root, _workspace_tests_dir, _workspace_test_files = workspace_context
+    artifact = workspace_root / "build" / "result.bin"
+    artifact.parent.mkdir()
+    artifact.write_bytes(b"compiled")
+    context.parallel_execution_stats["10"] = {"results": []}
+
+    result = phase._finalize_phase10_copy_out(PhaseResult.ok("ok"))
+    manifest_path = Path(context.sandbox_backend_options["phase10_copy_out_manifest"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert result.success is True
+    assert manifest["status"] == "copy_out_pending"
+    assert manifest["artifact_count"] == 1
+    assert manifest["artifacts"][0]["target_relpath"] == "build/result.bin"
+    assert context.parallel_execution_stats["10"]["copy_out"]["artifact_count"] == 1
 
 
 def test_phase10_compile_test_multi_agent_preserves_cmake_sections(tmp_path, monkeypatch):

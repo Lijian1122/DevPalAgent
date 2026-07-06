@@ -85,6 +85,10 @@ class Phase11FinalReport(PhaseInterface):
             agent_backend=getattr(self.context, "agent_backend", "local"),
             sandbox_task_count=sandbox_stats["task_count"],
             sandbox_policy_violations=sandbox_stats["policy_violations"],
+            sandbox_copy_out_artifacts=sum(
+                row.get("artifact_count", 0)
+                for row in sandbox_stats.get("copy_out_rows", [])
+            ),
         )
 
     def _generate_final_report(
@@ -443,11 +447,27 @@ class Phase11FinalReport(PhaseInterface):
 
     def _collect_sandbox_stats(self) -> Dict[str, Any]:
         rows = []
+        copy_out_rows = []
         violations = 0
         for phase_num, summary in sorted(
             dict(getattr(self.context, "parallel_execution_stats", {}) or {}).items(),
             key=lambda item: float(item[0]),
         ):
+            copy_out = summary.get("copy_out") if isinstance(summary, dict) else None
+            if isinstance(copy_out, dict):
+                copy_out_rows.append(
+                    {
+                        "phase": phase_num,
+                        "manifest_path": copy_out.get("manifest_path", ""),
+                        "status": copy_out.get("status", ""),
+                        "artifact_count": int(copy_out.get("artifact_count", 0) or 0),
+                        "total_bytes": int(copy_out.get("total_bytes", 0) or 0),
+                        "requires_manual_apply": bool(
+                            copy_out.get("requires_manual_apply", True)
+                        ),
+                        "applied": bool(copy_out.get("applied", False)),
+                    }
+                )
             for result in summary.get("results", []) or []:
                 if not isinstance(result, dict):
                     continue
@@ -464,6 +484,12 @@ class Phase11FinalReport(PhaseInterface):
                 manifest_v2_path = metadata.get("manifest_v2_path")
                 runner_request_path = metadata.get("runner_request_path")
                 runner_result_path = metadata.get("runner_result_path")
+                runner_result = metadata.get("runner_result", {})
+                if not isinstance(runner_result, dict):
+                    runner_result = {}
+                isolation_report = runner_result.get("isolation", {})
+                if not isinstance(isolation_report, dict):
+                    isolation_report = {}
                 cleanup_status = metadata.get("cleanup_status", "")
                 timed_out = bool(metadata.get("timed_out", False))
                 if isinstance(sandbox, dict):
@@ -491,11 +517,81 @@ class Phase11FinalReport(PhaseInterface):
                         "manifest_v2_path": manifest_v2_path or "",
                         "runner_request_path": runner_request_path or "",
                         "runner_result_path": runner_result_path or "",
+                        "runner_status": runner_result.get("status", "") or "",
+                        "runner_error_code": runner_result.get("error_code", "") or "",
+                        "runner_error": runner_result.get("error", "") or "",
+                        "job_assigned": self._format_optional_bool(
+                            runner_result.get("job_assigned")
+                        ),
+                        "job_memory_limit_mb": runner_result.get("job_memory_limit_mb", "") or "",
+                        "process_launcher": isolation_report.get("process_launcher", "") or "",
+                        "workspace_acl_path": isolation_report.get("workspace_acl_path", "") or "",
+                        "low_integrity": self._format_isolation_state(
+                            isolation_report,
+                            "low_integrity_requested",
+                            "low_integrity_applied",
+                            "low_integrity_error",
+                        ),
+                        "workspace_acl": self._format_isolation_state(
+                            isolation_report,
+                            "workspace_acl_requested",
+                            "workspace_acl_hardened",
+                            "workspace_acl_error",
+                        ),
+                        "network_deny": self._format_isolation_state(
+                            isolation_report,
+                            "network_deny_requested",
+                            "network_deny_applied",
+                            "network_error",
+                        ),
+                        "restricted_token": self._format_isolation_state(
+                            isolation_report,
+                            "restricted_token_requested",
+                            "restricted_token_applied",
+                            "restricted_token_error",
+                        ),
                         "cleanup_status": cleanup_status,
                         "timed_out": timed_out,
                     }
                 )
-        return {"rows": rows, "task_count": len(rows), "policy_violations": violations}
+        return {
+            "rows": rows,
+            "copy_out_rows": copy_out_rows,
+            "task_count": len(rows),
+            "policy_violations": violations,
+        }
+
+    @staticmethod
+    def _format_isolation_state(
+        isolation_report: Dict[str, Any],
+        requested_key: str,
+        applied_key: str,
+        error_key: str,
+    ) -> str:
+        if not isolation_report:
+            return ""
+        requested = isolation_report.get(requested_key)
+        applied = isolation_report.get(applied_key)
+        error = isolation_report.get(error_key)
+        if requested is True and applied is True:
+            return "applied"
+        if requested is True and applied is False:
+            return "failed" if error else "requested"
+        if requested is False:
+            return "off"
+        if applied is True:
+            return "applied"
+        if error:
+            return "failed"
+        return ""
+
+    @staticmethod
+    def _format_optional_bool(value: Any) -> str:
+        if value is True:
+            return "true"
+        if value is False:
+            return "false"
+        return ""
 
     def _relative_report_path(self, path_value: Any) -> str:
         path_text = str(path_value or "")
@@ -509,6 +605,7 @@ class Phase11FinalReport(PhaseInterface):
     def _generate_multi_agent_sandbox_section(self) -> List[str]:
         sandbox_stats = self._collect_sandbox_stats()
         rows = sandbox_stats["rows"]
+        copy_out_rows = sandbox_stats["copy_out_rows"]
         violations = sandbox_stats["policy_violations"]
         sandbox_backend = getattr(self.context, "sandbox_backend", "policy")
         if not rows and not getattr(self.context, "enable_multi_agent", False) and sandbox_backend == "policy":
@@ -541,6 +638,45 @@ class Phase11FinalReport(PhaseInterface):
                         manifest=manifest,
                         manifest_v2=manifest_v2,
                         runner_result=runner_result,
+                        **row,
+                    )
+                )
+            lines.append("")
+            if any(
+                row.get("low_integrity")
+                or row.get("workspace_acl")
+                or row.get("network_deny")
+                or row.get("restricted_token")
+                or row.get("runner_error_code")
+                for row in rows
+            ):
+                lines.extend([
+                    "#### Sandbox Isolation Details",
+                    "",
+                    "| Phase | Task | Low Integrity | Restricted Token | Workspace ACL | ACL Target | Network Deny | Launcher | Job Assigned | Memory MB | Runner Status | Error Code |",
+                    "|-------|------|---------------|------------------|---------------|------------|--------------|----------|--------------|-----------|---------------|------------|",
+                ])
+                for row in rows:
+                    acl_target = self._relative_report_path(row.get("workspace_acl_path"))
+                    lines.append(
+                        "| {phase} | `{task_id}` | `{low_integrity}` | `{restricted_token}` | `{workspace_acl}` | `{acl_target}` | `{network_deny}` | `{process_launcher}` | `{job_assigned}` | `{job_memory_limit_mb}` | `{runner_status}` | `{runner_error_code}` |".format(
+                            acl_target=acl_target,
+                            **row
+                        )
+                    )
+                lines.append("")
+        if copy_out_rows:
+            lines.extend([
+                "#### Sandbox Copy-Out Gate",
+                "",
+                "| Phase | Status | Artifacts | Bytes | Manual Apply | Applied | Manifest |",
+                "|-------|--------|-----------|-------|--------------|---------|----------|",
+            ])
+            for row in copy_out_rows:
+                manifest = self._relative_report_path(row.get("manifest_path"))
+                lines.append(
+                    "| {phase} | `{status}` | {artifact_count} | {total_bytes} | {requires_manual_apply} | {applied} | `{manifest}` |".format(
+                        manifest=manifest,
                         **row,
                     )
                 )

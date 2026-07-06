@@ -27,6 +27,12 @@ class OpenSpecRunOptions:
     sandbox_level: str = "staging"
     sandbox_backend: str = "policy"
     sandbox_backend_options: Optional[Dict[str, Any]] = None
+    phase10_workspace_execution: bool = False
+    sandbox_low_integrity: bool = False
+    sandbox_harden_workspace_acl: bool = False
+    sandbox_network_deny: bool = False
+    sandbox_restricted_token: bool = False
+    sandbox_max_memory_mb: Optional[int] = None
     agent_pool_size: Optional[int] = None
     verbose: bool = False
     debug: bool = False
@@ -47,6 +53,19 @@ class OpenSpecWorkflowExecutor:
 
     def create_scheduler(self, requirements_file: str, options: OpenSpecRunOptions | None = None) -> EnhancedOpenSpecScheduler:
         opts = options or OpenSpecRunOptions()
+        sandbox_backend_options = dict(opts.sandbox_backend_options or {})
+        if opts.phase10_workspace_execution:
+            sandbox_backend_options["phase10_workspace_execution"] = True
+        if opts.sandbox_low_integrity:
+            sandbox_backend_options["low_integrity"] = True
+        if opts.sandbox_harden_workspace_acl:
+            sandbox_backend_options["harden_workspace_acl"] = True
+        if opts.sandbox_network_deny:
+            sandbox_backend_options["network_deny"] = True
+        if opts.sandbox_restricted_token:
+            sandbox_backend_options["restricted_token"] = True
+        if opts.sandbox_max_memory_mb is not None:
+            sandbox_backend_options["max_memory_mb"] = int(opts.sandbox_max_memory_mb)
         return EnhancedOpenSpecScheduler(
             requirements_file=str(Path(requirements_file)),
             tool_registry=self.tool_registry,
@@ -64,7 +83,7 @@ class OpenSpecWorkflowExecutor:
             enable_multi_agent=opts.enable_multi_agent,
             sandbox_level=opts.sandbox_level,
             sandbox_backend=opts.sandbox_backend,
-            sandbox_backend_options=opts.sandbox_backend_options,
+            sandbox_backend_options=sandbox_backend_options,
             agent_pool_size=opts.agent_pool_size,
             verbose=opts.verbose,
             debug=opts.debug,
