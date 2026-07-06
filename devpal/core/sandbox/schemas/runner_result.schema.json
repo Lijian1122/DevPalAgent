@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://devpal.local/schemas/runner_result.schema.json",
+  "title": "DevPal Sandbox Runner Result",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "sandbox_id",
+    "execution_id",
+    "status",
+    "success",
+    "argv",
+    "cwd",
+    "exit_code",
+    "stdout",
+    "stderr",
+    "duration_ms",
+    "timed_out",
+    "cleanup_status"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "devpal.sandbox.runner_result.v1"
+    },
+    "sandbox_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "execution_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    },
+    "argv": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "pid": {
+      "type": "integer"
+    },
+    "exit_code": {
+      "type": "integer"
+    },
+    "stdout": {
+      "type": "string"
+    },
+    "stderr": {
+      "type": "string"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timed_out": {
+      "type": "boolean"
+    },
+    "cleanup_status": {
+      "type": "string"
+    },
+    "error": {
+      "type": ["string", "null"]
+    },
+    "error_code": {
+      "type": ["string", "null"]
+    },
+    "isolation": {
+      "type": ["object", "null"],
+      "properties": {
+        "low_integrity_requested": {
+          "type": "boolean"
+        },
+        "low_integrity_applied": {
+          "type": "boolean"
+        },
+        "low_integrity_error": {
+          "type": ["string", "null"]
+        },
+        "workspace_acl_requested": {
+          "type": "boolean"
+        },
+        "workspace_acl_hardened": {
+          "type": "boolean"
+        },
+        "workspace_acl_path": {
+          "type": ["string", "null"]
+        },
+        "workspace_acl_error": {
+          "type": ["string", "null"]
+        },
+        "network_deny_requested": {
+          "type": "boolean"
+        },
+        "network_deny_applied": {
+          "type": "boolean"
+        },
+        "network_rule_name": {
+          "type": ["string", "null"]
+        },
+        "network_error": {
+          "type": ["string", "null"]
+        },
+        "restricted_token_requested": {
+          "type": "boolean"
+        },
+        "restricted_token_applied": {
+          "type": "boolean"
+        },
+        "restricted_token_error": {
+          "type": ["string", "null"]
+        },
+        "process_launcher": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "job_object": {
+      "type": ["string", "null"]
+    },
+    "job_assigned": {
+      "type": ["boolean", "null"]
+    },
+    "job_memory_limit_mb": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    }
+  },
+  "additionalProperties": true
+}

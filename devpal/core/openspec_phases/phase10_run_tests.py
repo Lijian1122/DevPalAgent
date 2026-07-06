@@ -9,7 +9,6 @@
 5. 如果测试失败，尝试自愈（可选）
 """
 
-import json
 import os
 import re
 import shutil
@@ -18,8 +17,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from devpal.core.multi_agent.models import CommandResult
-from devpal.core.sandbox import SandboxRequest
-from devpal.core.sandbox.backends import WindowsProcessSandboxBackend
+from devpal.core.sandbox.copy_out import create_copy_out_manifest
+from devpal.core.sandbox.manager import SandboxManager, SandboxPolicyViolation
+from devpal.core.sandbox.workspace import (
+    SandboxWorkspacePlan,
+    default_cpp_phase10_workspace_plan,
+    default_python_phase10_workspace_plan,
+)
 from devpal.core.schema.languages.cpp_plugin import CppLanguagePlugin
 from devpal.core.schema.languages.python_plugin import PythonLanguagePlugin
 from devpal.core.schema.languages.shell_plugin import ShellLanguagePlugin
@@ -57,6 +61,13 @@ class Phase10RunTests(PhaseInterface):
         self.event_bus = get_global_event_bus()
         self.workflow_id = getattr(context, "workflow_id", "")
         self._phase10_command_results: List[Dict] = []
+        self._phase10_workspace_plan: Optional[SandboxWorkspacePlan] = None
+        self.sandbox_manager = SandboxManager(
+            phase_number=self.phase_number,
+            context=context,
+            workflow_id=self.workflow_id,
+            log=self.log,
+        )
 
     def should_skip(self) -> tuple:
         """判断是否应该跳过当前阶段"""
@@ -122,9 +133,16 @@ class Phase10RunTests(PhaseInterface):
 
         # Branch based on language
         if language == "python":
-            if bool(getattr(self.context, "enable_multi_agent", False)) and not self._is_windows_process_backend_enabled():
+            if bool(getattr(self.context, "enable_multi_agent", False)) and not self._is_sandbox_manager_backend_enabled():
                 return self._try_run_python_tests_multi_agent(project_dir, tests_dir, test_files)
-            return self._run_python_tests(project_dir, tests_dir, test_files)
+            workspace_context = self._prepare_phase10_workspace_execution(
+                project_dir,
+                language="python",
+            )
+            if workspace_context:
+                project_dir, tests_dir, test_files = workspace_context
+            result = self._run_python_tests(project_dir, tests_dir, test_files)
+            return self._finalize_phase10_copy_out(result)
         elif language == "cpp":
             return self._run_cpp_tests(project_dir, tests_dir, test_files)
         else:
@@ -216,6 +234,13 @@ class Phase10RunTests(PhaseInterface):
     def _is_windows_process_backend_enabled(self) -> bool:
         return getattr(self.context, "sandbox_backend", "policy") == "windows_process"
 
+    def _is_sandbox_manager_backend_enabled(self) -> bool:
+        """Backends routed through SandboxManager (real or fail-closed skeleton)."""
+        return getattr(self.context, "sandbox_backend", "policy") in (
+            "windows_process",
+            "windows_container",
+        )
+
     def _run_phase10_command(
         self,
         task_id: str,
@@ -227,7 +252,7 @@ class Phase10RunTests(PhaseInterface):
         encoding: Optional[str] = None,
         errors: Optional[str] = None,
     ) -> CommandResult:
-        if self._is_windows_process_backend_enabled():
+        if self._is_sandbox_manager_backend_enabled():
             return self._run_windows_process_backend_command(
                 task_id=task_id,
                 argv=argv,
@@ -352,7 +377,10 @@ class Phase10RunTests(PhaseInterface):
     ) -> CommandResult:
         from devpal.core.multi_agent import CommandSpec
 
-        project_dir = Path(self.context.project_dir).resolve()
+        options = dict(getattr(self.context, "sandbox_backend_options", {}) or {})
+        project_dir = Path(
+            options.get("execution_project_dir") or self.context.project_dir
+        ).resolve()
         command = CommandSpec(
             argv=list(argv),
             cwd=agent_cwd or legacy_cwd or project_dir,
@@ -361,236 +389,16 @@ class Phase10RunTests(PhaseInterface):
             encoding=encoding,
             errors=errors,
         )
-        options = dict(getattr(self.context, "sandbox_backend_options", {}) or {})
-        request = SandboxRequest.from_legacy(
-            project_dir=project_dir,
-            task_id=task_id,
-            phase_number=self.phase_number,
-            role="test",
-            sandbox_level=getattr(self.context, "sandbox_level", "staging"),
-            allowed_paths=list(options.get("allowed_paths", []) or []),
-            timeout_seconds=timeout_seconds,
-            execution_id=str(options.get("execution_id", "")),
-            trace_id=self.workflow_id,
-        )
-        event_logger = getattr(
-            getattr(self.context, "event_integration", None),
-            "event_logger",
-            None,
-        )
-        request.metadata.update(
-            {
-                "workflow_id": self.workflow_id,
-                "event_log": str(getattr(event_logger, "latest_log_file", "") or ""),
-            }
-        )
-        backend = WindowsProcessSandboxBackend(
-            runner_path=options.get("runner_path"),
-            runner_args=list(options.get("runner_args", []) or []),
-            runner_timeout_grace_seconds=int(options.get("runner_timeout_grace_seconds", 5) or 5),
-        )
-        session = backend.create_session(request)
-        self._emit_sandbox_created(task_id, session)
         try:
-            session.validate_command(command)
-        except ValueError as exc:
-            self._emit_sandbox_violation(task_id, session, reason=str(exc), command=list(argv))
-            raise CommandPolicyViolation(str(exc)) from exc
-
-        self._emit_sandbox_policy_applied(task_id, session, request.policy.to_dict())
-        self._emit_sandbox_command_started(task_id, session, command)
-        try:
-            result = session.execute_command(command)
-        except FileNotFoundError as exc:
-            self._emit_sandbox_command_completed(
-                task_id,
-                session,
-                command,
-                CommandResult(argv=list(argv), cwd=command.cwd, error=str(exc)),
-                cleanup_status="not_started",
-            )
-            raise
-
-        runner_result = self._read_runner_result(session.runner_result_path)
-        cleanup_status = str(runner_result.get("cleanup_status", "unknown") or "unknown")
-        if result.timed_out:
-            self._emit_sandbox_timeout(task_id, session, command, timeout_seconds)
-        self._emit_sandbox_command_completed(
-            task_id,
-            session,
-            command,
-            result,
-            cleanup_status=cleanup_status,
-            runner_result=runner_result,
-        )
-        self._emit_sandbox_cleanup_completed(task_id, session, cleanup_status)
-        self._record_windows_process_result(task_id, session, command, result, runner_result, cleanup_status)
-        return result
-
-    def _read_runner_result(self, path: Path) -> Dict[str, Any]:
-        if not path.exists():
-            return {}
-        try:
-            return json.loads(path.read_text(encoding="utf-8-sig"))
-        except Exception:
-            return {}
-
-    def _record_windows_process_result(
-        self,
-        task_id: str,
-        session,
-        command,
-        result: CommandResult,
-        runner_result: Dict[str, Any],
-        cleanup_status: str,
-    ) -> None:
-        success = result.returncode == 0 and not result.timed_out and not result.error
-        metadata = {
-            "sandbox_id": session.sandbox_id,
-            "sandbox": session.manifest(),
-            "backend": session.backend_name,
-            "isolation_level": session.isolation_level,
-            "manifest_v2_path": str(session.manifest_v2_path),
-            "runner_request_path": str(session.runner_request_path),
-            "runner_result_path": str(session.runner_result_path),
-            "cleanup_status": cleanup_status,
-            "timed_out": result.timed_out,
-            "commands": [
-                {
-                    "argv": list(result.argv),
-                    "cwd": str(result.cwd),
-                    "returncode": result.returncode,
-                    "duration_ms": result.duration_ms,
-                    "timed_out": result.timed_out,
-                    "error": result.error,
-                }
-            ],
-        }
-        if runner_result:
-            metadata["runner_result"] = runner_result
-        self._record_phase10_command_result(
-            {
-                "total_tasks": 1,
-                "success_count": 1 if success else 0,
-                "failed_count": 0 if success else 1,
-                "retry_count": 0,
-                "max_concurrency": 1,
-                "fallback_used": False,
-                "total_task_duration_ms": int(result.duration_ms or 0),
-                "results": [
-                    {
-                        "task_id": task_id,
-                        "success": success,
-                        "duration_ms": int(result.duration_ms or 0),
-                        "sandbox_id": session.sandbox_id,
-                        "metadata": metadata,
-                    }
-                ],
-            }
-        )
-
-    def _emit_sandbox_created(self, task_id: str, session) -> None:
-        integration = getattr(self.context, "event_integration", None)
-        if integration and hasattr(integration, "emit_sandbox_created"):
-            integration.emit_sandbox_created(
-                self.phase_number,
-                task_id,
-                sandbox_id=session.sandbox_id,
-                backend=session.backend_name,
-                isolation_level=session.isolation_level,
-                manifest_path=str(session.manifest_v2_path),
-            )
-
-    def _emit_sandbox_policy_applied(self, task_id: str, session, policy: Dict[str, Any]) -> None:
-        integration = getattr(self.context, "event_integration", None)
-        if integration and hasattr(integration, "emit_sandbox_policy_applied"):
-            integration.emit_sandbox_policy_applied(
-                self.phase_number,
-                task_id,
-                sandbox_id=session.sandbox_id,
-                backend=session.backend_name,
-                isolation_level=session.isolation_level,
-                policy=policy,
-            )
-
-    def _emit_sandbox_command_started(self, task_id: str, session, command) -> None:
-        integration = getattr(self.context, "event_integration", None)
-        if integration and hasattr(integration, "emit_sandbox_command_started"):
-            integration.emit_sandbox_command_started(
-                self.phase_number,
-                task_id,
-                sandbox_id=session.sandbox_id,
-                backend=session.backend_name,
-                isolation_level=session.isolation_level,
-                command=list(command.argv),
-                cwd=str(command.cwd),
-            )
-
-    def _emit_sandbox_command_completed(
-        self,
-        task_id: str,
-        session,
-        command,
-        result: CommandResult,
-        cleanup_status: str = "",
-        runner_result: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        integration = getattr(self.context, "event_integration", None)
-        if integration and hasattr(integration, "emit_sandbox_command_completed"):
-            integration.emit_sandbox_command_completed(
-                self.phase_number,
-                task_id,
-                sandbox_id=session.sandbox_id,
-                backend=session.backend_name,
-                isolation_level=session.isolation_level,
-                command=list(command.argv),
-                returncode=result.returncode,
-                duration_ms=int(result.duration_ms or 0),
-                timed_out=bool(result.timed_out),
-                manifest_path=str(session.manifest_v2_path),
-                runner_request_path=str(session.runner_request_path),
-                runner_result_path=str(session.runner_result_path),
-                cleanup_status=cleanup_status,
-                error=result.error or str((runner_result or {}).get("error", "")),
-            )
-
-    def _emit_sandbox_timeout(self, task_id: str, session, command, timeout_seconds: int) -> None:
-        integration = getattr(self.context, "event_integration", None)
-        if integration and hasattr(integration, "emit_sandbox_timeout"):
-            integration.emit_sandbox_timeout(
-                self.phase_number,
-                task_id,
-                sandbox_id=session.sandbox_id,
-                backend=session.backend_name,
-                isolation_level=session.isolation_level,
-                command=list(command.argv),
-                timeout_seconds=timeout_seconds,
-                manifest_path=str(session.manifest_v2_path),
-            )
-
-    def _emit_sandbox_cleanup_completed(self, task_id: str, session, cleanup_status: str) -> None:
-        integration = getattr(self.context, "event_integration", None)
-        if integration and hasattr(integration, "emit_sandbox_cleanup_completed"):
-            integration.emit_sandbox_cleanup_completed(
-                self.phase_number,
-                task_id,
-                sandbox_id=session.sandbox_id,
-                backend=session.backend_name,
-                isolation_level=session.isolation_level,
-                cleanup_status=cleanup_status,
-                manifest_path=str(session.manifest_v2_path),
-            )
-
-    def _emit_sandbox_violation(self, task_id: str, session, reason: str, command: List[str]) -> None:
-        integration = getattr(self.context, "event_integration", None)
-        if integration and hasattr(integration, "emit_sandbox_violation"):
-            integration.emit_sandbox_violation(
-                self.phase_number,
-                task_id,
-                sandbox_id=session.sandbox_id,
-                reason=reason,
+            execution = self.sandbox_manager.execute_command(
+                task_id=task_id,
                 command=command,
+                role="test",
             )
+        except SandboxPolicyViolation as exc:
+            raise CommandPolicyViolation(str(exc)) from exc
+        self._record_phase10_command_result(execution.summary)
+        return execution.command_result
 
     def _run_python_tests(
         self, project_dir: Path, tests_dir: Path, test_files: List[Path]
@@ -600,7 +408,7 @@ class Phase10RunTests(PhaseInterface):
 
         try:
             env = self._build_python_test_env(project_dir)
-            if not self._is_windows_process_backend_enabled() and shutil.which("pytest") is None:
+            if not self._is_sandbox_manager_backend_enabled() and shutil.which("pytest") is None:
                 self.log("  [WARN] pytest not found, skipping tests")
                 return PhaseResult.ok("Tests skipped (pytest not installed)", skipped=True)
 
@@ -667,10 +475,111 @@ class Phase10RunTests(PhaseInterface):
     ) -> PhaseResult:
         """Run C++ tests (original logic)"""
         try:
-            return self._run_cpp_tests_impl(project_dir, tests_dir, test_files)
+            workspace_context = self._prepare_phase10_workspace_execution(
+                project_dir,
+                language="cpp",
+            )
+            if workspace_context:
+                project_dir, tests_dir, test_files = workspace_context
+            result = self._run_cpp_tests_impl(project_dir, tests_dir, test_files)
+            return self._finalize_phase10_copy_out(result)
         except CommandPolicyViolation as exc:
             self.log(f"  [SECURITY] Command policy violation: {exc}")
             return PhaseResult.fail("Command policy violation", errors=[str(exc)])
+
+    def _prepare_phase10_workspace_execution(
+        self,
+        project_dir: Path,
+        *,
+        language: str,
+    ) -> Optional[Tuple[Path, Path, List[Path]]]:
+        options = dict(getattr(self.context, "sandbox_backend_options", {}) or {})
+        if not bool(options.get("phase10_workspace_execution", False)):
+            return None
+        if not self._is_windows_process_backend_enabled():
+            return None
+
+        workspace_root = (
+            project_dir
+            / ".spec"
+            / "sandboxes"
+            / "phase10-workspace-execution"
+            / "workspace"
+        )
+        if workspace_root.exists():
+            shutil.rmtree(workspace_root)
+        if language == "python":
+            plan = default_python_phase10_workspace_plan(project_dir, workspace_root)
+            test_pattern = "test_*.py"
+        else:
+            plan = default_cpp_phase10_workspace_plan(project_dir, workspace_root)
+            test_pattern = "test_*.cpp"
+        copied = plan.prepare()
+        self._phase10_workspace_plan = plan
+        options["execution_project_dir"] = str(workspace_root)
+        options["phase10_workspace_dir"] = str(workspace_root)
+        options["phase10_workspace_copy_in"] = [artifact.to_dict() for artifact in copied]
+        self.context.sandbox_backend_options = options
+        workspace_tests_dir = workspace_root / "tests"
+        workspace_test_files = sorted(workspace_tests_dir.glob(test_pattern))
+        self.log(
+            "  [SANDBOX] Phase 10 workspace execution enabled: "
+            f"{workspace_root}"
+        )
+        return workspace_root, workspace_tests_dir, workspace_test_files
+
+    def _finalize_phase10_copy_out(self, result: PhaseResult) -> PhaseResult:
+        plan = self._phase10_workspace_plan
+        if plan is None:
+            return result
+        try:
+            artifacts = plan.collect()
+            if not artifacts:
+                return result
+            manifest_path = plan.workspace_dir.parent / "copy_out_manifest.json"
+            manifest = create_copy_out_manifest(
+                project_dir=plan.project_dir,
+                workspace_dir=plan.workspace_dir,
+                manifest_path=manifest_path,
+                artifacts=artifacts,
+                task_id="phase10:copy_out",
+                phase_number=self.phase_number,
+                workflow_id=self.workflow_id,
+                sandbox_backend=getattr(self.context, "sandbox_backend", "policy"),
+                metadata={
+                    "language": getattr(self.context, "language", ""),
+                    "copy_in": list(plan.copy_in),
+                    "copy_out": list(plan.copy_out),
+                },
+            )
+            summary = {
+                "manifest_path": str(manifest_path),
+                "status": manifest.get("status", ""),
+                "artifact_count": int(manifest.get("artifact_count", 0) or 0),
+                "total_bytes": int(manifest.get("total_bytes", 0) or 0),
+                "requires_manual_apply": bool(manifest.get("requires_manual_apply", True)),
+                "applied": bool(manifest.get("applied", False)),
+            }
+            options = dict(getattr(self.context, "sandbox_backend_options", {}) or {})
+            options["phase10_copy_out_manifest"] = str(manifest_path)
+            options["phase10_workspace_copy_out"] = list(manifest.get("artifacts", []))
+            options["phase10_copy_out_status"] = manifest.get("status", "")
+            self.context.sandbox_backend_options = options
+            phase_stats = self.context.parallel_execution_stats.get(str(self.phase_number))
+            if isinstance(phase_stats, dict):
+                phase_stats["copy_out"] = summary
+            result.data["copy_out"] = summary
+            self.log(
+                "  [SANDBOX] Copy-out gate pending: "
+                f"{summary['artifact_count']} artifact(s), manifest={manifest_path}"
+            )
+            return result
+        except Exception as exc:
+            self.log(f"  [FAIL] Sandbox copy-out gate failed: {exc}")
+            return PhaseResult.fail(
+                "Sandbox copy-out gate failed",
+                errors=[str(exc), *result.errors],
+            )
 
     def _run_cpp_tests_impl(
         self, project_dir: Path, tests_dir: Path, test_files: List[Path]
@@ -1300,7 +1209,7 @@ class Phase10RunTests(PhaseInterface):
                 return False, "\n".join(output_lines)
 
             # Step 2: CMake build
-            target_name = f"{project_dir.name}_app"
+            target_name = f"{Path(self.context.project_dir).resolve().name}_app"
             build_cmd = [
                 "cmake",
                 "--build",
